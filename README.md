@@ -13,6 +13,10 @@ Non è presente un livello Fog. La topologia conserva comunque le tre macroaree:
 servono per raggruppare gli Edge e per il futuro partizionamento del carico Cloud,
 senza obbligare l'architettura ad avere un processo Fog.
 
+Lo stato puntuale rispetto alla traccia è mantenuto in
+[`docs/traceability.md`](docs/traceability.md); i requisiti non ancora verificati
+non vengono dichiarati come completati.
+
 ## Responsabilità
 
 - Il **Simulator** legge le righe reali del CSV, conserva timestamp e valori grezzi,
@@ -64,22 +68,16 @@ tra loro. Rimangono soltanto i tempi reali necessari a codifica e trasporto MQTT
 I path dei dati sono risolti rispetto a `config/project.yml`, non alla directory da
 cui viene eseguito il comando.
 
-## Prova locale: un solo evento
+## Prova locale con Docker Compose
 
 Da `Sensor`, con Docker Desktop avviato:
 
 ```powershell
-docker compose -f deploy/compose/mqtt.yml up -d
+docker compose -f deploy/compose/continuum.yml up -d --build
 ```
 
 La prima riga della traccia appartiene al sensore `87575`, assegnato a
-`edge-m2-0`. Nel primo terminale avvia quindi quell'Edge:
-
-```powershell
-go run ./cmd/edge -config config/project.yml -node-id edge-m2-0
-```
-
-Nel secondo terminale pubblica una sola riga:
+`edge-m2-0`, già avviato nel Compose. Pubblica una sola riga:
 
 ```powershell
 go run ./cmd/simulator -config config/project.yml -max-events 1
@@ -88,11 +86,10 @@ go run ./cmd/simulator -config config/project.yml -max-events 1
 Per prove con più righe devi avviare gli Edge a cui appartengono quei sensori;
 ciascun messaggio viene ricevuto soltanto dall'Edge indicato nel suo topic.
 
-Per eseguire l'intera traccia, ometti `-max-events`. Interrompi Edge e Simulator con
-`Ctrl+C`. Arresta il broker con:
+Per eseguire l'intera traccia, ometti `-max-events`. Arresta i container con:
 
 ```powershell
-docker compose -f deploy/compose/mqtt.yml down
+docker compose -f deploy/compose/continuum.yml down
 ```
 
 ## Verifiche
@@ -103,3 +100,8 @@ go vet ./...
 ```
 
 Il prossimo incremento è `Edge validation/normalization → finestre locali → Kafka`.
+
+Per eseguire lo stesso Docker Compose su Amazon EC2, segui la guida
+[`deploy/ec2/README.md`](deploy/ec2/README.md). CloudFormation prepara
+l'infrastruttura, mentre lo script di deployment carica e avvia il Compose; MQTT
+resta raggiungibile soltanto tramite tunnel SSH.

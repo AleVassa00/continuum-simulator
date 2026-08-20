@@ -1,0 +1,47 @@
+name: continuum
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    ports:
+      # MQTT is reachable from the EC2 host only; remote access uses an SSH tunnel.
+      - "127.0.0.1:1883:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -t health/ready -m ready -q 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - edge-ingress
+
+  edge:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: continuum-app:local
+    command:
+      - /opt/continuum/bin/edge
+      - -config
+      - /opt/continuum/Sensor/config/project.yml
+      - -node-id
+      - ${EDGE_NODE_ID:-edge-m2-0}
+    environment:
+      CONTINUUM_MQTT_BROKER_URL: mqtt://mosquitto:1883
+    volumes:
+      - ../../config/project.yml:/opt/continuum/Sensor/config/project.yml:ro
+      - ../../../artifacts/eda/kmeans_topology.csv:/opt/continuum/artifacts/eda/kmeans_topology.csv:ro
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - edge-ingress
+
+networks:
+  edge-ingress:
+    driver: bridge
+
