@@ -1,0 +1,20 @@
+# Go caches
+.gomodcache/
+.gocache/
+
+# IDE
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Binaries
+bin/
+*.exe
+*.out
+
+dataset/derived/*.csv

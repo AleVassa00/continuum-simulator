@@ -1,0 +1,76 @@
+version: 1
+
+# I path sono risolti rispetto a questo file, non alla working directory.
+dataset:
+  name: sensor-community-bme280-2025-01
+  reference_file: ../dataset/2025-01_bme280.csv
+  replay_file: ../dataset/derived/2025-01_bme280_europe_sensors-150_seed-42.csv
+  topology_file: ../../artifacts/eda/kmeans_topology.csv
+  delimiter: ";"
+  timestamp_layout: "2006-01-02T15:04:05"
+  timestamp_timezone: UTC
+  columns:
+    sensor_id: sensor_id
+    location_id: location
+    timestamp: timestamp
+    latitude: lat
+    longitude: lon
+  measurements:
+    - name: temperature_c
+      column: temperature
+      unit: celsius
+      normalizer: identity
+      valid_range: {min: -40, max: 85}
+    - name: humidity_pct
+      column: humidity
+      unit: percent
+      normalizer: identity
+      valid_range: {min: 0, max: 100}
+    - name: pressure_hpa
+      column: pressure
+      unit: hPa
+      normalizer: pressure_pa_or_hpa
+      valid_range: {min: 300, max: 1100}
+
+# 30 s warm-up + 3 min misurati + 30 s drain = run di circa 4 minuti.
+experiment:
+  warmup: 30s
+  measurement: 3m
+  drain_timeout: 30s
+  target_events_per_second: 2500
+  # Comprime la timeline originale: 1000 s del CSV diventano 1 s reale.
+  replay_speedup: 1000
+  seed: 42
+
+processing:
+  edge:
+    window_size: 5m
+    # Il replay definitivo sarà ordinato per event time. OOO resta configurabile,
+    # ma non è una dimensione sperimentale del progetto.
+    allowed_lateness: 0s
+  cloud:
+    window_size: 15m
+
+transport:
+  simulator_to_edge:
+    protocol: mqtt
+    broker_url: "mqtt://localhost:1883"
+    topic_template: "telemetry/{edge_id}/{sensor_id}"
+    qos: 1
+    retain: false
+    keep_alive: 30s
+    connect_timeout: 10s
+  edge_to_cloud:
+    protocol: kafka
+    brokers: ["kafka:9092"]
+    topic: edge-windows.v1
+    partitions: 12
+    partition_key: macroarea_id
+    delivery: at_least_once
+
+cloud:
+  consumer_group: cloud-workers-v1
+  storage:
+    driver: postgres
+    # Nel deployment questo nome identifica il secret/environment da leggere.
+    dsn_env: POSTGRES_DSN
