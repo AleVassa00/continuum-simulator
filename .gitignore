@@ -17,4 +17,5 @@ bin/
 *.exe
 *.out
 
-dataset/derived/*.csv
+dataset/*.csv
+dataset/derived/
