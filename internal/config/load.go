@@ -34,8 +34,6 @@ func Load(path string) (Config, error) {
 		)
 	}
 
-	applyEnvironmentOverrides(&cfg)
-
 	err = cfg.Validate()
 	if err != nil {
 		return Config{}, fmt.Errorf(
@@ -72,12 +70,6 @@ func Load(path string) (Config, error) {
 	)
 
 	return cfg, nil
-}
-
-func applyEnvironmentOverrides(cfg *Config) {
-	if brokerURL, found := os.LookupEnv("CONTINUUM_MQTT_BROKER_URL"); found {
-		cfg.Transport.SimulatorToEdge.BrokerURL = brokerURL
-	}
 }
 
 func resolvePath(baseDirectory string, path string) string {

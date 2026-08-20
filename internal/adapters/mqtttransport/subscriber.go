@@ -18,6 +18,7 @@ type Subscriber struct {
 func NewSubscriber(
 	ctx context.Context,
 	cfg config.MQTTConfig,
+	brokerURL string,
 	clientID string,
 	edgeID string,
 	handler ports.SensorEventHandler,
@@ -68,7 +69,14 @@ func NewSubscriber(
 		return true, nil
 	}
 
-	connection, err := connect(ctx, cfg, clientID, onConnectionUp, onPublishReceived)
+	connection, err := connect(
+		ctx,
+		cfg,
+		brokerURL,
+		clientID,
+		onConnectionUp,
+		onPublishReceived,
+	)
 	if err != nil {
 		return nil, err
 	}

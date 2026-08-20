@@ -18,11 +18,32 @@ import (
 
 func main() {
 
-	configPath := flag.String("config", "config/project.yml", "path to the project YAML")
-	maxEvents := flag.Uint64("max-events", 0, "maximum events to publish; zero means the full trace")
+	configPath := flag.String(
+		"config",
+		"config/project.yml",
+		"path to the project YAML",
+	)
+
+	deploymentPath := flag.String(
+		"deployment",
+		"config/deployment.yml",
+		"path to the deployment YAML",
+	)
+
+	maxEvents := flag.Uint64(
+		"max-events",
+		0,
+		"maximum events to publish; zero means the full trace",
+	)
+
+	flag.Parse()
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	deployment, err := config.LoadDeployment(*deploymentPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -30,6 +51,14 @@ func main() {
 	index, err := topology.Load(cfg.Dataset.TopologyFile)
 	if err != nil {
 		log.Fatal(err)
+	}
+	for _, edgeID := range index.EdgeIDs() {
+		if _, found := deployment.Edges[edgeID]; !found {
+			log.Fatalf(
+				"edge %q exists in topology but has no deployment endpoint",
+				edgeID,
+			)
+		}
 	}
 
 	replayStatus := "ready"
@@ -45,14 +74,14 @@ func main() {
 	}
 
 	fmt.Printf(
-		"component=simulator status=configured dataset=%s replay=%s sensors=%d edges=%d macroareas=%d speedup=%.0fx broker=%s\n",
+		"component=simulator status=configured dataset=%s replay=%s sensors=%d edges=%d macroareas=%d speedup=%.0fx edge_endpoints=%d\n",
 		cfg.Dataset.Name,
 		replayStatus,
 		index.SensorCount(),
 		index.EdgeCount(),
 		index.MacroareaCount(),
 		cfg.Experiment.ReplaySpeedup,
-		cfg.Transport.SimulatorToEdge.BrokerURL,
+		len(deployment.Edges),
 	)
 	if replayStatus != "ready" {
 		return
@@ -71,17 +100,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	publisher, err := mqtttransport.NewPublisher(
-		ctx,
+	publisher := mqtttransport.NewDevicePublisherPool(
 		cfg.Transport.SimulatorToEdge,
-		"continuum-simulator",
+		deployment,
 	)
-	if err != nil {
-		log.Fatal(err)
-	}
 	defer func() {
 		if err := publisher.Close(); err != nil {
-			log.Printf("close MQTT publisher: %v", err)
+			log.Printf(
+				"close MQTT publisher pool: %v",
+				err,
+			)
 		}
 	}()
 

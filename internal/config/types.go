@@ -74,7 +74,6 @@ type TransportConfig struct {
 
 type MQTTConfig struct {
 	Protocol       string   `yaml:"protocol"`
-	BrokerURL      string   `yaml:"broker_url"`
 	TopicTemplate  string   `yaml:"topic_template"`
 	QoS            byte     `yaml:"qos"`
 	Retain         bool     `yaml:"retain"`

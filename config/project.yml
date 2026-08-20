@@ -54,7 +54,6 @@ processing:
 transport:
   simulator_to_edge:
     protocol: mqtt
-    broker_url: "mqtt://localhost:1883"
     topic_template: "telemetry/{edge_id}/{sensor_id}"
     qos: 1
     retain: false

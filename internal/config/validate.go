@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -201,14 +200,6 @@ func validateMQTT(mqtt MQTTConfig) error {
 	if mqtt.Protocol != "mqtt" {
 		return fmt.Errorf(
 			"transport.simulator_to_edge.protocol must be mqtt",
-		)
-	}
-
-	brokerURL, err := url.Parse(mqtt.BrokerURL)
-	if err != nil || brokerURL.Host == "" ||
-		(brokerURL.Scheme != "mqtt" && brokerURL.Scheme != "mqtts") {
-		return fmt.Errorf(
-			"transport.simulator_to_edge.broker_url must be a valid mqtt or mqtts URL",
 		)
 	}
 

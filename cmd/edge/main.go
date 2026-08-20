@@ -19,9 +19,20 @@ import (
 func main() {
 	configPath := flag.String("config", "config/project.yml", "path to the project YAML")
 	nodeID := flag.String("node-id", os.Getenv("CONTINUUM_NODE_ID"), "logical Edge ID")
+	brokerURL := flag.String(
+		"mqtt-broker",
+		os.Getenv("CONTINUUM_MQTT_BROKER_URL"),
+		"MQTT broker URL used by this Edge",
+	)
 	flag.Parse()
 	if *nodeID == "" {
 		log.Fatal("node-id or CONTINUUM_NODE_ID is required")
+	}
+
+	if *brokerURL == "" {
+		log.Fatal(
+			"mqtt-broker or CONTINUUM_MQTT_BROKER_URL is required",
+		)
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -40,7 +51,7 @@ func main() {
 	fmt.Printf(
 		"component=edge status=configured node_id=%s macroarea_id=%s sensors=%d window=%s mqtt_broker=%s upstream=%s\n",
 		edge.ID, edge.MacroareaID, edge.SensorCount, cfg.Processing.Edge.WindowSize.Duration,
-		cfg.Transport.SimulatorToEdge.BrokerURL, cfg.Transport.EdgeToCloud.Topic,
+		*brokerURL, cfg.Transport.EdgeToCloud.Topic,
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -76,6 +87,7 @@ func main() {
 	subscriber, err := mqtttransport.NewSubscriber(
 		ctx,
 		cfg.Transport.SimulatorToEdge,
+		*brokerURL,
 		"continuum-edge-"+edge.ID,
 		edge.ID,
 		ingest,
