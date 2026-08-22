@@ -19,3 +19,4 @@ bin/
 
 dataset/*.csv
 dataset/derived/
+dataset/
