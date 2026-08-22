@@ -1,111 +1,666 @@
 package main
 
 import (
-	"context"
-	"flag"
+	"encoding/json"
 	"fmt"
-	"log"
+	"math"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
 	"syscall"
+	"time"
 
-	"continuum/internal/adapters/mqtttransport"
-	"continuum/internal/config"
-	"continuum/internal/domain"
-	edgeservice "continuum/internal/edge"
-	"continuum/internal/topology"
+	"continuum/internal/model"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+type MetricValue struct {
+	Value  float64
+	Valid  bool
+	Reason string
+}
+
+type EdgeMeasurement struct {
+	Temperature MetricValue
+	Humidity    MetricValue
+	Pressure    MetricValue
+}
+
+type MetricState struct {
+	Valid   uint64
+	Invalid uint64
+
+	Sum float64
+	Min float64
+	Max float64
+}
+
+type WindowState struct {
+	Start time.Time
+	End   time.Time
+
+	Events uint64
+
+	Temperature MetricState
+	Humidity    MetricState
+	Pressure    MetricState
+}
+
+type WindowAggregator struct {
+	mu sync.Mutex
+
+	edgeID     string
+	windowSize time.Duration
+	current    *WindowState
+}
+
 func main() {
-	configPath := flag.String("config", "config/project.yml", "path to the project YAML")
-	nodeID := flag.String("node-id", os.Getenv("CONTINUUM_NODE_ID"), "logical Edge ID")
-	brokerURL := flag.String(
-		"mqtt-broker",
-		os.Getenv("CONTINUUM_MQTT_BROKER_URL"),
-		"MQTT broker URL used by this Edge",
+	edgeID := strings.TrimSpace(
+		os.Getenv("EDGE_ID"),
 	)
-	flag.Parse()
-	if *nodeID == "" {
-		log.Fatal("node-id or CONTINUUM_NODE_ID is required")
+
+	if edgeID == "" {
+		panic("variabile EDGE_ID non impostata")
 	}
 
-	if *brokerURL == "" {
-		log.Fatal(
-			"mqtt-broker or CONTINUUM_MQTT_BROKER_URL is required",
+	broker := strings.TrimSpace(
+		os.Getenv("MQTT_BROKER"),
+	)
+
+	if broker == "" {
+		panic("variabile MQTT_BROKER non impostata")
+	}
+
+	windowSize, err := loadWindowSize()
+	if err != nil {
+		panic(err)
+	}
+
+	aggregator := &WindowAggregator{
+		edgeID:     edgeID,
+		windowSize: windowSize,
+	}
+
+	fmt.Printf(
+		"Avvio Edge %s\n",
+		edgeID,
+	)
+
+	fmt.Printf(
+		"Broker MQTT: %s\n",
+		broker,
+	)
+
+	fmt.Printf(
+		"Window size: %s\n\n",
+		windowSize,
+	)
+
+	options := mqtt.NewClientOptions()
+
+	options.AddBroker(
+		broker,
+	)
+
+	options.SetClientID(
+		"edge-consumer-" + edgeID,
+	)
+
+	options.SetAutoReconnect(
+		true,
+	)
+
+	options.SetConnectTimeout(
+		5 * time.Second,
+	)
+
+	options.SetOnConnectHandler(
+		func(client mqtt.Client) {
+			fmt.Printf(
+				"%s connesso al broker MQTT\n",
+				edgeID,
+			)
+
+			subscribeToTelemetry(
+				client,
+				edgeID,
+				aggregator,
+			)
+		},
+	)
+
+	options.SetConnectionLostHandler(
+		func(
+			client mqtt.Client,
+			err error,
+		) {
+			fmt.Printf(
+				"%s ha perso la connessione MQTT: %v\n",
+				edgeID,
+				err,
+			)
+		},
+	)
+
+	client := mqtt.NewClient(
+		options,
+	)
+
+	token := client.Connect()
+
+	if !token.WaitTimeout(5 * time.Second) {
+		panic(
+			fmt.Sprintf(
+				"timeout connessione MQTT per %s",
+				edgeID,
+			),
 		)
 	}
 
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		log.Fatal(err)
+	if token.Error() != nil {
+		panic(
+			fmt.Errorf(
+				"connessione MQTT fallita per %s: %w",
+				edgeID,
+				token.Error(),
+			),
+		)
 	}
-	index, err := topology.Load(cfg.Dataset.TopologyFile)
-	if err != nil {
-		log.Fatal(err)
+
+	waitForShutdown()
+
+	fmt.Printf(
+		"\nArresto %s...\n",
+		edgeID,
+	)
+
+	client.Disconnect(250)
+
+	aggregator.Flush()
+}
+
+func loadWindowSize() (time.Duration, error) {
+	value := strings.TrimSpace(
+		os.Getenv("WINDOW_SIZE"),
+	)
+
+	if value == "" {
+		return 5 * time.Minute, nil
 	}
-	edge, found := index.Edge(*nodeID)
-	if !found {
-		log.Fatalf("edge %q is not present in %s", *nodeID, cfg.Dataset.TopologyFile)
+
+	windowSize, err := time.ParseDuration(
+		value,
+	)
+	if err != nil {
+		return 0,
+			fmt.Errorf(
+				"WINDOW_SIZE non valida %q: %w",
+				value,
+				err,
+			)
+	}
+
+	if windowSize <= 0 {
+		return 0,
+			fmt.Errorf(
+				"WINDOW_SIZE deve essere maggiore di zero",
+			)
+	}
+
+	return windowSize, nil
+}
+
+func subscribeToTelemetry(
+	client mqtt.Client,
+	edgeID string,
+	aggregator *WindowAggregator,
+) {
+	topic := "telemetry/+"
+
+	token := client.Subscribe(
+		topic,
+		1,
+		makeTelemetryHandler(
+			edgeID,
+			aggregator,
+		),
+	)
+
+	if !token.WaitTimeout(5 * time.Second) {
+		fmt.Printf(
+			"%s: timeout sottoscrizione MQTT\n",
+			edgeID,
+		)
+
+		return
+	}
+
+	if token.Error() != nil {
+		fmt.Printf(
+			"%s: errore sottoscrizione MQTT: %v\n",
+			edgeID,
+			token.Error(),
+		)
+
+		return
 	}
 
 	fmt.Printf(
-		"component=edge status=configured node_id=%s macroarea_id=%s sensors=%d window=%s mqtt_broker=%s upstream=%s\n",
-		edge.ID, edge.MacroareaID, edge.SensorCount, cfg.Processing.Edge.WindowSize.Duration,
-		*brokerURL, cfg.Transport.EdgeToCloud.Topic,
+		"%s sottoscritto a %s\n\n",
+		edgeID,
+		topic,
 	)
+}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+func makeTelemetryHandler(
+	edgeID string,
+	aggregator *WindowAggregator,
+) mqtt.MessageHandler {
+	return func(
+		client mqtt.Client,
+		message mqtt.Message,
+	) {
+		var event model.SensorEvent
 
-	ingest, err := edgeservice.NewIngestService(
-		edge.ID,
-		edge.MacroareaID,
-		index,
-		func(event domain.SensorEvent, accepted uint64) {
-			if accepted == 1 {
-				fmt.Printf(
-					"component=edge event=accepted node_id=%s sensor_id=%s event_id=%s observed_at=%s measurements=%v accepted=%d\n",
-					edge.ID,
-					event.SensorID,
-					event.EventID,
-					event.EventTime.Format("2006-01-02T15:04:05Z07:00"),
-					event.Measurements,
-					accepted,
-				)
-			} else if accepted%1_000 == 0 {
-				fmt.Printf(
-					"component=edge event=progress node_id=%s accepted=%d\n",
-					edge.ID,
-					accepted,
-				)
-			}
-		},
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	subscriber, err := mqtttransport.NewSubscriber(
-		ctx,
-		cfg.Transport.SimulatorToEdge,
-		*brokerURL,
-		"continuum-edge-"+edge.ID,
-		edge.ID,
-		ingest,
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer func() {
-		if err := subscriber.Close(); err != nil {
-			log.Printf("close MQTT subscriber: %v", err)
+		err := json.Unmarshal(
+			message.Payload(),
+			&event,
+		)
+		if err != nil {
+			fmt.Printf(
+				"%s: JSON non valido: %v\n",
+				edgeID,
+				err,
+			)
+
+			return
 		}
-	}()
 
-	fmt.Printf("component=edge status=listening node_id=%s\n", edge.ID)
-	<-ctx.Done()
-	fmt.Printf(
-		"component=edge status=stopped node_id=%s accepted=%d\n",
-		edge.ID,
-		ingest.AcceptedCount(),
+		err = validateSensorEvent(
+			event,
+		)
+		if err != nil {
+			fmt.Printf(
+				"%s: evento scartato: %v\n",
+				edgeID,
+				err,
+			)
+
+			return
+		}
+
+		measurement := parseMeasurements(
+			event,
+		)
+
+		err = aggregator.Add(
+			event.ObservedAt,
+			measurement,
+		)
+		if err != nil {
+			fmt.Printf(
+				"%s: evento %s scartato: %v\n",
+				edgeID,
+				event.EventID,
+				err,
+			)
+
+			return
+		}
+	}
+}
+
+func validateSensorEvent(
+	event model.SensorEvent,
+) error {
+	if event.SchemaVersion != 1 {
+		return fmt.Errorf(
+			"schema_version non supportata: %d",
+			event.SchemaVersion,
+		)
+	}
+
+	if strings.TrimSpace(event.EventID) == "" {
+		return fmt.Errorf(
+			"event_id mancante",
+		)
+	}
+
+	if strings.TrimSpace(event.SensorID) == "" {
+		return fmt.Errorf(
+			"sensor_id mancante",
+		)
+	}
+
+	if event.ObservedAt.IsZero() {
+		return fmt.Errorf(
+			"observed_at mancante",
+		)
+	}
+
+	return nil
+}
+
+func parseMeasurements(
+	event model.SensorEvent,
+) EdgeMeasurement {
+	return EdgeMeasurement{
+		Temperature: parseMetric(
+			event.Measurements,
+			"temperature",
+			-40,
+			85,
+		),
+
+		Humidity: parseMetric(
+			event.Measurements,
+			"humidity",
+			0,
+			100,
+		),
+
+		Pressure: parseMetric(
+			event.Measurements,
+			"pressure",
+			30000,
+			110000,
+		),
+	}
+}
+
+func parseMetric(
+	measurements map[string]string,
+	name string,
+	minValue float64,
+	maxValue float64,
+) MetricValue {
+	rawValue, found := measurements[name]
+
+	if !found {
+		return MetricValue{
+			Valid:  false,
+			Reason: "misura mancante",
+		}
+	}
+
+	rawValue = strings.TrimSpace(
+		rawValue,
 	)
+
+	if rawValue == "" {
+		return MetricValue{
+			Valid:  false,
+			Reason: "misura vuota",
+		}
+	}
+
+	value, err := strconv.ParseFloat(
+		rawValue,
+		64,
+	)
+
+	if err != nil {
+		return MetricValue{
+			Valid: false,
+
+			Reason: fmt.Sprintf(
+				"valore %q non numerico",
+				rawValue,
+			),
+		}
+	}
+
+	if math.IsNaN(value) ||
+		math.IsInf(value, 0) {
+		return MetricValue{
+			Valid: false,
+
+			Reason: fmt.Sprintf(
+				"valore numerico non finito %q",
+				rawValue,
+			),
+		}
+	}
+
+	if value < minValue ||
+		value > maxValue {
+		return MetricValue{
+			Value: value,
+			Valid: false,
+
+			Reason: fmt.Sprintf(
+				"valore %.2f fuori dal range [%.2f, %.2f]",
+				value,
+				minValue,
+				maxValue,
+			),
+		}
+	}
+
+	return MetricValue{
+		Value: value,
+		Valid: true,
+	}
+}
+
+func (aggregator *WindowAggregator) Add(
+	observedAt time.Time,
+	measurement EdgeMeasurement,
+) error {
+	aggregator.mu.Lock()
+	defer aggregator.mu.Unlock()
+
+	windowStart := observedAt.Truncate(
+		aggregator.windowSize,
+	)
+
+	windowEnd := windowStart.Add(
+		aggregator.windowSize,
+	)
+
+	if aggregator.current == nil {
+		aggregator.current = newWindowState(
+			windowStart,
+			windowEnd,
+		)
+	}
+
+	if windowStart.Before(
+		aggregator.current.Start,
+	) {
+		return fmt.Errorf(
+			"evento fuori ordine: observed_at=%s finestra_corrente=%s",
+			observedAt.Format(time.RFC3339),
+			aggregator.current.Start.Format(time.RFC3339),
+		)
+	}
+
+	if !windowStart.Equal(
+		aggregator.current.Start,
+	) {
+		aggregator.emitCurrentWindow()
+
+		aggregator.current = newWindowState(
+			windowStart,
+			windowEnd,
+		)
+	}
+
+	aggregator.current.Add(
+		measurement,
+	)
+
+	return nil
+}
+
+func newWindowState(
+	start time.Time,
+	end time.Time,
+) *WindowState {
+	return &WindowState{
+		Start: start,
+		End:   end,
+	}
+}
+
+func (window *WindowState) Add(
+	measurement EdgeMeasurement,
+) {
+	window.Events++
+
+	window.Temperature.Add(
+		measurement.Temperature,
+	)
+
+	window.Humidity.Add(
+		measurement.Humidity,
+	)
+
+	window.Pressure.Add(
+		measurement.Pressure,
+	)
+}
+
+func (metric *MetricState) Add(
+	value MetricValue,
+) {
+	if !value.Valid {
+		metric.Invalid++
+		return
+	}
+
+	if metric.Valid == 0 {
+		metric.Min = value.Value
+		metric.Max = value.Value
+	} else {
+		metric.Min = min(
+			metric.Min,
+			value.Value,
+		)
+
+		metric.Max = max(
+			metric.Max,
+			value.Value,
+		)
+	}
+
+	metric.Sum += value.Value
+	metric.Valid++
+}
+
+func (aggregator *WindowAggregator) emitCurrentWindow() {
+	if aggregator.current == nil {
+		return
+	}
+
+	if aggregator.current.Events == 0 {
+		return
+	}
+
+	aggregate := buildEdgeAggregate(
+		aggregator.edgeID,
+		aggregator.current,
+	)
+
+	payload, err := json.Marshal(
+		aggregate,
+	)
+	if err != nil {
+		fmt.Printf(
+			"%s: errore serializzazione EdgeAggregate: %v\n",
+			aggregator.edgeID,
+			err,
+		)
+
+		return
+	}
+
+	fmt.Printf(
+		"EDGE_AGGREGATE %s\n",
+		string(payload),
+	)
+}
+
+func (aggregator *WindowAggregator) Flush() {
+	aggregator.mu.Lock()
+	defer aggregator.mu.Unlock()
+
+	aggregator.emitCurrentWindow()
+
+	aggregator.current = nil
+}
+
+func waitForShutdown() {
+	signals := make(
+		chan os.Signal,
+		1,
+	)
+
+	signal.Notify(
+		signals,
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+
+	<-signals
+}
+
+func buildMetricAggregate(
+	state MetricState,
+) model.MetricAggregate {
+	if state.Valid == 0 {
+		return model.MetricAggregate{
+			Valid:   0,
+			Invalid: state.Invalid,
+			Average: nil,
+			Min:     nil,
+			Max:     nil,
+		}
+	}
+
+	average := state.Sum /
+		float64(state.Valid)
+
+	minimum := state.Min
+	maximum := state.Max
+
+	return model.MetricAggregate{
+		Valid:   state.Valid,
+		Invalid: state.Invalid,
+		Average: &average,
+		Min:     &minimum,
+		Max:     &maximum,
+	}
+}
+func buildEdgeAggregate(
+	edgeID string,
+	window *WindowState,
+) model.EdgeAggregate {
+	return model.EdgeAggregate{
+		SchemaVersion: 1,
+
+		EdgeID: edgeID,
+
+		WindowStart: window.Start,
+		WindowEnd:   window.End,
+
+		Events: window.Events,
+
+		Temperature: buildMetricAggregate(
+			window.Temperature,
+		),
+
+		Humidity: buildMetricAggregate(
+			window.Humidity,
+		),
+
+		Pressure: buildMetricAggregate(
+			window.Pressure,
+		),
+
+		EmittedAt: time.Now().UTC(),
+	}
 }

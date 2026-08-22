@@ -1,47 +1,118 @@
-name: continuum
-
 services:
-  mosquitto:
-    image: eclipse-mosquitto:2.0
+
+  mqtt-edge-0:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-0
     ports:
-      # MQTT is reachable from the EC2 host only; remote access uses an SSH tunnel.
-      - "127.0.0.1:1883:1883"
+      - "18830:1883"
     volumes:
       - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-    healthcheck:
-      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -t health/ready -m ready -q 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 5s
     restart: unless-stopped
-    networks:
-      - edge-ingress
 
-  edge:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
-    image: continuum-app:local
-    command:
-      - /opt/continuum/bin/edge
-      - -config
-      - /opt/continuum/Sensor/config/project.yml
-      - -node-id
-      - ${EDGE_NODE_ID:-edge-m2-0}
-    environment:
-      CONTINUUM_MQTT_BROKER_URL: mqtt://mosquitto:1883
+  mqtt-edge-1:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-1
+    ports:
+      - "18831:1883"
     volumes:
-      - ../../config/project.yml:/opt/continuum/Sensor/config/project.yml:ro
-      - ../../../artifacts/eda/kmeans_topology.csv:/opt/continuum/artifacts/eda/kmeans_topology.csv:ro
-    depends_on:
-      mosquitto:
-        condition: service_healthy
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     restart: unless-stopped
-    networks:
-      - edge-ingress
 
-networks:
-  edge-ingress:
-    driver: bridge
+  mqtt-edge-2:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-2
+    ports:
+      - "18832:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
 
+  mqtt-edge-3:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-3
+    ports:
+      - "18833:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  mqtt-edge-4:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-4
+    ports:
+      - "18834:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  mqtt-edge-5:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-5
+    ports:
+      - "18835:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  mqtt-edge-6:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-6
+    ports:
+      - "18836:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  mqtt-edge-7:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-7
+    ports:
+      - "18837:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  mqtt-edge-8:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-8
+    ports:
+      - "18838:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  mqtt-edge-9:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-9
+    ports:
+      - "18839:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  mqtt-edge-10:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-10
+    ports:
+      - "18840:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  mqtt-edge-11:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-11
+    ports:
+      - "18841:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  mqtt-edge-12:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-edge-12
+    ports:
+      - "18842:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
