@@ -65,6 +65,23 @@ services:
     networks:
       - continuum-backbone
 
+  cloud-worker:
+    image: continuum-cloud-worker:local
+
+    environment:
+      KAFKA_BROKER: "kafka:29092"
+      KAFKA_TOPIC: "edge-aggregates"
+      KAFKA_GROUP_ID: "${CLOUD_GROUP_ID:-cloud-workers}"
+
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+    restart: unless-stopped
+
+    networks:
+      - continuum-backbone
+
   # edge-0: 11 sensors
   mqtt-edge-0:
     image: eclipse-mosquitto:2

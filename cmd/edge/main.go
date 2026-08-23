@@ -547,7 +547,7 @@ func parseMetric(
 }
 
 func (
-aggregator *WindowAggregator,
+	aggregator *WindowAggregator,
 ) Add(
 	eventID string,
 	observedAt time.Time,
@@ -615,7 +615,7 @@ aggregator *WindowAggregator,
 }
 
 func (
-window *WindowState,
+	window *WindowState,
 ) Add(
 	measurement EdgeMeasurement,
 ) {
@@ -635,7 +635,7 @@ window *WindowState,
 }
 
 func (
-metric *MetricState,
+	metric *MetricState,
 ) Add(
 	value MetricValue,
 ) {
@@ -665,7 +665,7 @@ metric *MetricState,
 }
 
 func (
-aggregator *WindowAggregator,
+	aggregator *WindowAggregator,
 ) emitCurrentWindow() error {
 	if aggregator.current == nil {
 		return nil
@@ -729,7 +729,7 @@ aggregator *WindowAggregator,
 }
 
 func (
-aggregator *WindowAggregator,
+	aggregator *WindowAggregator,
 ) Flush() {
 	aggregator.mu.Lock()
 	defer aggregator.mu.Unlock()

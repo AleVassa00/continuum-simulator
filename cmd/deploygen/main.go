@@ -324,6 +324,26 @@ func buildCompose(
 
 `,
 	)
+	builder.WriteString(
+		`  cloud-worker:
+    image: continuum-cloud-worker:local
+
+    environment:
+      KAFKA_BROKER: "kafka:29092"
+      KAFKA_TOPIC: "edge-aggregates"
+      KAFKA_GROUP_ID: "${CLOUD_GROUP_ID:-cloud-workers}"
+
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+    restart: unless-stopped
+
+    networks:
+      - continuum-backbone
+
+`,
+	)
 
 	// Zone Edge
 	for _, edge := range edges {
