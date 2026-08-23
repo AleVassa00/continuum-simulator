@@ -12,14 +12,16 @@ type MetricAggregate struct {
 }
 
 type EdgeAggregate struct {
-	SchemaVersion int `json:"schema_version"`
+	SchemaVersion int    `json:"schema_version"`
+	AggregateID   string `json:"aggregate_id"`
 
 	EdgeID string `json:"edge_id"`
 
 	WindowStart time.Time `json:"window_start"`
 	WindowEnd   time.Time `json:"window_end"`
 
-	Events uint64 `json:"events"`
+	Events          uint64 `json:"events"`
+	DuplicateEvents uint64 `json:"duplicate_events"`
 
 	Temperature MetricAggregate `json:"temperature"`
 	Humidity    MetricAggregate `json:"humidity"`

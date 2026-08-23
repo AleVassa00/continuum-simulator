@@ -258,9 +258,77 @@ func buildCompose(
 		"services:\n\n",
 	)
 
+	// Kafka
+	builder.WriteString(
+		`  kafka:
+    image: apache/kafka:4.3.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+
+      KAFKA_LISTENERS: "INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:29092,EXTERNAL://localhost:9092"
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+    restart: unless-stopped
+
+    networks:
+      - continuum-backbone
+
+
+  kafka-init:
+    image: apache/kafka:4.3.0
+    container_name: kafka-init
+
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+    command:
+      - /bin/bash
+      - -c
+      - |
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka:29092 \
+          --create \
+          --if-not-exists \
+          --topic edge-aggregates \
+          --partitions ${KAFKA_PARTITIONS:-6} \
+          --replication-factor 1
+
+    networks:
+      - continuum-backbone
+
+`,
+	)
+
+	// Zone Edge
 	for _, edge := range edges {
 		mqttService := "mqtt-" + edge.EdgeID
-		network := "zone-" + edge.EdgeID
+		zoneNetwork := "zone-" + edge.EdgeID
 
 		fmt.Fprintf(
 			&builder,
@@ -269,6 +337,7 @@ func buildCompose(
 			edge.SensorCount,
 		)
 
+		// Mosquitto della zona
 		fmt.Fprintf(
 			&builder,
 			"  %s:\n",
@@ -334,9 +403,10 @@ func buildCompose(
 		fmt.Fprintf(
 			&builder,
 			"      - %s\n\n",
-			network,
+			zoneNetwork,
 		)
 
+		// Edge della zona
 		fmt.Fprintf(
 			&builder,
 			"  %s:\n",
@@ -374,6 +444,14 @@ func buildCompose(
 		)
 
 		builder.WriteString(
+			"      KAFKA_BROKER: \"kafka:29092\"\n",
+		)
+
+		builder.WriteString(
+			"      KAFKA_TOPIC: \"edge-aggregates\"\n",
+		)
+
+		builder.WriteString(
 			"    depends_on:\n",
 		)
 
@@ -388,6 +466,14 @@ func buildCompose(
 		)
 
 		builder.WriteString(
+			"      kafka-init:\n",
+		)
+
+		builder.WriteString(
+			"        condition: service_completed_successfully\n",
+		)
+
+		builder.WriteString(
 			"    restart: unless-stopped\n",
 		)
 
@@ -397,13 +483,26 @@ func buildCompose(
 
 		fmt.Fprintf(
 			&builder,
-			"      - %s\n\n",
-			network,
+			"      - %s\n",
+			zoneNetwork,
+		)
+
+		builder.WriteString(
+			"      - continuum-backbone\n\n",
 		)
 	}
 
+	// Reti
 	builder.WriteString(
 		"networks:\n",
+	)
+
+	builder.WriteString(
+		"  continuum-backbone:\n",
+	)
+
+	builder.WriteString(
+		"    driver: bridge\n",
 	)
 
 	for _, edge := range edges {
@@ -417,6 +516,15 @@ func buildCompose(
 			"    driver: bridge\n",
 		)
 	}
+
+	// Volumi persistenti
+	builder.WriteString(
+		"\nvolumes:\n",
+	)
+
+	builder.WriteString(
+		"  kafka-data:\n",
+	)
 
 	return builder.String()
 }

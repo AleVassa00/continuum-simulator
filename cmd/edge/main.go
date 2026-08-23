@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -15,6 +16,7 @@ import (
 	"continuum/internal/model"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/segmentio/kafka-go"
 )
 
 type MetricValue struct {
@@ -42,7 +44,10 @@ type WindowState struct {
 	Start time.Time
 	End   time.Time
 
-	Events uint64
+	Events          uint64
+	DuplicateEvents uint64
+
+	SeenEventIDs map[string]struct{}
 
 	Temperature MetricState
 	Humidity    MetricState
@@ -55,6 +60,8 @@ type WindowAggregator struct {
 	edgeID     string
 	windowSize time.Duration
 	current    *WindowState
+
+	kafkaWriter *kafka.Writer
 }
 
 func main() {
@@ -74,14 +81,36 @@ func main() {
 		panic("variabile MQTT_BROKER non impostata")
 	}
 
+	kafkaBroker := strings.TrimSpace(
+		os.Getenv("KAFKA_BROKER"),
+	)
+
+	if kafkaBroker == "" {
+		panic("variabile KAFKA_BROKER non impostata")
+	}
+
+	kafkaTopic := strings.TrimSpace(
+		os.Getenv("KAFKA_TOPIC"),
+	)
+
+	if kafkaTopic == "" {
+		panic("variabile KAFKA_TOPIC non impostata")
+	}
+
 	windowSize, err := loadWindowSize()
 	if err != nil {
 		panic(err)
 	}
 
+	kafkaWriter := newKafkaWriter(
+		kafkaBroker,
+		kafkaTopic,
+	)
+
 	aggregator := &WindowAggregator{
-		edgeID:     edgeID,
-		windowSize: windowSize,
+		edgeID:      edgeID,
+		windowSize:  windowSize,
+		kafkaWriter: kafkaWriter,
 	}
 
 	fmt.Printf(
@@ -95,8 +124,18 @@ func main() {
 	)
 
 	fmt.Printf(
-		"Window size: %s\n\n",
+		"Window size: %s\n",
 		windowSize,
+	)
+
+	fmt.Printf(
+		"Kafka broker: %s\n",
+		kafkaBroker,
+	)
+
+	fmt.Printf(
+		"Kafka topic: %s\n\n",
+		kafkaTopic,
 	)
 
 	options := mqtt.NewClientOptions()
@@ -151,7 +190,9 @@ func main() {
 
 	token := client.Connect()
 
-	if !token.WaitTimeout(5 * time.Second) {
+	if !token.WaitTimeout(
+		5 * time.Second,
+	) {
 		panic(
 			fmt.Sprintf(
 				"timeout connessione MQTT per %s",
@@ -180,9 +221,61 @@ func main() {
 	client.Disconnect(250)
 
 	aggregator.Flush()
+
+	err = kafkaWriter.Close()
+	if err != nil {
+		fmt.Printf(
+			"%s: errore chiusura Kafka writer: %v\n",
+			edgeID,
+			err,
+		)
+	}
 }
 
-func loadWindowSize() (time.Duration, error) {
+func newKafkaWriter(
+	broker string,
+	topic string,
+) *kafka.Writer {
+	return &kafka.Writer{
+		Addr: kafka.TCP(
+			broker,
+		),
+
+		Topic: topic,
+
+		Balancer: &kafka.Hash{},
+
+		RequiredAcks: kafka.RequireAll,
+
+		MaxAttempts: 5,
+
+		BatchSize: 1,
+
+		WriteTimeout: 5 * time.Second,
+		ReadTimeout:  5 * time.Second,
+
+		Async: false,
+	}
+}
+
+func newWindowState(
+	start time.Time,
+	end time.Time,
+) *WindowState {
+	return &WindowState{
+		Start: start,
+		End:   end,
+
+		SeenEventIDs: make(
+			map[string]struct{},
+		),
+	}
+}
+
+func loadWindowSize() (
+	time.Duration,
+	error,
+) {
 	value := strings.TrimSpace(
 		os.Getenv("WINDOW_SIZE"),
 	)
@@ -229,7 +322,9 @@ func subscribeToTelemetry(
 		),
 	)
 
-	if !token.WaitTimeout(5 * time.Second) {
+	if !token.WaitTimeout(
+		5 * time.Second,
+	) {
 		fmt.Printf(
 			"%s: timeout sottoscrizione MQTT\n",
 			edgeID,
@@ -297,6 +392,7 @@ func makeTelemetryHandler(
 		)
 
 		err = aggregator.Add(
+			event.EventID,
 			event.ObservedAt,
 			measurement,
 		)
@@ -323,13 +419,17 @@ func validateSensorEvent(
 		)
 	}
 
-	if strings.TrimSpace(event.EventID) == "" {
+	if strings.TrimSpace(
+		event.EventID,
+	) == "" {
 		return fmt.Errorf(
 			"event_id mancante",
 		)
 	}
 
-	if strings.TrimSpace(event.SensorID) == "" {
+	if strings.TrimSpace(
+		event.SensorID,
+	) == "" {
 		return fmt.Errorf(
 			"sensor_id mancante",
 		)
@@ -446,7 +546,10 @@ func parseMetric(
 	}
 }
 
-func (aggregator *WindowAggregator) Add(
+func (
+aggregator *WindowAggregator,
+) Add(
+	eventID string,
 	observedAt time.Time,
 	measurement EdgeMeasurement,
 ) error {
@@ -472,7 +575,8 @@ func (aggregator *WindowAggregator) Add(
 		aggregator.current.Start,
 	) {
 		return fmt.Errorf(
-			"evento fuori ordine: observed_at=%s finestra_corrente=%s",
+			"evento fuori ordine: event_id=%s observed_at=%s current_window=%s",
+			eventID,
 			observedAt.Format(time.RFC3339),
 			aggregator.current.Start.Format(time.RFC3339),
 		)
@@ -481,13 +585,27 @@ func (aggregator *WindowAggregator) Add(
 	if !windowStart.Equal(
 		aggregator.current.Start,
 	) {
-		aggregator.emitCurrentWindow()
+		err := aggregator.emitCurrentWindow()
+		if err != nil {
+			return err
+		}
 
 		aggregator.current = newWindowState(
 			windowStart,
 			windowEnd,
 		)
 	}
+
+	if _, found :=
+		aggregator.current.SeenEventIDs[eventID]; found {
+
+		aggregator.current.DuplicateEvents++
+
+		return nil
+	}
+
+	aggregator.current.SeenEventIDs[eventID] =
+		struct{}{}
 
 	aggregator.current.Add(
 		measurement,
@@ -496,17 +614,9 @@ func (aggregator *WindowAggregator) Add(
 	return nil
 }
 
-func newWindowState(
-	start time.Time,
-	end time.Time,
-) *WindowState {
-	return &WindowState{
-		Start: start,
-		End:   end,
-	}
-}
-
-func (window *WindowState) Add(
+func (
+window *WindowState,
+) Add(
 	measurement EdgeMeasurement,
 ) {
 	window.Events++
@@ -524,11 +634,14 @@ func (window *WindowState) Add(
 	)
 }
 
-func (metric *MetricState) Add(
+func (
+metric *MetricState,
+) Add(
 	value MetricValue,
 ) {
 	if !value.Valid {
 		metric.Invalid++
+
 		return
 	}
 
@@ -551,13 +664,15 @@ func (metric *MetricState) Add(
 	metric.Valid++
 }
 
-func (aggregator *WindowAggregator) emitCurrentWindow() {
+func (
+aggregator *WindowAggregator,
+) emitCurrentWindow() error {
 	if aggregator.current == nil {
-		return
+		return nil
 	}
 
 	if aggregator.current.Events == 0 {
-		return
+		return nil
 	}
 
 	aggregate := buildEdgeAggregate(
@@ -569,8 +684,60 @@ func (aggregator *WindowAggregator) emitCurrentWindow() {
 		aggregate,
 	)
 	if err != nil {
+		return fmt.Errorf(
+			"serializzazione EdgeAggregate fallita: %w",
+			err,
+		)
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	err = aggregator.kafkaWriter.WriteMessages(
+		ctx,
+		kafka.Message{
+			Key: []byte(
+				aggregator.edgeID,
+			),
+
+			Value: payload,
+
+			Time: aggregate.EmittedAt,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"pubblicazione Kafka aggregate_id=%s fallita: %w",
+			aggregate.AggregateID,
+			err,
+		)
+	}
+
+	fmt.Printf(
+		"KAFKA_PUBLISHED edge=%s aggregate_id=%s events=%d duplicates=%d topic=%s\n",
+		aggregate.EdgeID,
+		aggregate.AggregateID,
+		aggregate.Events,
+		aggregate.DuplicateEvents,
+		aggregator.kafkaWriter.Topic,
+	)
+
+	return nil
+}
+
+func (
+aggregator *WindowAggregator,
+) Flush() {
+	aggregator.mu.Lock()
+	defer aggregator.mu.Unlock()
+
+	err := aggregator.emitCurrentWindow()
+	if err != nil {
 		fmt.Printf(
-			"%s: errore serializzazione EdgeAggregate: %v\n",
+			"%s: errore flush ultima finestra: %v\n",
 			aggregator.edgeID,
 			err,
 		)
@@ -578,34 +745,7 @@ func (aggregator *WindowAggregator) emitCurrentWindow() {
 		return
 	}
 
-	fmt.Printf(
-		"EDGE_AGGREGATE %s\n",
-		string(payload),
-	)
-}
-
-func (aggregator *WindowAggregator) Flush() {
-	aggregator.mu.Lock()
-	defer aggregator.mu.Unlock()
-
-	aggregator.emitCurrentWindow()
-
 	aggregator.current = nil
-}
-
-func waitForShutdown() {
-	signals := make(
-		chan os.Signal,
-		1,
-	)
-
-	signal.Notify(
-		signals,
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-
-	<-signals
 }
 
 func buildMetricAggregate(
@@ -635,6 +775,24 @@ func buildMetricAggregate(
 		Max:     &maximum,
 	}
 }
+
+func buildAggregateID(
+	edgeID string,
+	windowStart time.Time,
+	windowEnd time.Time,
+) string {
+	return fmt.Sprintf(
+		"%s:%s:%s",
+		edgeID,
+		windowStart.UTC().Format(
+			time.RFC3339,
+		),
+		windowEnd.UTC().Format(
+			time.RFC3339,
+		),
+	)
+}
+
 func buildEdgeAggregate(
 	edgeID string,
 	window *WindowState,
@@ -642,12 +800,19 @@ func buildEdgeAggregate(
 	return model.EdgeAggregate{
 		SchemaVersion: 1,
 
+		AggregateID: buildAggregateID(
+			edgeID,
+			window.Start,
+			window.End,
+		),
+
 		EdgeID: edgeID,
 
 		WindowStart: window.Start,
 		WindowEnd:   window.End,
 
-		Events: window.Events,
+		Events:          window.Events,
+		DuplicateEvents: window.DuplicateEvents,
 
 		Temperature: buildMetricAggregate(
 			window.Temperature,
@@ -663,4 +828,19 @@ func buildEdgeAggregate(
 
 		EmittedAt: time.Now().UTC(),
 	}
+}
+
+func waitForShutdown() {
+	signals := make(
+		chan os.Signal,
+		1,
+	)
+
+	signal.Notify(
+		signals,
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+
+	<-signals
 }
