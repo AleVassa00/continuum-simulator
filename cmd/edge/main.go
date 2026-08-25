@@ -64,6 +64,8 @@ type WindowAggregator struct {
 	kafkaWriter *kafka.Writer
 }
 
+const telemetrySubscriptionTopic = "sensors/+/telemetry"
+
 func main() {
 	edgeID := strings.TrimSpace(
 		os.Getenv("EDGE_ID"),
@@ -311,7 +313,7 @@ func subscribeToTelemetry(
 	edgeID string,
 	aggregator *WindowAggregator,
 ) {
-	topic := "telemetry/+"
+	topic := telemetrySubscriptionTopic
 
 	token := client.Subscribe(
 		topic,

@@ -61,10 +61,12 @@ func main() {
 
 	for _, edge := range edges {
 		fmt.Printf(
-			"%s -> sensors=%d mqtt=localhost:%d\n",
+			"%s -> sensors=%d mqtt=tcp://mqtt-%s:1883 host_port=%d simulator=simulator-%s\n",
 			edge.EdgeID,
 			edge.SensorCount,
+			edge.EdgeID,
 			edge.MQTTPort,
+			edge.EdgeID,
 		)
 	}
 
@@ -358,6 +360,7 @@ func buildCompose(
 	// Zone Edge
 	for _, edge := range edges {
 		mqttService := "mqtt-" + edge.EdgeID
+		simulatorService := "simulator-" + edge.EdgeID
 		zoneNetwork := "zone-" + edge.EdgeID
 
 		fmt.Fprintf(
@@ -519,6 +522,94 @@ func buildCompose(
 
 		builder.WriteString(
 			"      - continuum-backbone\n\n",
+		)
+
+		// Simulator della zona. Tutte le istanze usano la stessa image;
+		// il routing verso il broker locale e configurato dal deployment.
+		fmt.Fprintf(
+			&builder,
+			"  %s:\n",
+			simulatorService,
+		)
+
+		builder.WriteString(
+			"    image: continuum-simulator:local\n",
+		)
+
+		fmt.Fprintf(
+			&builder,
+			"    container_name: %s\n",
+			simulatorService,
+		)
+
+		builder.WriteString(
+			"    profiles: [\"replay\"]\n",
+		)
+
+		builder.WriteString(
+			"    environment:\n",
+		)
+
+		fmt.Fprintf(
+			&builder,
+			"      SITE_ID: \"%s\"\n",
+			edge.EdgeID,
+		)
+
+		fmt.Fprintf(
+			&builder,
+			"      MQTT_ENDPOINT: \"tcp://%s:1883\"\n",
+			mqttService,
+		)
+
+		builder.WriteString(
+			"      MAX_EVENTS: \"${MAX_EVENTS:-0}\"\n",
+		)
+
+		builder.WriteString(
+			"    volumes:\n",
+		)
+
+		builder.WriteString(
+			"      - ../../dataset:/app/dataset:ro\n",
+		)
+
+		builder.WriteString(
+			"    depends_on:\n",
+		)
+
+		fmt.Fprintf(
+			&builder,
+			"      %s:\n",
+			mqttService,
+		)
+
+		builder.WriteString(
+			"        condition: service_healthy\n",
+		)
+
+		fmt.Fprintf(
+			&builder,
+			"      %s:\n",
+			edge.EdgeID,
+		)
+
+		builder.WriteString(
+			"        condition: service_started\n",
+		)
+
+		builder.WriteString(
+			"    restart: \"no\"\n",
+		)
+
+		builder.WriteString(
+			"    networks:\n",
+		)
+
+		fmt.Fprintf(
+			&builder,
+			"      - %s\n\n",
+			zoneNetwork,
 		)
 	}
 

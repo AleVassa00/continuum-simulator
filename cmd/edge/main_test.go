@@ -102,3 +102,15 @@ func TestBuildEdgeAggregateUsesCurrentSchema(t *testing.T) {
 		)
 	}
 }
+
+func TestTelemetrySubscriptionUsesSensorScopedTopic(t *testing.T) {
+	const expected = "sensors/+/telemetry"
+
+	if telemetrySubscriptionTopic != expected {
+		t.Fatalf(
+			"topic sottoscrizione=%q, atteso %q",
+			telemetrySubscriptionTopic,
+			expected,
+		)
+	}
+}

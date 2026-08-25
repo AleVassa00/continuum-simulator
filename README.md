@@ -5,7 +5,7 @@ pipeline attualmente implementata termina al secondo topic Kafka:
 
 ```text
 CSV di gennaio
-  -> Simulator
+  -> Simulator x 13, una istanza per Edge Site
   -> MQTT/Mosquitto per zona
   -> EdgeAggregate 5m per edge_id
   -> Kafka topic edge-aggregates
@@ -24,8 +24,9 @@ Lo stato dei requisiti della traccia e mantenuto in
 
 ## Responsabilita
 
-- Il **Simulator** legge la traccia CSV ordinata, individua l'Edge dalla topologia
-  e pubblica ogni misura sul broker MQTT della zona.
+- Ogni **Simulator** legge la traccia CSV ordinata, conserva soltanto i sensori
+  assegnati al proprio `SITE_ID` e pubblica su un unico `MQTT_ENDPOINT`. Il nome
+  logico del broker viene fornito dal deployment e non e derivato da `edge_id`.
 - Ogni **Edge** valida le misure e calcola media, somma, minimo, massimo e conteggi
   validi/non validi su finestre tumbling di event time, di default da 5 minuti.
 - **Kafka** persiste gli `EdgeAggregate` e li distribuisce ai Cloud Worker usando
@@ -76,32 +77,50 @@ Il Simulator usa:
 - `dataset/derived/2025-01_bme280_europe_sensors-150_seed-42.csv`;
 - `dataset/output/kmeans_topology.csv`.
 
-I dati derivati non sono tracciati da Git e devono essere presenti localmente. Il
-Simulator pubblica il CSV il piu velocemente possibile: e un replay bounded usato
-come generatore di carico, non un replay temporizzato.
+I dati derivati non sono tracciati da Git e devono essere presenti localmente.
+Le tredici istanze leggono lo stesso CSV, ma ciascuna pubblica soltanto gli eventi
+del proprio sito. `MAX_EVENTS` limita le pubblicazioni di ogni singola istanza. Il
+replay procede il piu velocemente possibile: e un generatore di carico bounded,
+non un replay temporizzato.
 
 ## Avvio locale
 
 Da `Sensor`, costruire le immagini applicative:
 
 ```powershell
+docker build -f deploy/docker/simulator.Dockerfile -t continuum-simulator:local .
 docker build -f deploy/docker/edge.Dockerfile -t continuum-edge:local .
 docker build -f deploy/docker/cloud-worker.Dockerfile -t continuum-cloud-worker:local .
 ```
 
-Generare il Compose dalla topologia e avviare la pipeline:
+Generare il Compose e avviare prima broker, Edge e Cloud Worker:
 
 ```powershell
 go run ./cmd/deploygen
 docker compose -f deploy/compose/continuum.generated.yml up -d
 ```
 
-Eseguire un replay limitato:
+Quando gli Edge risultano connessi ai rispettivi broker, avviare le tredici
+istanze del profilo `replay`:
 
 ```powershell
 $env:MAX_EVENTS="1000"
+docker compose -f deploy/compose/continuum.generated.yml --profile replay up -d
+```
+
+Tutte usano `continuum-simulator:local`; cambiano soltanto `SITE_ID` e
+`MQTT_ENDPOINT`. Per eseguire manualmente un solo sito dall'host:
+
+```powershell
+$env:SITE_ID="edge-3"
+$env:MQTT_ENDPOINT="tcp://localhost:18833"
+$env:MAX_EVENTS="1000"
 go run ./cmd/simulator
 ```
+
+La porta host e una scelta del deployment locale. Nei container gli endpoint
+sono nomi Docker come `tcp://mqtt-edge-3:1883`; su AWS potranno diventare nomi
+DNS privati senza modificare il programma Go.
 
 Per confrontare un diverso numero di Worker, avviare una configurazione nuova
 prima del replay:

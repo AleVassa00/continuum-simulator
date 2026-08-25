@@ -39,7 +39,25 @@ type SensorAssignment struct {
 	MacroareaID string
 }
 
+type SimulatorConfig struct {
+	SiteID       string
+	MQTTEndpoint string
+	MaxEvents    int
+}
+
+type EventPublisher func(
+	topic string,
+	event model.SensorEvent,
+) error
+
 func main() {
+	config, err := loadSimulatorConfig(
+		os.Getenv,
+	)
+	if err != nil {
+		panic(err)
+	}
+
 	topology, err := loadTopology(topologyPath)
 	if err != nil {
 		panic(err)
@@ -50,6 +68,20 @@ func main() {
 		len(topology),
 	)
 
+	client, err := connectMQTTClient(
+		config.SiteID,
+		config.MQTTEndpoint,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	defer func() {
+		if client.IsConnected() {
+			client.Disconnect(250)
+		}
+	}()
+
 	file, err := os.Open(datasetPath)
 	if err != nil {
 		panic(err)
@@ -59,52 +91,61 @@ func main() {
 	reader := csv.NewReader(file)
 	reader.Comma = ';'
 
-	header, err := reader.Read()
+	publishedEvents, err := replaySite(
+		reader,
+		topology,
+		config,
+		func(
+			topic string,
+			event model.SensorEvent,
+		) error {
+			return publishSensorEvent(
+				client,
+				topic,
+				event,
+			)
+		},
+	)
 	if err != nil {
 		panic(err)
+	}
+
+	fmt.Printf(
+		"\nReplay %s terminato: %d eventi pubblicati\n",
+		config.SiteID,
+		publishedEvents,
+	)
+}
+
+func replaySite(
+	reader *csv.Reader,
+	topology map[string]SensorAssignment,
+	config SimulatorConfig,
+	publish EventPublisher,
+) (int, error) {
+	header, err := reader.Read()
+	if err != nil {
+		return 0, err
 	}
 
 	columns := buildColumnIndex(header)
-
-	sequences := make(
-		map[string]uint64,
-	)
-
-	mqttClients := make(
-		map[string]mqtt.Client,
-	)
-
-	defer func() {
-		for _, client := range mqttClients {
-			if client.IsConnected() {
-				client.Disconnect(250)
-			}
-		}
-	}()
-
-	maxEvents, err := loadMaxEvents()
-	if err != nil {
-		panic(err)
-	}
-
+	sequences := make(map[string]uint64)
 	publishedEvents := 0
 
 	var lastObservedAt time.Time
 
 	for {
-		if maxEvents > 0 &&
-			publishedEvents >= maxEvents {
+		if config.MaxEvents > 0 &&
+			publishedEvents >= config.MaxEvents {
 			break
 		}
 
 		row, err := reader.Read()
-
 		if err == io.EOF {
 			break
 		}
-
 		if err != nil {
-			panic(err)
+			return publishedEvents, err
 		}
 
 		measurement, err := parseMeasurement(
@@ -112,109 +153,69 @@ func main() {
 			columns,
 		)
 		if err != nil {
-			panic(err)
+			return publishedEvents, err
 		}
 
-		// Per ora assumiamo che il replay sia ordinato temporalmente.
-		// Questo ci permette di usare sull'Edge una sola finestra attiva.
+		// Il replay globale resta ordinato temporalmente anche se questa
+		// istanza pubblica soltanto le misure del proprio sito.
 		if !lastObservedAt.IsZero() &&
 			measurement.Timestamp.Before(lastObservedAt) {
-			panic(
-				fmt.Sprintf(
+			return publishedEvents,
+				fmt.Errorf(
 					"replay non ordinato temporalmente: %s arriva dopo %s",
 					measurement.Timestamp.Format(time.RFC3339),
 					lastObservedAt.Format(time.RFC3339),
-				),
-			)
+				)
 		}
 
 		lastObservedAt = measurement.Timestamp
 
 		assignment, found := topology[measurement.SensorID]
 		if !found {
-			panic(
-				fmt.Sprintf(
+			return publishedEvents,
+				fmt.Errorf(
 					"sensore %q non presente nella topologia",
 					measurement.SensorID,
-				),
-			)
+				)
 		}
 
-		broker, err := brokerAddress(
-			assignment.EdgeID,
-		)
-		if err != nil {
-			panic(err)
+		if !belongsToSite(
+			assignment,
+			config.SiteID,
+		) {
+			continue
 		}
 
-		client, err := getMQTTClient(
-			mqttClients,
-			assignment.EdgeID,
-			broker,
-		)
-		if err != nil {
-			panic(err)
-		}
-
-		sequences[measurement.SensorID]++
-
-		sequence := sequences[measurement.SensorID]
-
+		sequence := sequences[measurement.SensorID] + 1
 		event := buildSensorEvent(
 			measurement,
 			sequence,
 		)
 
-		topic := fmt.Sprintf(
-			"telemetry/%s",
+		topic := telemetryTopic(
 			measurement.SensorID,
 		)
 
-		payload, err := json.Marshal(event)
-		if err != nil {
-			panic(err)
-		}
-
-		token := client.Publish(
+		if err := publish(
 			topic,
-			1,
-			false,
-			payload,
-		)
-
-		if !token.WaitTimeout(5 * time.Second) {
-			panic(
-				fmt.Sprintf(
-					"timeout pubblicazione MQTT sul topic %s",
-					topic,
-				),
-			)
+			event,
+		); err != nil {
+			return publishedEvents, err
 		}
 
-		if token.Error() != nil {
-			panic(
-				fmt.Errorf(
-					"errore pubblicazione MQTT sul topic %s: %w",
-					topic,
-					token.Error(),
-				),
-			)
-		}
-
+		sequences[measurement.SensorID] = sequence
 		publishedEvents++
 
 		if publishedEvents%1000 == 0 {
 			fmt.Printf(
-				"Pubblicati %d eventi\n",
+				"%s: pubblicati %d eventi\n",
+				config.SiteID,
 				publishedEvents,
 			)
 		}
 	}
 
-	fmt.Printf(
-		"\nReplay terminato: %d eventi pubblicati\n",
-		publishedEvents,
-	)
+	return publishedEvents, nil
 }
 
 func buildColumnIndex(
@@ -536,57 +537,34 @@ func loadTopology(
 	return topology, nil
 }
 
-func brokerAddress(
-	edgeID string,
-) (string, error) {
-	const basePort = 18830
-
-	var edgeNumber int
-
-	n, err := fmt.Sscanf(
-		edgeID,
-		"edge-%d",
-		&edgeNumber,
-	)
-	if err != nil || n != 1 {
-		return "",
-			fmt.Errorf(
-				"edge_id non valido %q",
-				edgeID,
-			)
-	}
-
-	if edgeNumber < 0 {
-		return "",
-			fmt.Errorf(
-				"numero Edge non valido in %q",
-				edgeID,
-			)
-	}
-
-	return fmt.Sprintf(
-		"tcp://localhost:%d",
-		basePort+edgeNumber,
-	), nil
+func belongsToSite(
+	assignment SensorAssignment,
+	siteID string,
+) bool {
+	return assignment.EdgeID == siteID
 }
 
-func getMQTTClient(
-	clients map[string]mqtt.Client,
-	edgeID string,
-	broker string,
-) (mqtt.Client, error) {
-	if client, found := clients[edgeID]; found {
-		return client, nil
-	}
+func telemetryTopic(
+	sensorID string,
+) string {
+	return fmt.Sprintf(
+		"sensors/%s/telemetry",
+		sensorID,
+	)
+}
 
+func connectMQTTClient(
+	siteID string,
+	endpoint string,
+) (mqtt.Client, error) {
 	options := mqtt.NewClientOptions()
 
 	options.AddBroker(
-		broker,
+		endpoint,
 	)
 
 	options.SetClientID(
-		"simulator-" + edgeID,
+		"simulator-" + siteID,
 	)
 
 	options.SetAutoReconnect(
@@ -607,7 +585,7 @@ func getMQTTClient(
 		return nil,
 			fmt.Errorf(
 				"timeout connessione MQTT a %s",
-				broker,
+				endpoint,
 			)
 	}
 
@@ -615,25 +593,100 @@ func getMQTTClient(
 		return nil,
 			fmt.Errorf(
 				"connessione MQTT a %s fallita: %w",
-				broker,
+				endpoint,
 				token.Error(),
 			)
 	}
 
-	clients[edgeID] = client
-
 	fmt.Printf(
-		"Connesso a %s (%s)\n",
-		edgeID,
-		broker,
+		"Simulator %s connesso a %s\n",
+		siteID,
+		endpoint,
 	)
 
 	return client, nil
 }
 
-func loadMaxEvents() (int, error) {
-	value := strings.TrimSpace(
-		os.Getenv("MAX_EVENTS"),
+func publishSensorEvent(
+	client mqtt.Client,
+	topic string,
+	event model.SensorEvent,
+) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf(
+			"serializzazione SensorEvent fallita: %w",
+			err,
+		)
+	}
+
+	token := client.Publish(
+		topic,
+		1,
+		false,
+		payload,
+	)
+
+	if !token.WaitTimeout(5 * time.Second) {
+		return fmt.Errorf(
+			"timeout pubblicazione MQTT sul topic %s",
+			topic,
+		)
+	}
+
+	if token.Error() != nil {
+		return fmt.Errorf(
+			"errore pubblicazione MQTT sul topic %s: %w",
+			topic,
+			token.Error(),
+		)
+	}
+
+	return nil
+}
+
+func loadSimulatorConfig(
+	getenv func(string) string,
+) (SimulatorConfig, error) {
+	siteID := strings.TrimSpace(
+		getenv("SITE_ID"),
+	)
+	if siteID == "" {
+		return SimulatorConfig{},
+			fmt.Errorf(
+				"variabile SITE_ID non impostata",
+			)
+	}
+
+	mqttEndpoint := strings.TrimSpace(
+		getenv("MQTT_ENDPOINT"),
+	)
+	if mqttEndpoint == "" {
+		return SimulatorConfig{},
+			fmt.Errorf(
+				"variabile MQTT_ENDPOINT non impostata",
+			)
+	}
+
+	maxEvents, err := parseMaxEvents(
+		getenv("MAX_EVENTS"),
+	)
+	if err != nil {
+		return SimulatorConfig{}, err
+	}
+
+	return SimulatorConfig{
+		SiteID:       siteID,
+		MQTTEndpoint: mqttEndpoint,
+		MaxEvents:    maxEvents,
+	}, nil
+}
+
+func parseMaxEvents(
+	value string,
+) (int, error) {
+	value = strings.TrimSpace(
+		value,
 	)
 
 	if value == "" {

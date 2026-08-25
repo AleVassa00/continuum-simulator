@@ -128,6 +128,25 @@ services:
       - zone-edge-0
       - continuum-backbone
 
+  simulator-edge-0:
+    image: continuum-simulator:local
+    container_name: simulator-edge-0
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-0"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-0:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-0:
+        condition: service_healthy
+      edge-0:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-0
+
   # edge-1: 12 sensors
   mqtt-edge-1:
     image: eclipse-mosquitto:2
@@ -163,6 +182,25 @@ services:
     networks:
       - zone-edge-1
       - continuum-backbone
+
+  simulator-edge-1:
+    image: continuum-simulator:local
+    container_name: simulator-edge-1
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-1"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-1:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-1:
+        condition: service_healthy
+      edge-1:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-1
 
   # edge-2: 12 sensors
   mqtt-edge-2:
@@ -200,6 +238,25 @@ services:
       - zone-edge-2
       - continuum-backbone
 
+  simulator-edge-2:
+    image: continuum-simulator:local
+    container_name: simulator-edge-2
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-2"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-2:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-2:
+        condition: service_healthy
+      edge-2:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-2
+
   # edge-3: 12 sensors
   mqtt-edge-3:
     image: eclipse-mosquitto:2
@@ -235,6 +292,25 @@ services:
     networks:
       - zone-edge-3
       - continuum-backbone
+
+  simulator-edge-3:
+    image: continuum-simulator:local
+    container_name: simulator-edge-3
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-3"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-3:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-3:
+        condition: service_healthy
+      edge-3:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-3
 
   # edge-4: 11 sensors
   mqtt-edge-4:
@@ -272,6 +348,25 @@ services:
       - zone-edge-4
       - continuum-backbone
 
+  simulator-edge-4:
+    image: continuum-simulator:local
+    container_name: simulator-edge-4
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-4"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-4:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-4:
+        condition: service_healthy
+      edge-4:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-4
+
   # edge-5: 12 sensors
   mqtt-edge-5:
     image: eclipse-mosquitto:2
@@ -307,6 +402,25 @@ services:
     networks:
       - zone-edge-5
       - continuum-backbone
+
+  simulator-edge-5:
+    image: continuum-simulator:local
+    container_name: simulator-edge-5
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-5"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-5:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-5:
+        condition: service_healthy
+      edge-5:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-5
 
   # edge-6: 11 sensors
   mqtt-edge-6:
@@ -344,6 +458,25 @@ services:
       - zone-edge-6
       - continuum-backbone
 
+  simulator-edge-6:
+    image: continuum-simulator:local
+    container_name: simulator-edge-6
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-6"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-6:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-6:
+        condition: service_healthy
+      edge-6:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-6
+
   # edge-7: 12 sensors
   mqtt-edge-7:
     image: eclipse-mosquitto:2
@@ -379,6 +512,25 @@ services:
     networks:
       - zone-edge-7
       - continuum-backbone
+
+  simulator-edge-7:
+    image: continuum-simulator:local
+    container_name: simulator-edge-7
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-7"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-7:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-7:
+        condition: service_healthy
+      edge-7:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-7
 
   # edge-8: 12 sensors
   mqtt-edge-8:
@@ -416,6 +568,25 @@ services:
       - zone-edge-8
       - continuum-backbone
 
+  simulator-edge-8:
+    image: continuum-simulator:local
+    container_name: simulator-edge-8
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-8"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-8:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-8:
+        condition: service_healthy
+      edge-8:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-8
+
   # edge-9: 12 sensors
   mqtt-edge-9:
     image: eclipse-mosquitto:2
@@ -451,6 +622,25 @@ services:
     networks:
       - zone-edge-9
       - continuum-backbone
+
+  simulator-edge-9:
+    image: continuum-simulator:local
+    container_name: simulator-edge-9
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-9"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-9:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-9:
+        condition: service_healthy
+      edge-9:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-9
 
   # edge-10: 11 sensors
   mqtt-edge-10:
@@ -488,6 +678,25 @@ services:
       - zone-edge-10
       - continuum-backbone
 
+  simulator-edge-10:
+    image: continuum-simulator:local
+    container_name: simulator-edge-10
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-10"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-10:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-10:
+        condition: service_healthy
+      edge-10:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-10
+
   # edge-11: 11 sensors
   mqtt-edge-11:
     image: eclipse-mosquitto:2
@@ -524,6 +733,25 @@ services:
       - zone-edge-11
       - continuum-backbone
 
+  simulator-edge-11:
+    image: continuum-simulator:local
+    container_name: simulator-edge-11
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-11"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-11:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-11:
+        condition: service_healthy
+      edge-11:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-11
+
   # edge-12: 11 sensors
   mqtt-edge-12:
     image: eclipse-mosquitto:2
@@ -559,6 +787,25 @@ services:
     networks:
       - zone-edge-12
       - continuum-backbone
+
+  simulator-edge-12:
+    image: continuum-simulator:local
+    container_name: simulator-edge-12
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-12"
+      MQTT_ENDPOINT: "tcp://mqtt-edge-12:1883"
+      MAX_EVENTS: "${MAX_EVENTS:-0}"
+    volumes:
+      - ../../dataset:/app/dataset:ro
+    depends_on:
+      mqtt-edge-12:
+        condition: service_healthy
+      edge-12:
+        condition: service_started
+    restart: "no"
+    networks:
+      - zone-edge-12
 
 networks:
   continuum-backbone:
