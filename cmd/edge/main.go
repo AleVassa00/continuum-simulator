@@ -755,6 +755,7 @@ func buildMetricAggregate(
 		return model.MetricAggregate{
 			Valid:   0,
 			Invalid: state.Invalid,
+			Sum:     0,
 			Average: nil,
 			Min:     nil,
 			Max:     nil,
@@ -770,6 +771,7 @@ func buildMetricAggregate(
 	return model.MetricAggregate{
 		Valid:   state.Valid,
 		Invalid: state.Invalid,
+		Sum:     state.Sum,
 		Average: &average,
 		Min:     &minimum,
 		Max:     &maximum,
@@ -798,7 +800,7 @@ func buildEdgeAggregate(
 	window *WindowState,
 ) model.EdgeAggregate {
 	return model.EdgeAggregate{
-		SchemaVersion: 1,
+		SchemaVersion: model.EdgeAggregateSchemaVersion,
 
 		AggregateID: buildAggregateID(
 			edgeID,

@@ -10,39 +10,42 @@ import (
 	"syscall"
 	"time"
 
+	"continuum/internal/cloudworker"
 	"continuum/internal/model"
 
 	"github.com/segmentio/kafka-go"
 )
+
+const operationTimeout = 5 * time.Second
 
 func main() {
 	kafkaBroker := requiredEnv(
 		"KAFKA_BROKER",
 	)
 
-	kafkaTopic := requiredEnv(
-		"KAFKA_TOPIC",
+	inputTopic := loadInputTopic()
+	outputTopic := envOrDefault(
+		"KAFKA_OUTPUT_TOPIC",
+		"cloud-edge-aggregates",
 	)
 
-	groupID := strings.TrimSpace(
-		os.Getenv("KAFKA_GROUP_ID"),
+	groupID := envOrDefault(
+		"KAFKA_GROUP_ID",
+		"cloud-workers",
 	)
 
-	if groupID == "" {
-		groupID = "cloud-workers"
+	workerID := loadWorkerID()
+
+	windowSize, err := loadCloudWindowSize()
+	if err != nil {
+		panic(err)
 	}
 
-	workerID := strings.TrimSpace(
-		os.Getenv("WORKER_ID"),
+	aggregator, err := cloudworker.NewWindowAggregator(
+		windowSize,
 	)
-
-	if workerID == "" {
-		hostname, err := os.Hostname()
-		if err != nil {
-			workerID = "cloud-worker"
-		} else {
-			workerID = hostname
-		}
+	if err != nil {
+		panic(err)
 	}
 
 	reader := kafka.NewReader(
@@ -50,26 +53,34 @@ func main() {
 			Brokers: []string{
 				kafkaBroker,
 			},
-
-			Topic: kafkaTopic,
-
-			GroupID: groupID,
-
+			Topic:       inputTopic,
+			GroupID:     groupID,
 			StartOffset: kafka.FirstOffset,
-
-			MinBytes: 1,
-
-			MaxBytes: 10 * 1024 * 1024,
-
-			MaxWait: 500 * time.Millisecond,
+			MinBytes:    1,
+			MaxBytes:    10 * 1024 * 1024,
+			MaxWait:     500 * time.Millisecond,
 		},
 	)
 
 	defer func() {
-		err := reader.Close()
-		if err != nil {
+		if err := reader.Close(); err != nil {
 			fmt.Printf(
 				"%s: errore chiusura Kafka reader: %v\n",
+				workerID,
+				err,
+			)
+		}
+	}()
+
+	writer := newKafkaWriter(
+		kafkaBroker,
+		outputTopic,
+	)
+
+	defer func() {
+		if err := writer.Close(); err != nil {
+			fmt.Printf(
+				"%s: errore chiusura Kafka writer: %v\n",
 				workerID,
 				err,
 			)
@@ -80,17 +91,22 @@ func main() {
 		"Avvio Cloud Worker %s\n",
 		workerID,
 	)
-
 	fmt.Printf(
 		"Kafka broker: %s\n",
 		kafkaBroker,
 	)
-
 	fmt.Printf(
-		"Kafka topic: %s\n",
-		kafkaTopic,
+		"Input topic: %s\n",
+		inputTopic,
 	)
-
+	fmt.Printf(
+		"Output topic: %s\n",
+		outputTopic,
+	)
+	fmt.Printf(
+		"Cloud window: %s\n",
+		windowSize,
+	)
 	fmt.Printf(
 		"Consumer group: %s\n\n",
 		groupID,
@@ -103,13 +119,22 @@ func main() {
 	)
 	defer stop()
 
-	err := consume(
+	err = consume(
 		ctx,
 		reader,
+		writer,
+		aggregator,
 		workerID,
 	)
-
 	if err != nil {
+		panic(err)
+	}
+
+	if err := flushWindows(
+		writer,
+		aggregator,
+		workerID,
+	); err != nil {
 		panic(err)
 	}
 
@@ -122,13 +147,14 @@ func main() {
 func consume(
 	ctx context.Context,
 	reader *kafka.Reader,
+	writer *kafka.Writer,
+	aggregator *cloudworker.WindowAggregator,
 	workerID string,
 ) error {
 	for {
 		message, err := reader.FetchMessage(
 			ctx,
 		)
-
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -140,7 +166,7 @@ func consume(
 			)
 		}
 
-		aggregate, err := decodeEdgeAggregate(
+		input, err := decodeEdgeAggregate(
 			message.Value,
 		)
 		if err != nil {
@@ -153,28 +179,37 @@ func consume(
 			)
 		}
 
-		err = processEdgeAggregate(
-			workerID,
-			message,
-			aggregate,
-		)
+		output, err := aggregator.Add(input)
 		if err != nil {
 			return fmt.Errorf(
 				"elaborazione aggregate_id=%s fallita: %w",
-				aggregate.AggregateID,
+				input.AggregateID,
 				err,
 			)
 		}
 
-		err = reader.CommitMessages(
-			ctx,
-			message,
-		)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
+		if output != nil {
+			if err := publishCloudEdgeAggregate(
+				writer,
+				*output,
+			); err != nil {
+				return err
 			}
 
+			logPublishedWindow(
+				workerID,
+				writer.Topic,
+				*output,
+				false,
+			)
+		}
+
+		// Lo stato delle finestre e volatile. Gli esperimenti fissano il
+		// numero di Worker prima del replay e non lo cambiano durante il run.
+		if err := commitMessage(
+			reader,
+			message,
+		); err != nil {
 			return fmt.Errorf(
 				"commit Kafka partition=%d offset=%d fallito: %w",
 				message.Partition,
@@ -190,11 +225,10 @@ func decodeEdgeAggregate(
 ) (model.EdgeAggregate, error) {
 	var aggregate model.EdgeAggregate
 
-	err := json.Unmarshal(
+	if err := json.Unmarshal(
 		payload,
 		&aggregate,
-	)
-	if err != nil {
+	); err != nil {
 		return model.EdgeAggregate{},
 			fmt.Errorf(
 				"EdgeAggregate JSON non valido: %w",
@@ -202,180 +236,229 @@ func decodeEdgeAggregate(
 			)
 	}
 
-	err = validateEdgeAggregate(
+	if err := cloudworker.ValidateEdgeAggregate(
 		aggregate,
-	)
-	if err != nil {
-		return model.EdgeAggregate{},
-			err
+	); err != nil {
+		return model.EdgeAggregate{}, err
 	}
 
 	return aggregate, nil
 }
 
-func validateEdgeAggregate(
-	aggregate model.EdgeAggregate,
+func publishCloudEdgeAggregate(
+	writer *kafka.Writer,
+	aggregate model.CloudEdgeAggregate,
 ) error {
-	if aggregate.SchemaVersion != 1 {
+	if err := cloudworker.ValidateCloudEdgeAggregate(
+		aggregate,
+	); err != nil {
 		return fmt.Errorf(
-			"schema_version non supportata: %d",
-			aggregate.SchemaVersion,
+			"CloudEdgeAggregate %q non valido: %w",
+			aggregate.AggregateID,
+			err,
 		)
 	}
 
-	if strings.TrimSpace(
-		aggregate.AggregateID,
-	) == "" {
-		return fmt.Errorf(
-			"aggregate_id mancante",
-		)
-	}
-
-	if strings.TrimSpace(
-		aggregate.EdgeID,
-	) == "" {
-		return fmt.Errorf(
-			"edge_id mancante",
-		)
-	}
-
-	if aggregate.WindowStart.IsZero() {
-		return fmt.Errorf(
-			"window_start mancante",
-		)
-	}
-
-	if aggregate.WindowEnd.IsZero() {
-		return fmt.Errorf(
-			"window_end mancante",
-		)
-	}
-
-	if !aggregate.WindowEnd.After(
-		aggregate.WindowStart,
-	) {
-		return fmt.Errorf(
-			"finestra non valida: start=%s end=%s",
-			aggregate.WindowStart.Format(time.RFC3339),
-			aggregate.WindowEnd.Format(time.RFC3339),
-		)
-	}
-
-	if aggregate.Events == 0 {
-		return fmt.Errorf(
-			"aggregato senza eventi",
-		)
-	}
-
-	err := validateMetricAggregate(
-		"temperature",
-		aggregate.Events,
-		aggregate.Temperature,
+	payload, err := json.Marshal(
+		aggregate,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf(
+			"serializzazione CloudEdgeAggregate %q fallita: %w",
+			aggregate.AggregateID,
+			err,
+		)
 	}
 
-	err = validateMetricAggregate(
-		"humidity",
-		aggregate.Events,
-		aggregate.Humidity,
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		operationTimeout,
 	)
-	if err != nil {
-		return err
-	}
+	defer cancel()
 
-	err = validateMetricAggregate(
-		"pressure",
-		aggregate.Events,
-		aggregate.Pressure,
-	)
-	if err != nil {
-		return err
+	if err := writer.WriteMessages(
+		ctx,
+		kafka.Message{
+			Key: []byte(
+				aggregate.EdgeID,
+			),
+			Value: payload,
+			Time:  aggregate.EmittedAt,
+		},
+	); err != nil {
+		return fmt.Errorf(
+			"pubblicazione Kafka aggregate_id=%s topic=%s fallita: %w",
+			aggregate.AggregateID,
+			writer.Topic,
+			err,
+		)
 	}
 
 	return nil
 }
 
-func validateMetricAggregate(
-	name string,
-	events uint64,
-	metric model.MetricAggregate,
+func flushWindows(
+	writer *kafka.Writer,
+	aggregator *cloudworker.WindowAggregator,
+	workerID string,
 ) error {
-	if metric.Valid+metric.Invalid != events {
-		return fmt.Errorf(
-			"%s: valid(%d) + invalid(%d) != events(%d)",
-			name,
-			metric.Valid,
-			metric.Invalid,
-			events,
-		)
-	}
-
-	if metric.Valid == 0 {
-		if metric.Average != nil ||
-			metric.Min != nil ||
-			metric.Max != nil {
+	for _, output := range aggregator.Flush() {
+		if err := publishCloudEdgeAggregate(
+			writer,
+			output,
+		); err != nil {
 			return fmt.Errorf(
-				"%s: statistiche presenti senza misure valide",
-				name,
+				"flush finestra edge=%s fallito: %w",
+				output.EdgeID,
+				err,
 			)
 		}
 
-		return nil
-	}
-
-	if metric.Average == nil ||
-		metric.Min == nil ||
-		metric.Max == nil {
-		return fmt.Errorf(
-			"%s: statistiche mancanti con %d misure valide",
-			name,
-			metric.Valid,
-		)
-	}
-
-	if *metric.Min > *metric.Max {
-		return fmt.Errorf(
-			"%s: min %.2f maggiore di max %.2f",
-			name,
-			*metric.Min,
-			*metric.Max,
-		)
-	}
-
-	if *metric.Average < *metric.Min ||
-		*metric.Average > *metric.Max {
-		return fmt.Errorf(
-			"%s: average %.2f fuori dal range [%.2f, %.2f]",
-			name,
-			*metric.Average,
-			*metric.Min,
-			*metric.Max,
+		logPublishedWindow(
+			workerID,
+			writer.Topic,
+			output,
+			true,
 		)
 	}
 
 	return nil
 }
 
-func processEdgeAggregate(
-	workerID string,
+func commitMessage(
+	reader *kafka.Reader,
 	message kafka.Message,
-	aggregate model.EdgeAggregate,
 ) error {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		operationTimeout,
+	)
+	defer cancel()
+
+	return reader.CommitMessages(
+		ctx,
+		message,
+	)
+}
+
+func logPublishedWindow(
+	workerID string,
+	topic string,
+	aggregate model.CloudEdgeAggregate,
+	partial bool,
+) {
 	fmt.Printf(
-		"CLOUD_PROCESSED worker=%s partition=%d offset=%d edge=%s aggregate_id=%s window=[%s,%s) events=%d\n",
+		"CLOUD_WINDOW_PUBLISHED worker=%s edge=%s aggregate_id=%s window=[%s,%s) inputs=%d events=%d partial=%t topic=%s\n",
 		workerID,
-		message.Partition,
-		message.Offset,
 		aggregate.EdgeID,
 		aggregate.AggregateID,
 		aggregate.WindowStart.Format(time.RFC3339),
 		aggregate.WindowEnd.Format(time.RFC3339),
+		aggregate.InputAggregates,
 		aggregate.Events,
+		partial,
+		topic,
+	)
+}
+
+func newKafkaWriter(
+	broker string,
+	topic string,
+) *kafka.Writer {
+	return &kafka.Writer{
+		Addr: kafka.TCP(
+			broker,
+		),
+		Topic:        topic,
+		Balancer:     &kafka.Hash{},
+		RequiredAcks: kafka.RequireAll,
+		MaxAttempts:  5,
+		BatchSize:    1,
+		WriteTimeout: operationTimeout,
+		ReadTimeout:  operationTimeout,
+		Async:        false,
+	}
+}
+
+func loadCloudWindowSize() (
+	time.Duration,
+	error,
+) {
+	value := envOrDefault(
+		"CLOUD_WINDOW_SIZE",
+		"15m",
 	)
 
-	return nil
+	windowSize, err := time.ParseDuration(
+		value,
+	)
+	if err != nil {
+		return 0,
+			fmt.Errorf(
+				"CLOUD_WINDOW_SIZE non valida %q: %w",
+				value,
+				err,
+			)
+	}
+
+	if windowSize <= 0 {
+		return 0,
+			fmt.Errorf(
+				"CLOUD_WINDOW_SIZE deve essere maggiore di zero",
+			)
+	}
+
+	return windowSize, nil
+}
+
+func loadInputTopic() string {
+	if value := strings.TrimSpace(
+		os.Getenv("KAFKA_INPUT_TOPIC"),
+	); value != "" {
+		return value
+	}
+
+	if value := strings.TrimSpace(
+		os.Getenv("KAFKA_TOPIC"),
+	); value != "" {
+		fmt.Println(
+			"KAFKA_TOPIC e deprecata per il Cloud Worker; usare KAFKA_INPUT_TOPIC",
+		)
+
+		return value
+	}
+
+	return "edge-aggregates"
+}
+
+func loadWorkerID() string {
+	if value := strings.TrimSpace(
+		os.Getenv("WORKER_ID"),
+	); value != "" {
+		return value
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "cloud-worker"
+	}
+
+	return hostname
+}
+
+func envOrDefault(
+	name string,
+	defaultValue string,
+) string {
+	value := strings.TrimSpace(
+		os.Getenv(name),
+	)
+
+	if value == "" {
+		return defaultValue
+	}
+
+	return value
 }
 
 func requiredEnv(

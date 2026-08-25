@@ -1,107 +1,129 @@
 # Continuum environmental monitoring
 
-Progetto **Edge → Cloud** basato sul dataset BME280 di Sensor.Community. In questa
-prima vertical slice il flusso funzionante è:
+Progetto Edge-Cloud in Go basato sul dataset BME280 di Sensor.Community. La
+pipeline attualmente implementata termina al secondo topic Kafka:
 
 ```text
-CSV di gennaio → Simulator → MQTT/Mosquitto → Edge logici
-                                               │
-                                      Kafka → Cloud (prossimo step)
+CSV di gennaio
+  -> Simulator
+  -> MQTT/Mosquitto per zona
+  -> EdgeAggregate 5m per edge_id
+  -> Kafka topic edge-aggregates
+  -> Cloud Worker x N, stesso consumer group
+  -> CloudEdgeAggregate 15m per edge_id
+  -> Kafka topic cloud-edge-aggregates
 ```
 
-Non è presente un livello Fog. La topologia conserva comunque le tre macroaree:
-servono per raggruppare gli Edge e per il futuro partizionamento del carico Cloud,
-senza obbligare l'architettura ad avere un processo Fog.
+Non e presente un livello Fog. Le tredici zone Edge sono nodi logici derivati dal
+clustering geografico dei sensori e possono essere eseguite sullo stesso host con
+risorse container limitate. Global Aggregator, storage finale, deployment AWS e
+`tc-netem` appartengono agli incrementi successivi.
 
-Lo stato puntuale rispetto alla traccia è mantenuto in
-[`docs/traceability.md`](docs/traceability.md); i requisiti non ancora verificati
-non vengono dichiarati come completati.
+Lo stato dei requisiti della traccia e mantenuto in
+[`docs/traceability.md`](docs/traceability.md).
 
-## Responsabilità
+## Responsabilita
 
-- Il **Simulator** legge le righe reali del CSV, conserva timestamp e valori grezzi,
-  individua l'Edge dalla topologia e pubblica un evento MQTT.
-- **Mosquitto** consegna ogni evento all'Edge che ha sottoscritto il relativo topic.
-- Ogni **Edge** resta in ascolto: non effettua polling. Quando arriva un messaggio,
-  controlla schema, sensore, assegnazione e presenza delle misure. Normalizzazione,
-  range di validità e finestre saranno implementati nello step successivo.
-- **Kafka, Cloud Worker e PostgreSQL** sono già configurati come direzione
-  architetturale, ma non fanno ancora parte di questa vertical slice.
+- Il **Simulator** legge la traccia CSV ordinata, individua l'Edge dalla topologia
+  e pubblica ogni misura sul broker MQTT della zona.
+- Ogni **Edge** valida le misure e calcola media, somma, minimo, massimo e conteggi
+  validi/non validi su finestre tumbling di event time, di default da 5 minuti.
+- **Kafka** persiste gli `EdgeAggregate` e li distribuisce ai Cloud Worker usando
+  la chiave `edge_id`.
+- I **Cloud Worker** eseguono un temporal roll-up indipendente per ogni Edge: tre
+  finestre locali da 5 minuti formano, per default, una finestra Cloud da 15
+  minuti. I Worker non combinano Edge differenti.
 
-## Evento MQTT
+## Contratti Kafka
 
-Il topic è:
+`EdgeAggregate` usa `schema_version=2`. Ogni metrica contiene:
 
 ```text
-telemetry/{edge_id}/{sensor_id}
+valid, invalid, sum, average, min, max
 ```
 
-Ogni Edge sottoscrive `telemetry/<proprio-edge-id>/+`. Il payload JSON contiene
-`schema_version`, `event_id`, `sensor_id`, `location_id`, `sequence`, `observed_at`,
-`emitted_at` e `measurements`. Non contiene `edge_id` o `macroarea_id`: sono metadati
-di routing/infrastruttura, non proprietà prodotte dal sensore.
+La somma rende componibili gli aggregati: il Worker calcola la media come
+`sum(valid values) / valid`, senza effettuare una media delle medie.
 
-Si usa MQTT 5 con QoS 1 e `retain=false`. Il PUBACK conferma la ricezione da parte
-del broker, non l'elaborazione dell'Edge.
+`CloudEdgeAggregate` usa `schema_version=1`, mantiene un solo `edge_id` e aggiunge
+`input_aggregates`, cioe il numero di `EdgeAggregate` unici incorporati. Gli ID
+sono deterministici e gli input duplicati nella finestra attiva vengono ignorati.
 
-## Replay temporale
+La dimensione `CLOUD_WINDOW_SIZE` deve essere un multiplo della finestra Edge. Un
+input fuori ordine o che attraversa il confine di una finestra Cloud viene
+rifiutato esplicitamente.
 
-Il replay non è un simulatore *next-event*. La deadline reale di ogni riga è:
+## Semantica e limiti attuali
 
-```text
-inizio_replay + (timestamp_csv - primo_timestamp_csv) / replay_speedup
-```
+MQTT usa QoS 1. I writer Kafka sono sincroni e richiedono gli acknowledgment del
+broker; il consumer effettua commit esplicito dopo avere incorporato l'input e
+dopo l'eventuale pubblicazione dell'output.
 
-Con `replay_speedup: 1000`, 1000 secondi del dataset durano un secondo reale. Righe
-con lo stesso timestamp ricevono la stessa deadline: il pacer non introduce attese
-tra loro. Rimangono soltanto i tempi reali necessari a codifica e trasporto MQTT.
+Lo stato del roll-up Cloud e in memoria. Kafka offre consegna at-least-once, ma
+questo incremento non garantisce at-least-once end-to-end in presenza di crash o
+rebalance: un Worker puo perdere una finestra non ancora emessa. Il numero di
+repliche deve quindi essere fissato prima del replay e mantenuto invariato durante
+il singolo esperimento. La fault tolerance non e il requisito individuale scelto.
 
-## Dati e configurazione
+Le finestre vengono chiuse dall'arrivo di un input appartenente alla finestra
+successiva. Allo shutdown graceful, Edge e Cloud Worker pubblicano anche l'ultima
+finestra parziale ancora in memoria.
 
-- `dataset/2025-01_bme280.csv`: dataset mensile originale, usato offline.
-- `dataset/derived/2025-01_bme280_europe_sensors-150_seed-42.csv`: traccia ordinata
-  di gennaio per i 150 sensori selezionati; è il file letto dal Simulator.
-- `../artifacts/eda/kmeans_topology.csv`: assegnazione
-  `sensor_id → edge_id → macroarea_id` generata dal notebook.
-- `config/project.yml`: colonne, misure, replay, finestre e middleware.
+## Dati
 
-I path dei dati sono risolti rispetto a `config/project.yml`, non alla directory da
-cui viene eseguito il comando.
+Il Simulator usa:
 
-## Prova locale con Docker Compose
+- `dataset/derived/2025-01_bme280_europe_sensors-150_seed-42.csv`;
+- `dataset/output/kmeans_topology.csv`.
 
-Da `Sensor`, con Docker Desktop avviato:
+I dati derivati non sono tracciati da Git e devono essere presenti localmente. Il
+Simulator pubblica il CSV il piu velocemente possibile: e un replay bounded usato
+come generatore di carico, non un replay temporizzato.
+
+## Avvio locale
+
+Da `Sensor`, costruire le immagini applicative:
 
 ```powershell
-docker compose -f deploy/compose/continuum.yml up -d --build
+docker build -f deploy/docker/edge.Dockerfile -t continuum-edge:local .
+docker build -f deploy/docker/cloud-worker.Dockerfile -t continuum-cloud-worker:local .
 ```
 
-La prima riga della traccia appartiene al sensore `87575`, assegnato a
-`edge-m2-0`, già avviato nel Compose. Pubblica una sola riga:
+Generare il Compose dalla topologia e avviare la pipeline:
 
 ```powershell
-go run ./cmd/simulator -config config/project.yml -max-events 1
+go run ./cmd/deploygen
+docker compose -f deploy/compose/continuum.generated.yml up -d
 ```
 
-Per prove con più righe devi avviare gli Edge a cui appartengono quei sensori;
-ciascun messaggio viene ricevuto soltanto dall'Edge indicato nel suo topic.
-
-Per eseguire l'intera traccia, ometti `-max-events`. Arresta i container con:
+Eseguire un replay limitato:
 
 ```powershell
-docker compose -f deploy/compose/continuum.yml down
+$env:MAX_EVENTS="1000"
+go run ./cmd/simulator
 ```
+
+Per confrontare un diverso numero di Worker, avviare una configurazione nuova
+prima del replay:
+
+```powershell
+docker compose -f deploy/compose/continuum.generated.yml up -d --scale cloud-worker=4
+```
+
+Il topic di output puo essere ispezionato con:
+
+```powershell
+docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:29092 --topic cloud-edge-aggregates --from-beginning
+```
+
+Per preservare le ultime finestre, arrestare prima gli Edge, attendere che i
+Worker consumino gli ultimi aggregati e arrestare infine i Worker. Il Global
+Aggregator introdurra successivamente una gestione esplicita della fine replay.
 
 ## Verifiche
 
 ```powershell
 go test ./...
 go vet ./...
+docker compose -f deploy/compose/continuum.generated.yml config
 ```
-
-Il prossimo incremento è `Edge validation/normalization → finestre locali → Kafka`.
-
-Per eseguire lo stesso Docker Compose su Amazon EC2, segui la guida
-[`deploy/ec2/README.md`](deploy/ec2/README.md). CloudFormation prepara
-l'infrastruttura, mentre lo script di deployment carica e avvia il Compose; MQTT
-resta raggiungibile soltanto tramite tunnel SSH.

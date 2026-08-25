@@ -319,6 +319,14 @@ func buildCompose(
           --partitions ${KAFKA_PARTITIONS:-6} \
           --replication-factor 1
 
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka:29092 \
+          --create \
+          --if-not-exists \
+          --topic cloud-edge-aggregates \
+          --partitions 1 \
+          --replication-factor 1
+
     networks:
       - continuum-backbone
 
@@ -330,8 +338,10 @@ func buildCompose(
 
     environment:
       KAFKA_BROKER: "kafka:29092"
-      KAFKA_TOPIC: "edge-aggregates"
+      KAFKA_INPUT_TOPIC: "edge-aggregates"
+      KAFKA_OUTPUT_TOPIC: "cloud-edge-aggregates"
       KAFKA_GROUP_ID: "${CLOUD_GROUP_ID:-cloud-workers}"
+      CLOUD_WINDOW_SIZE: "${CLOUD_WINDOW_SIZE:-15m}"
 
     depends_on:
       kafka-init:
