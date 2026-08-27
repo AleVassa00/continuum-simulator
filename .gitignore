@@ -17,6 +17,19 @@ bin/
 *.exe
 *.out
 
-dataset/*.csv
-dataset/derived/
-dataset/
+# Generated deployment artifacts
+.build/
+
+# Dataset policy: ignore everything except the explicitly approved metadata.
+dataset/*
+!dataset/output/
+dataset/output/*
+!dataset/output/edge_k_metrics.csv
+!dataset/output/edge_population_summary.csv
+!dataset/output/edge_centroids.csv
+!dataset/output/europe_topology.csv
+!dataset/output/workload_by_edge.csv
+!dataset/output/workload_edge_summary.csv
+!dataset/output/kmeans_topology.csv
+!dataset/output/replay_load_scenarios.csv
+!dataset/output/replay_shards_summary.csv

@@ -1,7 +1,6 @@
 .git
 .idea
-
+.build
 dataset
 notebooks
-
 *.log

@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"continuum/internal/model"
+
+	"github.com/segmentio/kafka-go"
 )
 
 func TestBuildMetricAggregateIncludesComposableSum(t *testing.T) {
@@ -117,6 +123,264 @@ func TestTelemetrySubscriptionUsesSensorScopedTopic(t *testing.T) {
 	}
 }
 
+func TestWindowAggregatorKeepsEventsInSameFiveMinuteWindow(t *testing.T) {
+	aggregator, messages := newTestEdgeAggregator()
+
+	for index, minute := range []int{1, 3} {
+		err := aggregator.Add(
+			eventID(index),
+			edgeTestTime(10, minute),
+			validMeasurement(20, 50, 100000),
+		)
+		if err != nil {
+			t.Fatalf("Add() ha restituito un errore: %v", err)
+		}
+	}
+
+	if len(*messages) != 0 {
+		t.Fatalf("aggregati emessi=%d, attesi 0", len(*messages))
+	}
+
+	if aggregator.current == nil ||
+		!aggregator.current.Start.Equal(edgeTestTime(10, 0)) ||
+		!aggregator.current.End.Equal(edgeTestTime(10, 5)) ||
+		aggregator.current.Events != 2 {
+		t.Fatalf("stato della finestra inatteso: %#v", aggregator.current)
+	}
+}
+
+func TestWindowAggregatorEmitsPreviousWindowOnTransition(t *testing.T) {
+	aggregator, messages := newTestEdgeAggregator()
+
+	for index, minute := range []int{1, 3, 6} {
+		err := aggregator.Add(
+			eventID(index),
+			edgeTestTime(10, minute),
+			validMeasurement(20, 50, 100000),
+		)
+		if err != nil {
+			t.Fatalf("Add() ha restituito un errore: %v", err)
+		}
+	}
+
+	if len(*messages) != 1 {
+		t.Fatalf("aggregati emessi=%d, atteso 1", len(*messages))
+	}
+
+	emitted := decodeEdgeAggregate(t, (*messages)[0])
+	if !emitted.WindowStart.Equal(edgeTestTime(10, 0)) ||
+		!emitted.WindowEnd.Equal(edgeTestTime(10, 5)) ||
+		emitted.Events != 2 {
+		t.Fatalf("finestra emessa inattesa: %#v", emitted)
+	}
+
+	if string((*messages)[0].Key) != "edge-0" {
+		t.Fatalf("chiave Kafka=%q, attesa edge-0", (*messages)[0].Key)
+	}
+
+	if aggregator.current == nil ||
+		!aggregator.current.Start.Equal(edgeTestTime(10, 5)) ||
+		!aggregator.current.End.Equal(edgeTestTime(10, 10)) ||
+		aggregator.current.Events != 1 {
+		t.Fatalf("nuova finestra inattesa: %#v", aggregator.current)
+	}
+}
+
+func TestWindowAggregatorCountsDuplicateEventIDOnce(t *testing.T) {
+	aggregator, _ := newTestEdgeAggregator()
+	measurement := validMeasurement(20, 50, 100000)
+
+	for _, minute := range []int{1, 3} {
+		if err := aggregator.Add(
+			"event-duplicate",
+			edgeTestTime(10, minute),
+			measurement,
+		); err != nil {
+			t.Fatalf("Add() ha restituito un errore: %v", err)
+		}
+	}
+
+	if aggregator.current.Events != 1 ||
+		aggregator.current.DuplicateEvents != 1 ||
+		aggregator.current.Temperature.Valid != 1 {
+		t.Fatalf("duplicato conteggiato nello stato: %#v", aggregator.current)
+	}
+}
+
+func TestWindowAggregatorRejectsEventFromPreviousWindow(t *testing.T) {
+	aggregator, _ := newTestEdgeAggregator()
+	measurement := validMeasurement(20, 50, 100000)
+
+	if err := aggregator.Add(
+		"event-current",
+		edgeTestTime(10, 6),
+		measurement,
+	); err != nil {
+		t.Fatalf("primo Add() ha restituito un errore: %v", err)
+	}
+
+	err := aggregator.Add(
+		"event-old",
+		edgeTestTime(10, 1),
+		measurement,
+	)
+	if err == nil {
+		t.Fatal("evento appartenente a una finestra precedente accettato")
+	}
+
+	if aggregator.current.Events != 1 {
+		t.Fatalf("evento fuori ordine ha modificato lo stato: %#v", aggregator.current)
+	}
+}
+
+func TestWindowAggregatorFlushIsIdempotent(t *testing.T) {
+	aggregator, messages := newTestEdgeAggregator()
+
+	if err := aggregator.Add(
+		"event-1",
+		edgeTestTime(10, 1),
+		validMeasurement(20, 50, 100000),
+	); err != nil {
+		t.Fatalf("Add() ha restituito un errore: %v", err)
+	}
+
+	aggregator.Flush()
+	aggregator.Flush()
+
+	if len(*messages) != 1 {
+		t.Fatalf("aggregati emessi da due Flush=%d, atteso 1", len(*messages))
+	}
+
+	if aggregator.current != nil {
+		t.Fatalf("finestra ancora attiva dopo Flush: %#v", aggregator.current)
+	}
+}
+
+func TestWindowAggregatorTracksValidAndInvalidMetrics(t *testing.T) {
+	aggregator, messages := newTestEdgeAggregator()
+	measurements := []EdgeMeasurement{
+		validMeasurement(20, 50, 100000),
+		{
+			Temperature: MetricValue{Valid: false},
+			Humidity:    MetricValue{Value: 60, Valid: true},
+			Pressure:    MetricValue{Valid: false},
+		},
+		{
+			Temperature: MetricValue{Value: 30, Valid: true},
+			Humidity:    MetricValue{Valid: false},
+			Pressure:    MetricValue{Value: 90000, Valid: true},
+		},
+	}
+
+	for index, measurement := range measurements {
+		if err := aggregator.Add(
+			eventID(index),
+			edgeTestTime(10, index+1),
+			measurement,
+		); err != nil {
+			t.Fatalf("Add() ha restituito un errore: %v", err)
+		}
+	}
+
+	aggregator.Flush()
+	emitted := decodeEdgeAggregate(t, (*messages)[0])
+
+	assertEdgeMetric(t, emitted.Temperature, 2, 1, 50, 25, 20, 30)
+	assertEdgeMetric(t, emitted.Humidity, 2, 1, 110, 55, 50, 60)
+	assertEdgeMetric(t, emitted.Pressure, 2, 1, 190000, 95000, 90000, 100000)
+}
+
+func TestRetrySubscriptionSucceedsAfterTransientFailures(t *testing.T) {
+	calls := 0
+	var waits []time.Duration
+
+	attempts, err := retrySubscription(
+		testRetryPolicy(),
+		func() bool { return true },
+		func(timeout time.Duration) error {
+			if timeout != time.Second {
+				t.Fatalf("timeout=%s, atteso 1s", timeout)
+			}
+
+			calls++
+			if calls < 3 {
+				return errors.New("errore temporaneo")
+			}
+
+			return nil
+		},
+		func(duration time.Duration) {
+			waits = append(waits, duration)
+		},
+	)
+	if err != nil {
+		t.Fatalf("retrySubscription() ha restituito un errore: %v", err)
+	}
+
+	if attempts != 3 || calls != 3 {
+		t.Fatalf("attempts=%d calls=%d, attesi 3 e 3", attempts, calls)
+	}
+
+	if len(waits) != 2 ||
+		waits[0] != 10*time.Millisecond ||
+		waits[1] != 20*time.Millisecond {
+		t.Fatalf("backoff inattesi: %v", waits)
+	}
+}
+
+func TestRetrySubscriptionStopsAfterConfiguredAttempts(t *testing.T) {
+	calls := 0
+	waits := 0
+
+	attempts, err := retrySubscription(
+		testRetryPolicy(),
+		func() bool { return true },
+		func(time.Duration) error {
+			calls++
+			return errors.New("errore temporaneo")
+		},
+		func(time.Duration) { waits++ },
+	)
+	if err == nil {
+		t.Fatal("esaurimento retry non segnalato")
+	}
+
+	if attempts != 3 || calls != 3 || waits != 2 {
+		t.Fatalf(
+			"attempts=%d calls=%d waits=%d, attesi 3, 3, 2",
+			attempts,
+			calls,
+			waits,
+		)
+	}
+}
+
+func TestRetrySubscriptionStopsWhenConnectionGenerationIsInvalidated(t *testing.T) {
+	coordinator := &SubscriptionCoordinator{}
+	generation := coordinator.Begin()
+	calls := 0
+
+	attempts, err := retrySubscription(
+		testRetryPolicy(),
+		func() bool { return coordinator.IsCurrent(generation) },
+		func(time.Duration) error {
+			calls++
+			coordinator.Invalidate()
+			return errors.New("connessione persa")
+		},
+		func(time.Duration) {
+			t.Fatal("backoff eseguito dopo invalidazione")
+		},
+	)
+	if !errors.Is(err, errSubscriptionInactive) {
+		t.Fatalf("errore=%v, atteso errSubscriptionInactive", err)
+	}
+
+	if attempts != 1 || calls != 1 {
+		t.Fatalf("attempts=%d calls=%d, attesi 1 e 1", attempts, calls)
+	}
+}
+
 func TestReadinessStateTransitions(t *testing.T) {
 	state := &ReadinessState{}
 
@@ -178,5 +442,100 @@ func assertReadinessStatus(
 			response.Code,
 			expected,
 		)
+	}
+}
+
+func newTestEdgeAggregator() (*WindowAggregator, *[]kafka.Message) {
+	messages := make([]kafka.Message, 0)
+
+	return &WindowAggregator{
+		edgeID:     "edge-0",
+		windowSize: 5 * time.Minute,
+		kafkaTopic: "edge-aggregates",
+		publishMessage: func(
+			_ context.Context,
+			message kafka.Message,
+		) error {
+			messages = append(messages, message)
+			return nil
+		},
+	}, &messages
+}
+
+func decodeEdgeAggregate(
+	t *testing.T,
+	message kafka.Message,
+) model.EdgeAggregate {
+	t.Helper()
+
+	var aggregate model.EdgeAggregate
+	if err := json.Unmarshal(message.Value, &aggregate); err != nil {
+		t.Fatalf("payload Kafka non valido: %v", err)
+	}
+
+	return aggregate
+}
+
+func validMeasurement(
+	temperature float64,
+	humidity float64,
+	pressure float64,
+) EdgeMeasurement {
+	return EdgeMeasurement{
+		Temperature: MetricValue{Value: temperature, Valid: true},
+		Humidity:    MetricValue{Value: humidity, Valid: true},
+		Pressure:    MetricValue{Value: pressure, Valid: true},
+	}
+}
+
+func assertEdgeMetric(
+	t *testing.T,
+	actual model.MetricAggregate,
+	valid uint64,
+	invalid uint64,
+	sum float64,
+	average float64,
+	minimum float64,
+	maximum float64,
+) {
+	t.Helper()
+
+	if actual.Valid != valid || actual.Invalid != invalid {
+		t.Fatalf("conteggi metrici inattesi: %#v", actual)
+	}
+
+	if math.Abs(actual.Sum-sum) > 1e-9 ||
+		actual.Average == nil || math.Abs(*actual.Average-average) > 1e-9 ||
+		actual.Min == nil || math.Abs(*actual.Min-minimum) > 1e-9 ||
+		actual.Max == nil || math.Abs(*actual.Max-maximum) > 1e-9 {
+		t.Fatalf("statistiche metriche inattese: %#v", actual)
+	}
+}
+
+func edgeTestTime(
+	hour int,
+	minute int,
+) time.Time {
+	return time.Date(
+		2026,
+		time.January,
+		1,
+		hour,
+		minute,
+		0,
+		0,
+		time.UTC,
+	)
+}
+
+func eventID(index int) string {
+	return "event-" + string(rune('a'+index))
+}
+
+func testRetryPolicy() SubscriptionRetryPolicy {
+	return SubscriptionRetryPolicy{
+		Attempts: 3,
+		Timeout:  time.Second,
+		Backoff:  10 * time.Millisecond,
 	}
 }

@@ -35,7 +35,9 @@ Lo stato dei requisiti della traccia e mantenuto in
 - Ogni **Edge** valida le misure e calcola media, somma, minimo, massimo e conteggi
   validi/non validi su finestre tumbling di event time, di default da 5 minuti.
   `GET /readyz` restituisce `200` soltanto dopo la connessione e la subscription
-  MQTT a `sensors/+/telemetry`; altrimenti restituisce `503`.
+  MQTT a `sensors/+/telemetry`; altrimenti restituisce `503`. Una subscription
+  fallita temporaneamente viene riprovata fino a tre tentativi complessivi con
+  backoff breve, restando non-ready fino al successo effettivo.
 - **Kafka** persiste gli `EdgeAggregate` e li distribuisce ai Cloud Worker usando
   la chiave `edge_id`.
 - I **Cloud Worker** eseguono un temporal roll-up indipendente per ogni Edge: tre
@@ -83,21 +85,43 @@ Il notebook mantiene il replay globale:
 
 - `dataset/derived/2025-01_bme280_europe_sensors-150_seed-42.csv`.
 
-Una singola scansione chunked, basata sulla topologia sperimentale, genera:
+Una singola scansione chunked, basata sulla topologia sperimentale, genera i
+replay non versionati:
 
 - `dataset/derived/replay_by_edge/edge-0.csv`;
 - ...;
-- `dataset/derived/replay_by_edge/edge-12.csv`;
-- `dataset/output/replay_shards_summary.csv`.
+- `dataset/derived/replay_by_edge/edge-12.csv`.
 
-I dati derivati non sono tracciati da Git e devono essere materializzati tramite
-le celle finali del notebook. Il Simulator non legge la topologia a runtime:
-`REPLAY_FILE` identifica gia il workload del sito. `MAX_EVENTS` limita ogni
-singola istanza; con valore `1000`, ciascuno dei tredici Simulator puo pubblicare
-fino a 1000 eventi. Non e un limite globale coordinato.
+Il dataset raw `dataset/2025-01_bme280.csv`, il replay globale e l'intera
+`dataset/derived/` non sono versionati e devono essere materializzati tramite il
+notebook. La whitelist Git permette invece esclusivamente questi piccoli
+artefatti scientifici sotto `dataset/output/`:
+
+```text
+edge_k_metrics.csv
+edge_population_summary.csv
+edge_centroids.csv
+europe_topology.csv
+workload_by_edge.csv
+workload_edge_summary.csv
+kmeans_topology.csv
+replay_load_scenarios.csv
+replay_shards_summary.csv
+```
+
+`dataset/output/kmeans_topology.csv` e l'input sperimentale di `cmd/deploygen`.
+Il suo campo `macroarea_id` e un metadato legacy, vale sempre `none`, non
+rappresenta un Fog e non viene letto ne dal Simulator ne da deploygen, che usa
+soltanto `edge_id`.
+
+Il Simulator non legge la topologia a runtime: `REPLAY_FILE` identifica gia il
+workload del sito. `MAX_EVENTS` limita ogni singola istanza; con valore `1000`,
+ciascuno dei tredici Simulator puo pubblicare fino a 1000 eventi. Non e un
+limite globale coordinato.
 
 Il replay procede il piu velocemente possibile. Pacing globale, accelerazione
-coordinata e simulazione di rete verranno affrontati separatamente.
+coordinata e simulazione di rete ai confini Simulator-Edge Site ed
+Edge-Cloud/Kafka verranno affrontati separatamente.
 
 ## Avvio locale
 

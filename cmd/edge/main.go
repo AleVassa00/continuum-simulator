@@ -65,17 +65,33 @@ type WindowAggregator struct {
 	windowSize time.Duration
 	current    *WindowState
 
-	kafkaWriter *kafka.Writer
+	kafkaTopic     string
+	publishMessage func(context.Context, kafka.Message) error
 }
 
 type ReadinessState struct {
 	ready atomic.Bool
 }
 
+type SubscriptionCoordinator struct {
+	generation atomic.Uint64
+}
+
+type SubscriptionRetryPolicy struct {
+	Attempts int
+	Timeout  time.Duration
+	Backoff  time.Duration
+}
+
 const (
 	telemetrySubscriptionTopic = "sensors/+/telemetry"
 	readinessAddress           = ":8080"
+	mqttSubscriptionAttempts   = 3
+	mqttSubscriptionTimeout    = 5 * time.Second
+	mqttSubscriptionBackoff    = 250 * time.Millisecond
 )
+
+var errSubscriptionInactive = errors.New("tentativo di sottoscrizione MQTT non piu attivo")
 
 func main() {
 	edgeID := strings.TrimSpace(
@@ -121,9 +137,18 @@ func main() {
 	)
 
 	aggregator := &WindowAggregator{
-		edgeID:      edgeID,
-		windowSize:  windowSize,
-		kafkaWriter: kafkaWriter,
+		edgeID:     edgeID,
+		windowSize: windowSize,
+		kafkaTopic: kafkaTopic,
+		publishMessage: func(
+			ctx context.Context,
+			message kafka.Message,
+		) error {
+			return kafkaWriter.WriteMessages(
+				ctx,
+				message,
+			)
+		},
 	}
 
 	readiness := &ReadinessState{}
@@ -183,9 +208,12 @@ func main() {
 		5 * time.Second,
 	)
 
+	subscriptions := &SubscriptionCoordinator{}
+
 	options.SetOnConnectHandler(
 		func(client mqtt.Client) {
 			readiness.MarkNotReady()
+			generation := subscriptions.Begin()
 
 			fmt.Printf(
 				"%s connesso al broker MQTT\n",
@@ -197,6 +225,8 @@ func main() {
 				edgeID,
 				aggregator,
 				readiness,
+				subscriptions,
+				generation,
 			)
 		},
 	)
@@ -206,6 +236,7 @@ func main() {
 			client mqtt.Client,
 			err error,
 		) {
+			subscriptions.Invalidate()
 			readiness.MarkNotReady()
 
 			fmt.Printf(
@@ -250,6 +281,7 @@ func main() {
 		edgeID,
 	)
 
+	subscriptions.Invalidate()
 	readiness.MarkNotReady()
 	client.Disconnect(250)
 
@@ -281,6 +313,26 @@ func (
 	state *ReadinessState,
 ) IsReady() bool {
 	return state.ready.Load()
+}
+
+func (
+	coordinator *SubscriptionCoordinator,
+) Begin() uint64 {
+	return coordinator.generation.Add(1)
+}
+
+func (
+	coordinator *SubscriptionCoordinator,
+) Invalidate() {
+	coordinator.generation.Add(1)
+}
+
+func (
+	coordinator *SubscriptionCoordinator,
+) IsCurrent(
+	generation uint64,
+) bool {
+	return coordinator.generation.Load() == generation
 }
 
 func (
@@ -449,45 +501,55 @@ func subscribeToTelemetry(
 	edgeID string,
 	aggregator *WindowAggregator,
 	readiness *ReadinessState,
+	coordinator *SubscriptionCoordinator,
+	generation uint64,
 ) {
 	readiness.MarkNotReady()
 
 	topic := telemetrySubscriptionTopic
-
-	token := client.Subscribe(
-		topic,
-		1,
-		makeTelemetryHandler(
-			edgeID,
-			aggregator,
-		),
+	handler := makeTelemetryHandler(
+		edgeID,
+		aggregator,
 	)
 
-	if !token.WaitTimeout(
-		5 * time.Second,
-	) {
+	attempts, err := retrySubscription(
+		SubscriptionRetryPolicy{
+			Attempts: mqttSubscriptionAttempts,
+			Timeout:  mqttSubscriptionTimeout,
+			Backoff:  mqttSubscriptionBackoff,
+		},
+		func() bool {
+			return coordinator.IsCurrent(generation) &&
+				client.IsConnected()
+		},
+		func(timeout time.Duration) error {
+			token := client.Subscribe(
+				topic,
+				1,
+				handler,
+			)
+
+			if !token.WaitTimeout(timeout) {
+				return fmt.Errorf("timeout sottoscrizione MQTT")
+			}
+
+			if token.Error() != nil {
+				return fmt.Errorf(
+					"errore sottoscrizione MQTT: %w",
+					token.Error(),
+				)
+			}
+
+			return nil
+		},
+		time.Sleep,
+	)
+	if err != nil {
 		fmt.Printf(
-			"%s: timeout sottoscrizione MQTT\n",
+			"%s: sottoscrizione MQTT non attiva dopo %d tentativi: %v\n",
 			edgeID,
-		)
-
-		return
-	}
-
-	if token.Error() != nil {
-		fmt.Printf(
-			"%s: errore sottoscrizione MQTT: %v\n",
-			edgeID,
-			token.Error(),
-		)
-
-		return
-	}
-
-	if !client.IsConnected() {
-		fmt.Printf(
-			"%s: connessione MQTT persa durante la sottoscrizione\n",
-			edgeID,
+			attempts,
+			err,
 		)
 
 		return
@@ -500,6 +562,52 @@ func subscribeToTelemetry(
 		edgeID,
 		topic,
 	)
+}
+
+func retrySubscription(
+	policy SubscriptionRetryPolicy,
+	isActive func() bool,
+	attempt func(time.Duration) error,
+	wait func(time.Duration),
+) (int, error) {
+	if policy.Attempts <= 0 {
+		return 0, fmt.Errorf("numero tentativi di sottoscrizione non valido")
+	}
+
+	var lastErr error
+
+	for attemptNumber := 1; attemptNumber <= policy.Attempts; attemptNumber++ {
+		if !isActive() {
+			return attemptNumber - 1, errSubscriptionInactive
+		}
+
+		lastErr = attempt(policy.Timeout)
+		if lastErr == nil {
+			if !isActive() {
+				return attemptNumber, errSubscriptionInactive
+			}
+
+			return attemptNumber, nil
+		}
+
+		if attemptNumber == policy.Attempts {
+			break
+		}
+
+		if !isActive() {
+			return attemptNumber, errSubscriptionInactive
+		}
+
+		wait(
+			policy.Backoff * time.Duration(attemptNumber),
+		)
+	}
+
+	return policy.Attempts,
+		fmt.Errorf(
+			"tentativi di sottoscrizione esauriti: %w",
+			lastErr,
+		)
 }
 
 func makeTelemetryHandler(
@@ -848,7 +956,7 @@ func (
 	)
 	defer cancel()
 
-	err = aggregator.kafkaWriter.WriteMessages(
+	err = aggregator.publishMessage(
 		ctx,
 		kafka.Message{
 			Key: []byte(
@@ -874,7 +982,7 @@ func (
 		aggregate.AggregateID,
 		aggregate.Events,
 		aggregate.DuplicateEvents,
-		aggregator.kafkaWriter.Topic,
+		aggregator.kafkaTopic,
 	)
 
 	return nil
