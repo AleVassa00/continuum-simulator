@@ -122,6 +122,20 @@ func TestReplayPacerIsIndependentFromPreviousEvents(t *testing.T) {
 	}
 }
 
+func TestLocalReplayStartTranslatesConfiguredStart(t *testing.T) {
+	now := mustTime("2026-08-28T19:59:50Z")
+	configuredStart := now.Add(10 * time.Second)
+
+	anchor := localReplayStart(now, configuredStart)
+	if !anchor.Equal(configuredStart) {
+		t.Fatalf("anchor=%s, atteso %s", anchor, configuredStart)
+	}
+
+	if delay := anchor.Sub(now); delay != 10*time.Second {
+		t.Fatalf("ritardo anchor=%s, atteso 10s", delay)
+	}
+}
+
 func TestReplayDoesNotUseFirstShardEventAsEpoch(t *testing.T) {
 	config := validSimulatorConfig()
 	clock := newFakeClock(config.ReplayStartAt)
@@ -333,13 +347,213 @@ func TestReplayMeasuresSchedulingLag(t *testing.T) {
 	}
 }
 
+func TestReplayRejectsStartBeyondLateTolerance(t *testing.T) {
+	config := validSimulatorConfig()
+	clock := newFakeClock(
+		config.ReplayStartAt.Add(5 * time.Second),
+	)
+	publishCalls := 0
+
+	stats, err := replaySite(
+		replayReader(
+			"401;BME280;4;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
+		),
+		config,
+		ReplayRuntime{
+			Now:   clock.Now,
+			Sleep: clock.Sleep,
+			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
+				publishCalls++
+
+				return PublishResult{}, nil
+			},
+		},
+	)
+	if err == nil ||
+		!strings.Contains(err.Error(), "avviato troppo tardi") ||
+		!strings.Contains(err.Error(), "edge-3") ||
+		!strings.Contains(err.Error(), "scheduled_at=") ||
+		!strings.Contains(err.Error(), "actual_at=") ||
+		!strings.Contains(err.Error(), "lateness=5s") {
+		t.Fatalf("errore inatteso: %v", err)
+	}
+
+	if publishCalls != 0 || stats.Events != 0 {
+		t.Fatalf("publish=%d eventi=%d", publishCalls, stats.Events)
+	}
+}
+
+func TestReplayAcceptsSmallInitialLateness(t *testing.T) {
+	config := validSimulatorConfig()
+	clock := newFakeClock(
+		config.ReplayStartAt.Add(100 * time.Millisecond),
+	)
+
+	stats, err := replaySite(
+		replayReader(
+			"401;BME280;4;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
+		),
+		config,
+		ReplayRuntime{
+			Now:   clock.Now,
+			Sleep: clock.Sleep,
+			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
+				return PublishResult{
+					Token:       newCompletedToken(nil),
+					PublishedAt: clock.Now(),
+				}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stats.Events != 1 ||
+		stats.AverageSchedulingLag() != 100*time.Millisecond {
+		t.Fatalf(
+			"eventi=%d lag=%s",
+			stats.Events,
+			stats.AverageSchedulingLag(),
+		)
+	}
+}
+
+func TestReplayDoesNotAbortForLatenessAfterFirstPublish(t *testing.T) {
+	config := validSimulatorConfig()
+	clock := newFakeClock(config.ReplayStartAt)
+	publishCalls := 0
+
+	stats, err := replaySite(
+		replayReader(
+			"401;BME280;4;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
+			"402;BME280;4;45.0;9.0;2025-01-01T00:00:10Z;100000;20;50",
+		),
+		config,
+		ReplayRuntime{
+			Now:   clock.Now,
+			Sleep: clock.Sleep,
+			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
+				publishedAt := clock.Now()
+				publishCalls++
+				if publishCalls == 1 {
+					clock.Advance(3 * time.Second)
+				}
+
+				return PublishResult{
+					Token:       newCompletedToken(nil),
+					PublishedAt: publishedAt,
+				}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stats.Events != 2 || stats.SchedulingLagMax != 2*time.Second {
+		t.Fatalf(
+			"eventi=%d lag massimo=%s",
+			stats.Events,
+			stats.SchedulingLagMax,
+		)
+	}
+}
+
+func TestReplayThroughputUsesOnlyPublishWindow(t *testing.T) {
+	config := validSimulatorConfig()
+	enteredAt := config.ReplayStartAt.Add(-10 * time.Second)
+	clock := newFakeClock(enteredAt)
+
+	stats, err := replaySite(
+		replayReader(
+			"401;BME280;4;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
+			"402;BME280;4;45.0;9.0;2025-01-01T00:00:20Z;100000;20;50",
+		),
+		config,
+		ReplayRuntime{
+			Now:   clock.Now,
+			Sleep: clock.Sleep,
+			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
+				return PublishResult{
+					Token:       newCompletedToken(nil),
+					PublishedAt: clock.Now(),
+				}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !stats.FirstPublishedAt.Equal(config.ReplayStartAt) ||
+		!stats.LastPublishedAt.Equal(config.ReplayStartAt.Add(2*time.Second)) ||
+		stats.PublishDuration() != 2*time.Second ||
+		stats.Throughput() != 0.5 {
+		t.Fatalf("statistiche publish inattese: %#v", stats)
+	}
+
+	if len(clock.sleeps) != 2 ||
+		clock.sleeps[0] != 10*time.Second ||
+		clock.sleeps[1] != 2*time.Second {
+		t.Fatalf("sleep inattesi: %v", clock.sleeps)
+	}
+}
+
+func TestReplayCompletedAtIsRecordedAfterDrain(t *testing.T) {
+	config := validSimulatorConfig()
+	clock := newFakeClock(config.ReplayStartAt)
+	token := newAwaitableToken(nil)
+	token.onWait = func() {
+		clock.Advance(2 * time.Second)
+	}
+
+	stats, err := replaySite(
+		replayReader(
+			"401;BME280;4;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
+		),
+		config,
+		ReplayRuntime{
+			Now:   clock.Now,
+			Sleep: clock.Sleep,
+			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
+				return PublishResult{
+					Token:       token,
+					PublishedAt: clock.Now(),
+				}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if token.waitCalls != 1 ||
+		!stats.FirstPublishedAt.Equal(config.ReplayStartAt) ||
+		!stats.LastPublishedAt.Equal(config.ReplayStartAt) ||
+		!stats.CompletedAt.Equal(config.ReplayStartAt.Add(2*time.Second)) ||
+		stats.DrainDuration() != 2*time.Second ||
+		stats.Throughput() != 0 {
+		t.Fatalf("statistiche drain inattese: %#v", stats)
+	}
+
+	if stats.FirstPublishedAt.After(stats.LastPublishedAt) ||
+		stats.LastPublishedAt.After(stats.CompletedAt) {
+		t.Fatalf("ordine timestamp non valido: %#v", stats)
+	}
+}
+
 func TestReplayStatsClampNegativeSchedulingLagToZero(t *testing.T) {
 	stats := ReplayStats{}
-	stats.RecordPublish(-time.Second)
+	stats.RecordPublish(testPublishTime, -time.Second)
 
 	if stats.Events != 1 ||
 		stats.SchedulingLagTotal != 0 ||
-		stats.SchedulingLagMax != 0 {
+		stats.SchedulingLagMax != 0 ||
+		!stats.FirstPublishedAt.Equal(testPublishTime) ||
+		!stats.LastPublishedAt.Equal(testPublishTime) ||
+		stats.PublishDuration() != 0 ||
+		stats.Throughput() != 0 {
 		t.Fatalf("statistiche lag negative inattese: %#v", stats)
 	}
 }
@@ -401,6 +615,100 @@ func TestPendingPublishesReapsCompletedToken(t *testing.T) {
 			pending.Len(),
 			pending.Peak(),
 			token.waitCalls,
+		)
+	}
+}
+
+func TestPendingPublishesReapsOnlyCompletedPrefix(t *testing.T) {
+	pending := mustPendingPublishes(t, 10)
+	tokens := []*fakeToken{
+		newAwaitableToken(nil),
+		newAwaitableToken(nil),
+		newAwaitableToken(nil),
+		newAwaitableToken(nil),
+	}
+
+	for index, publishToken := range tokens {
+		if err := pending.Track(testPending(eventID(index), publishToken)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tokens[0].complete()
+	tokens[1].complete()
+	tokens[3].complete()
+	for _, publishToken := range tokens {
+		publishToken.doneCalls = 0
+	}
+
+	if err := pending.reapCompletedPrefix(); err != nil {
+		t.Fatal(err)
+	}
+
+	if pending.Len() != 2 || pending.oldest().EventID != "event-2" {
+		t.Fatalf(
+			"pending=%d oldest=%s",
+			pending.Len(),
+			pending.oldest().EventID,
+		)
+	}
+
+	if tokens[0].doneCalls != 1 ||
+		tokens[1].doneCalls != 1 ||
+		tokens[2].doneCalls != 1 ||
+		tokens[3].doneCalls != 0 {
+		t.Fatalf(
+			"consultazioni Done inattese: %d %d %d %d",
+			tokens[0].doneCalls,
+			tokens[1].doneCalls,
+			tokens[2].doneCalls,
+			tokens[3].doneCalls,
+		)
+	}
+
+	if err := pending.waitOldest(); err != nil {
+		t.Fatal(err)
+	}
+	if tokens[2].waitCalls != 1 || tokens[3].waitCalls != 0 {
+		t.Fatalf(
+			"ordine FIFO inatteso: C=%d D=%d",
+			tokens[2].waitCalls,
+			tokens[3].waitCalls,
+		)
+	}
+
+	if err := pending.reapCompletedPrefix(); err != nil {
+		t.Fatal(err)
+	}
+	if pending.Len() != 0 {
+		t.Fatalf("pending finali=%d", pending.Len())
+	}
+}
+
+func TestPendingPublishesPrefixReapStopsAtFirstPendingToken(t *testing.T) {
+	pending := mustPendingPublishes(t, 4)
+	first := newAwaitableToken(nil)
+	second := newCompletedToken(nil)
+
+	if err := pending.Track(testPending("event-1", first)); err != nil {
+		t.Fatal(err)
+	}
+	if err := pending.Track(testPending("event-2", second)); err != nil {
+		t.Fatal(err)
+	}
+	first.doneCalls = 0
+	second.doneCalls = 0
+
+	if err := pending.reapCompletedPrefix(); err != nil {
+		t.Fatal(err)
+	}
+
+	if first.doneCalls != 1 || second.doneCalls != 0 || pending.Len() != 2 {
+		t.Fatalf(
+			"Done first=%d second=%d pending=%d",
+			first.doneCalls,
+			second.doneCalls,
+			pending.Len(),
 		)
 	}
 }
@@ -863,6 +1171,7 @@ type fakeToken struct {
 	completed  bool
 	waitResult bool
 	err        error
+	doneCalls  int
 	waitCalls  int
 	onWait     func()
 }
@@ -928,6 +1237,7 @@ func (
 func (
 	token *fakeToken,
 ) Done() <-chan struct{} {
+	token.doneCalls++
 	return token.done
 }
 

@@ -65,6 +65,8 @@ type PendingPublishes struct {
 	ackTimeout  time.Duration
 	now         func() time.Time
 	pending     []PendingPublish
+	head        int
+	size        int
 	peak        int
 }
 
@@ -96,7 +98,8 @@ type ReplayStats struct {
 	SchedulingLagTotal time.Duration
 	SchedulingLagMax   time.Duration
 	PeakInFlight       int
-	StartedAt          time.Time
+	FirstPublishedAt   time.Time
+	LastPublishedAt    time.Time
 	CompletedAt        time.Time
 }
 
@@ -105,6 +108,7 @@ const (
 	defaultAccelerationFactor = 1000.0
 	defaultMQTTMaxInFlight    = 1000
 	publishAckTimeout         = 5 * time.Second
+	replayStartLateTolerance  = 1 * time.Second
 )
 
 func main() {
@@ -229,6 +233,14 @@ func (
 	return pacer.StartAt.Add(acceleratedOffset), nil
 }
 
+func localReplayStart(
+	now time.Time,
+	configuredStart time.Time,
+) time.Time {
+	// Add conserva il riferimento monotonic di now sull'istante UTC configurato.
+	return now.Add(configuredStart.Sub(now))
+}
+
 func newPendingPublishes(
 	maxInFlight int,
 	ackTimeout time.Duration,
@@ -252,7 +264,6 @@ func newPendingPublishes(
 		now:         now,
 		pending: make(
 			[]PendingPublish,
-			0,
 			maxInFlight,
 		),
 	}, nil
@@ -279,19 +290,24 @@ func (
 		)
 	}
 
-	pending.pending = append(
-		pending.pending,
-		publish,
-	)
-	if len(pending.pending) > pending.peak {
-		pending.peak = len(pending.pending)
+	if pending.Len() >= pending.maxInFlight {
+		return fmt.Errorf(
+			"coda MQTT in-flight già piena prima di tracciare event_id=%s topic=%s",
+			publish.EventID,
+			publish.Topic,
+		)
 	}
 
-	if err := pending.ReapCompleted(); err != nil {
+	pending.enqueue(publish)
+	if pending.Len() > pending.peak {
+		pending.peak = pending.Len()
+	}
+
+	if err := pending.reapCompletedPrefix(); err != nil {
 		return err
 	}
 
-	if len(pending.pending) < pending.maxInFlight {
+	if pending.Len() < pending.maxInFlight {
 		return nil
 	}
 
@@ -300,40 +316,28 @@ func (
 
 func (
 	pending *PendingPublishes,
-) ReapCompleted() error {
-	remaining := pending.pending[:0]
-	var firstErr error
-
-	for _, publish := range pending.pending {
+) reapCompletedPrefix() error {
+	for pending.Len() > 0 {
+		publish := pending.oldest()
 		select {
 		case <-publish.Token.Done():
-			if err := publish.Token.Error(); err != nil && firstErr == nil {
-				firstErr = fmt.Errorf(
-					"pubblicazione MQTT event_id=%s topic=%s fallita: %w",
-					publish.EventID,
-					publish.Topic,
-					err,
-				)
+			pending.popOldest()
+			if err := pending.publishError(publish); err != nil {
+				return err
 			}
-
 		default:
-			remaining = append(
-				remaining,
-				publish,
-			)
+			return nil
 		}
 	}
 
-	pending.pending = remaining
-
-	return firstErr
+	return nil
 }
 
 func (
 	pending *PendingPublishes,
 ) waitOldest() error {
-	publish := pending.pending[0]
-	pending.pending = pending.pending[1:]
+	publish := pending.oldest()
+	pending.popOldest()
 	select {
 	case <-publish.Token.Done():
 		return pending.publishError(publish)
@@ -395,13 +399,13 @@ func (
 	}
 
 	for {
-		if err := pending.ReapCompleted(); err != nil {
+		if err := pending.reapCompletedPrefix(); err != nil {
 			return err
 		}
 
 		now := pending.now()
-		if len(pending.pending) > 0 {
-			ackDeadline := pending.pending[0].PublishedAt.
+		if pending.Len() > 0 {
+			ackDeadline := pending.oldest().PublishedAt.
 				Add(pending.ackTimeout)
 			if !ackDeadline.After(now) {
 				if err := pending.waitOldest(); err != nil {
@@ -417,12 +421,12 @@ func (
 			return nil
 		}
 
-		if len(pending.pending) == 0 {
+		if pending.Len() == 0 {
 			sleep(wait)
 			return nil
 		}
 
-		ackDeadline := pending.pending[0].PublishedAt.
+		ackDeadline := pending.oldest().PublishedAt.
 			Add(pending.ackTimeout)
 		if !ackDeadline.After(scheduledTime) {
 			if err := pending.waitOldest(); err != nil {
@@ -442,7 +446,7 @@ func (
 ) Drain() error {
 	var firstErr error
 
-	for len(pending.pending) > 0 {
+	for pending.Len() > 0 {
 		if err := pending.waitOldest(); err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -454,7 +458,35 @@ func (
 func (
 	pending *PendingPublishes,
 ) Len() int {
-	return len(pending.pending)
+	return pending.size
+}
+
+func (
+	pending *PendingPublishes,
+) enqueue(
+	publish PendingPublish,
+) {
+	tail := (pending.head + pending.size) % len(pending.pending)
+	pending.pending[tail] = publish
+	pending.size++
+}
+
+func (
+	pending *PendingPublishes,
+) oldest() PendingPublish {
+	return pending.pending[pending.head]
+}
+
+func (
+	pending *PendingPublishes,
+) popOldest() {
+	pending.pending[pending.head] = PendingPublish{}
+	pending.head = (pending.head + 1) % len(pending.pending)
+	pending.size--
+
+	if pending.size == 0 {
+		pending.head = 0
+	}
 }
 
 func (
@@ -476,9 +508,30 @@ func (
 
 func (
 	stats ReplayStats,
-) Duration() time.Duration {
-	duration := stats.CompletedAt.Sub(stats.StartedAt)
-	if duration < 0 {
+) PublishDuration() time.Duration {
+	if stats.Events <= 1 ||
+		stats.FirstPublishedAt.IsZero() ||
+		stats.LastPublishedAt.IsZero() {
+		return 0
+	}
+
+	duration := stats.LastPublishedAt.Sub(stats.FirstPublishedAt)
+	if duration <= 0 {
+		return 0
+	}
+
+	return duration
+}
+
+func (
+	stats ReplayStats,
+) DrainDuration() time.Duration {
+	if stats.LastPublishedAt.IsZero() || stats.CompletedAt.IsZero() {
+		return 0
+	}
+
+	duration := stats.CompletedAt.Sub(stats.LastPublishedAt)
+	if duration <= 0 {
 		return 0
 	}
 
@@ -488,25 +541,32 @@ func (
 func (
 	stats ReplayStats,
 ) Throughput() float64 {
-	duration := stats.Duration()
-	if duration <= 0 {
+	duration := stats.PublishDuration()
+	if stats.Events <= 1 || duration <= 0 {
 		return 0
 	}
 
-	return float64(stats.Events) /
+	// Primo e ultimo publish delimitano Events-1 intervalli di emissione.
+	return float64(stats.Events-1) /
 		duration.Seconds()
 }
 
 func (
 	stats *ReplayStats,
 ) RecordPublish(
+	publishedAt time.Time,
 	schedulingLag time.Duration,
 ) {
 	if schedulingLag < 0 {
 		schedulingLag = 0
 	}
 
+	if stats.Events == 0 {
+		stats.FirstPublishedAt = publishedAt
+	}
+
 	stats.Events++
+	stats.LastPublishedAt = publishedAt
 	stats.SchedulingLagTotal += schedulingLag
 	stats.SchedulingLagMax = max(
 		stats.SchedulingLagMax,
@@ -522,9 +582,13 @@ func replaySite(
 	stats ReplayStats,
 	replayErr error,
 ) {
+	anchorNow := runtime.Now()
 	pacer := ReplayPacer{
-		Epoch:              config.ReplayEpoch,
-		StartAt:            config.ReplayStartAt,
+		Epoch: config.ReplayEpoch,
+		StartAt: localReplayStart(
+			anchorNow,
+			config.ReplayStartAt,
+		),
 		AccelerationFactor: config.AccelerationFactor,
 	}
 
@@ -537,9 +601,8 @@ func replaySite(
 		return stats, err
 	}
 
-	stats.StartedAt = runtime.Now().UTC()
 	defer func() {
-		stats.CompletedAt = runtime.Now().UTC()
+		stats.CompletedAt = runtime.Now()
 		stats.PeakInFlight = pending.Peak()
 	}()
 
@@ -594,6 +657,22 @@ func replaySite(
 			return stats, err
 		}
 
+		if stats.Events == 0 {
+			actualTime := runtime.Now()
+			lateness := actualTime.Sub(scheduledTime)
+			if lateness > replayStartLateTolerance {
+				return stats,
+					fmt.Errorf(
+						"replay %s avviato troppo tardi: primo evento scheduled_at=%s actual_at=%s lateness=%s tolleranza=%s",
+						config.SiteID,
+						scheduledTime.UTC().Format(time.RFC3339Nano),
+						actualTime.UTC().Format(time.RFC3339Nano),
+						lateness,
+						replayStartLateTolerance,
+					)
+			}
+		}
+
 		if err := pending.WaitUntil(
 			scheduledTime,
 			runtime.Sleep,
@@ -623,7 +702,10 @@ func replaySite(
 
 		schedulingLag := result.PublishedAt.Sub(scheduledTime)
 		sequences[measurement.SensorID] = sequence
-		stats.RecordPublish(schedulingLag)
+		stats.RecordPublish(
+			result.PublishedAt,
+			schedulingLag,
+		)
 
 		err = pending.Track(
 			PendingPublish{
@@ -676,7 +758,8 @@ func printReplaySummary(
 	fmt.Printf("Scheduling lag medio: %s\n", stats.AverageSchedulingLag())
 	fmt.Printf("Scheduling lag massimo: %s\n", stats.SchedulingLagMax)
 	fmt.Printf("Peak MQTT in-flight: %d\n", stats.PeakInFlight)
-	fmt.Printf("Durata reale: %s\n", stats.Duration())
+	fmt.Printf("Durata pubblicazione: %s\n", stats.PublishDuration())
+	fmt.Printf("Durata drain finale: %s\n", stats.DrainDuration())
 	fmt.Printf("Throughput medio: %.2f eventi/s\n", stats.Throughput())
 }
 
@@ -1016,7 +1099,7 @@ func publishSensorEvent(
 			)
 	}
 
-	publishedAt := now().UTC()
+	publishedAt := now()
 	token := publish(
 		topic,
 		1,
