@@ -593,6 +593,22 @@ func buildCompose(
 		)
 
 		builder.WriteString(
+			"      REPLAY_EPOCH: \"${REPLAY_EPOCH:-2025-01-01T00:00:00Z}\"\n",
+		)
+
+		builder.WriteString(
+			"      REPLAY_START_AT: \"${REPLAY_START_AT:-}\"\n",
+		)
+
+		builder.WriteString(
+			"      ACCELERATION_FACTOR: \"${ACCELERATION_FACTOR:-1000}\"\n",
+		)
+
+		builder.WriteString(
+			"      MQTT_MAX_IN_FLIGHT: \"${MQTT_MAX_IN_FLIGHT:-1000}\"\n",
+		)
+
+		builder.WriteString(
 			"    volumes:\n",
 		)
 

@@ -142,6 +142,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-0:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-0.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -203,6 +207,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-1:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-1.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -264,6 +272,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-2:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-2.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -325,6 +337,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-3:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-3.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -386,6 +402,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-4:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-4.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -447,6 +467,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-5:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-5.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -508,6 +532,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-6:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-6.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -569,6 +597,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-7:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-7.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -630,6 +662,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-8:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-8.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -691,6 +727,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-9:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-9.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -752,6 +792,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-10:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-10.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -813,6 +857,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-11:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-11.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -874,6 +922,10 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-12:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-12.csv"
       MAX_EVENTS: "${MAX_EVENTS:-0}"
+      REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
+      REPLAY_START_AT: "${REPLAY_START_AT:-}"
+      ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
+      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:

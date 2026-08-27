@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -30,16 +31,81 @@ type SensorMeasurement struct {
 }
 
 type SimulatorConfig struct {
-	SiteID       string
-	MQTTEndpoint string
-	ReplayFile   string
-	MaxEvents    int
+	SiteID             string
+	MQTTEndpoint       string
+	ReplayFile         string
+	MaxEvents          int
+	ReplayEpoch        time.Time
+	ReplayStartAt      time.Time
+	AccelerationFactor float64
+	MQTTMaxInFlight    int
 }
+
+type ReplayPacer struct {
+	Epoch              time.Time
+	StartAt            time.Time
+	AccelerationFactor float64
+}
+
+type PublishToken interface {
+	WaitTimeout(time.Duration) bool
+	Done() <-chan struct{}
+	Error() error
+}
+
+type PendingPublish struct {
+	EventID     string
+	Topic       string
+	PublishedAt time.Time
+	Token       PublishToken
+}
+
+type PendingPublishes struct {
+	maxInFlight int
+	ackTimeout  time.Duration
+	now         func() time.Time
+	pending     []PendingPublish
+	peak        int
+}
+
+type PublishResult struct {
+	Token       PublishToken
+	PublishedAt time.Time
+}
+
+type MQTTPublish func(
+	topic string,
+	qos byte,
+	retained bool,
+	payload interface{},
+) mqtt.Token
 
 type EventPublisher func(
 	topic string,
 	event model.SensorEvent,
-) error
+) (PublishResult, error)
+
+type ReplayRuntime struct {
+	Now     func() time.Time
+	Sleep   func(time.Duration)
+	Publish EventPublisher
+}
+
+type ReplayStats struct {
+	Events             int
+	SchedulingLagTotal time.Duration
+	SchedulingLagMax   time.Duration
+	PeakInFlight       int
+	StartedAt          time.Time
+	CompletedAt        time.Time
+}
+
+const (
+	defaultReplayEpoch        = "2025-01-01T00:00:00Z"
+	defaultAccelerationFactor = 1000.0
+	defaultMQTTMaxInFlight    = 1000
+	publishAckTimeout         = 5 * time.Second
+)
 
 func main() {
 	config, err := loadSimulatorConfig(
@@ -79,50 +145,417 @@ func main() {
 	reader := csv.NewReader(file)
 	reader.Comma = ';'
 
-	publishedEvents, err := replaySite(
+	stats, err := replaySite(
 		reader,
 		config,
-		func(
-			topic string,
-			event model.SensorEvent,
-		) error {
-			return publishSensorEvent(
-				client,
-				topic,
-				event,
-			)
+		ReplayRuntime{
+			Now:   time.Now,
+			Sleep: time.Sleep,
+			Publish: func(
+				topic string,
+				event model.SensorEvent,
+			) (PublishResult, error) {
+				return publishSensorEvent(
+					client.Publish,
+					topic,
+					event,
+					time.Now,
+				)
+			},
 		},
 	)
+
+	printReplaySummary(
+		config.SiteID,
+		stats,
+		err,
+	)
+
 	if err != nil {
-		panic(err)
+		panic(
+			fmt.Errorf(
+				"replay %s fallito: %w",
+				config.SiteID,
+				err,
+			),
+		)
+	}
+}
+
+func (
+	pacer ReplayPacer,
+) ScheduledTime(
+	observedAt time.Time,
+) (time.Time, error) {
+	if pacer.Epoch.IsZero() {
+		return time.Time{}, fmt.Errorf("REPLAY_EPOCH non impostata")
 	}
 
-	fmt.Printf(
-		"\nReplay %s terminato: %d eventi pubblicati\n",
-		config.SiteID,
-		publishedEvents,
+	if pacer.StartAt.IsZero() {
+		return time.Time{}, fmt.Errorf("REPLAY_START_AT non impostata")
+	}
+
+	if pacer.AccelerationFactor <= 0 ||
+		math.IsNaN(pacer.AccelerationFactor) ||
+		math.IsInf(pacer.AccelerationFactor, 0) {
+		return time.Time{},
+			fmt.Errorf(
+				"ACCELERATION_FACTOR deve essere finito e maggiore di zero",
+			)
+	}
+
+	if observedAt.Before(pacer.Epoch) {
+		return time.Time{},
+			fmt.Errorf(
+				"observed_at %s precedente a REPLAY_EPOCH %s",
+				observedAt.UTC().Format(time.RFC3339Nano),
+				pacer.Epoch.UTC().Format(time.RFC3339Nano),
+			)
+	}
+
+	eventOffset := observedAt.Sub(pacer.Epoch)
+	acceleratedNanoseconds := float64(eventOffset) /
+		pacer.AccelerationFactor
+
+	if acceleratedNanoseconds > float64(math.MaxInt64) {
+		return time.Time{},
+			fmt.Errorf(
+				"offset accelerato fuori dal range time.Duration",
+			)
+	}
+
+	acceleratedOffset := time.Duration(acceleratedNanoseconds)
+
+	return pacer.StartAt.Add(acceleratedOffset), nil
+}
+
+func newPendingPublishes(
+	maxInFlight int,
+	ackTimeout time.Duration,
+	now func() time.Time,
+) (*PendingPublishes, error) {
+	if maxInFlight <= 0 {
+		return nil, fmt.Errorf("MQTT_MAX_IN_FLIGHT deve essere maggiore di zero")
+	}
+
+	if ackTimeout <= 0 {
+		return nil, fmt.Errorf("timeout PUBACK deve essere maggiore di zero")
+	}
+
+	if now == nil {
+		return nil, fmt.Errorf("clock PUBACK non configurato")
+	}
+
+	return &PendingPublishes{
+		maxInFlight: maxInFlight,
+		ackTimeout:  ackTimeout,
+		now:         now,
+		pending: make(
+			[]PendingPublish,
+			0,
+			maxInFlight,
+		),
+	}, nil
+}
+
+func (
+	pending *PendingPublishes,
+) Track(
+	publish PendingPublish,
+) error {
+	if publish.Token == nil {
+		return fmt.Errorf(
+			"token MQTT nil per event_id=%s topic=%s",
+			publish.EventID,
+			publish.Topic,
+		)
+	}
+
+	if publish.PublishedAt.IsZero() {
+		return fmt.Errorf(
+			"istante di pubblicazione MQTT mancante per event_id=%s topic=%s",
+			publish.EventID,
+			publish.Topic,
+		)
+	}
+
+	pending.pending = append(
+		pending.pending,
+		publish,
+	)
+	if len(pending.pending) > pending.peak {
+		pending.peak = len(pending.pending)
+	}
+
+	if err := pending.ReapCompleted(); err != nil {
+		return err
+	}
+
+	if len(pending.pending) < pending.maxInFlight {
+		return nil
+	}
+
+	return pending.waitOldest()
+}
+
+func (
+	pending *PendingPublishes,
+) ReapCompleted() error {
+	remaining := pending.pending[:0]
+	var firstErr error
+
+	for _, publish := range pending.pending {
+		select {
+		case <-publish.Token.Done():
+			if err := publish.Token.Error(); err != nil && firstErr == nil {
+				firstErr = fmt.Errorf(
+					"pubblicazione MQTT event_id=%s topic=%s fallita: %w",
+					publish.EventID,
+					publish.Topic,
+					err,
+				)
+			}
+
+		default:
+			remaining = append(
+				remaining,
+				publish,
+			)
+		}
+	}
+
+	pending.pending = remaining
+
+	return firstErr
+}
+
+func (
+	pending *PendingPublishes,
+) waitOldest() error {
+	publish := pending.pending[0]
+	pending.pending = pending.pending[1:]
+	select {
+	case <-publish.Token.Done():
+		return pending.publishError(publish)
+	default:
+	}
+
+	timeRemaining := publish.PublishedAt.
+		Add(pending.ackTimeout).
+		Sub(pending.now())
+	if timeRemaining <= 0 {
+		return pending.timeoutError(publish)
+	}
+
+	if !publish.Token.WaitTimeout(timeRemaining) {
+		return pending.timeoutError(publish)
+	}
+
+	return pending.publishError(publish)
+}
+
+func (
+	pending *PendingPublishes,
+) publishError(
+	publish PendingPublish,
+) error {
+	if err := publish.Token.Error(); err != nil {
+		return fmt.Errorf(
+			"pubblicazione MQTT event_id=%s topic=%s fallita: %w",
+			publish.EventID,
+			publish.Topic,
+			err,
+		)
+	}
+
+	return nil
+}
+
+func (
+	pending *PendingPublishes,
+) timeoutError(
+	publish PendingPublish,
+) error {
+	return fmt.Errorf(
+		"timeout PUBACK MQTT event_id=%s topic=%s dopo %s dal publish",
+		publish.EventID,
+		publish.Topic,
+		pending.ackTimeout,
+	)
+}
+
+func (
+	pending *PendingPublishes,
+) WaitUntil(
+	scheduledTime time.Time,
+	sleep func(time.Duration),
+) error {
+	if sleep == nil {
+		return fmt.Errorf("funzione di sleep non configurata")
+	}
+
+	for {
+		if err := pending.ReapCompleted(); err != nil {
+			return err
+		}
+
+		now := pending.now()
+		if len(pending.pending) > 0 {
+			ackDeadline := pending.pending[0].PublishedAt.
+				Add(pending.ackTimeout)
+			if !ackDeadline.After(now) {
+				if err := pending.waitOldest(); err != nil {
+					return err
+				}
+
+				continue
+			}
+		}
+
+		wait := scheduledTime.Sub(now)
+		if wait <= 0 {
+			return nil
+		}
+
+		if len(pending.pending) == 0 {
+			sleep(wait)
+			return nil
+		}
+
+		ackDeadline := pending.pending[0].PublishedAt.
+			Add(pending.ackTimeout)
+		if !ackDeadline.After(scheduledTime) {
+			if err := pending.waitOldest(); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		sleep(wait)
+		return nil
+	}
+}
+
+func (
+	pending *PendingPublishes,
+) Drain() error {
+	var firstErr error
+
+	for len(pending.pending) > 0 {
+		if err := pending.waitOldest(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
+}
+
+func (
+	pending *PendingPublishes,
+) Len() int {
+	return len(pending.pending)
+}
+
+func (
+	pending *PendingPublishes,
+) Peak() int {
+	return pending.peak
+}
+
+func (
+	stats ReplayStats,
+) AverageSchedulingLag() time.Duration {
+	if stats.Events == 0 {
+		return 0
+	}
+
+	return stats.SchedulingLagTotal /
+		time.Duration(stats.Events)
+}
+
+func (
+	stats ReplayStats,
+) Duration() time.Duration {
+	duration := stats.CompletedAt.Sub(stats.StartedAt)
+	if duration < 0 {
+		return 0
+	}
+
+	return duration
+}
+
+func (
+	stats ReplayStats,
+) Throughput() float64 {
+	duration := stats.Duration()
+	if duration <= 0 {
+		return 0
+	}
+
+	return float64(stats.Events) /
+		duration.Seconds()
+}
+
+func (
+	stats *ReplayStats,
+) RecordPublish(
+	schedulingLag time.Duration,
+) {
+	if schedulingLag < 0 {
+		schedulingLag = 0
+	}
+
+	stats.Events++
+	stats.SchedulingLagTotal += schedulingLag
+	stats.SchedulingLagMax = max(
+		stats.SchedulingLagMax,
+		schedulingLag,
 	)
 }
 
 func replaySite(
 	reader *csv.Reader,
 	config SimulatorConfig,
-	publish EventPublisher,
-) (int, error) {
+	runtime ReplayRuntime,
+) (
+	stats ReplayStats,
+	replayErr error,
+) {
+	pacer := ReplayPacer{
+		Epoch:              config.ReplayEpoch,
+		StartAt:            config.ReplayStartAt,
+		AccelerationFactor: config.AccelerationFactor,
+	}
+
+	pending, err := newPendingPublishes(
+		config.MQTTMaxInFlight,
+		publishAckTimeout,
+		runtime.Now,
+	)
+	if err != nil {
+		return stats, err
+	}
+
+	stats.StartedAt = runtime.Now().UTC()
+	defer func() {
+		stats.CompletedAt = runtime.Now().UTC()
+		stats.PeakInFlight = pending.Peak()
+	}()
+
 	header, err := reader.Read()
 	if err != nil {
-		return 0, err
+		return stats, err
 	}
 
 	columns := buildColumnIndex(header)
 	sequences := make(map[string]uint64)
-	publishedEvents := 0
 
 	var lastObservedAt time.Time
 
 	for {
 		if config.MaxEvents > 0 &&
-			publishedEvents >= config.MaxEvents {
+			stats.Events >= config.MaxEvents {
 			break
 		}
 
@@ -131,7 +564,7 @@ func replaySite(
 			break
 		}
 		if err != nil {
-			return publishedEvents, err
+			return stats, err
 		}
 
 		measurement, err := parseMeasurement(
@@ -139,13 +572,13 @@ func replaySite(
 			columns,
 		)
 		if err != nil {
-			return publishedEvents, err
+			return stats, err
 		}
 
 		// Ogni shard deve conservare l'ordine temporale del replay globale.
 		if !lastObservedAt.IsZero() &&
 			measurement.Timestamp.Before(lastObservedAt) {
-			return publishedEvents,
+			return stats,
 				fmt.Errorf(
 					"replay non ordinato temporalmente: %s arriva dopo %s",
 					measurement.Timestamp.Format(time.RFC3339),
@@ -154,37 +587,97 @@ func replaySite(
 		}
 
 		lastObservedAt = measurement.Timestamp
+		scheduledTime, err := pacer.ScheduledTime(
+			measurement.Timestamp,
+		)
+		if err != nil {
+			return stats, err
+		}
+
+		if err := pending.WaitUntil(
+			scheduledTime,
+			runtime.Sleep,
+		); err != nil {
+			return stats, err
+		}
 
 		sequence := sequences[measurement.SensorID] + 1
+		emittedAt := runtime.Now().UTC()
 		event := buildSensorEvent(
 			measurement,
 			sequence,
+			emittedAt,
 		)
 
 		topic := telemetryTopic(
 			measurement.SensorID,
 		)
 
-		if err := publish(
+		result, err := runtime.Publish(
 			topic,
 			event,
-		); err != nil {
-			return publishedEvents, err
+		)
+		if err != nil {
+			return stats, err
 		}
 
+		schedulingLag := result.PublishedAt.Sub(scheduledTime)
 		sequences[measurement.SensorID] = sequence
-		publishedEvents++
+		stats.RecordPublish(schedulingLag)
 
-		if publishedEvents%1000 == 0 {
+		err = pending.Track(
+			PendingPublish{
+				EventID:     event.EventID,
+				Topic:       topic,
+				PublishedAt: result.PublishedAt,
+				Token:       result.Token,
+			},
+		)
+		if err != nil {
+			return stats, err
+		}
+
+		if stats.Events%1000 == 0 {
 			fmt.Printf(
-				"%s: pubblicati %d eventi\n",
+				"%s: pubblicati=%d pending=%d peak_in_flight=%d lag_medio=%s lag_massimo=%s\n",
 				config.SiteID,
-				publishedEvents,
+				stats.Events,
+				pending.Len(),
+				pending.Peak(),
+				stats.AverageSchedulingLag(),
+				stats.SchedulingLagMax,
 			)
 		}
 	}
 
-	return publishedEvents, nil
+	if err := pending.Drain(); err != nil {
+		return stats, err
+	}
+
+	return stats, nil
+}
+
+func printReplaySummary(
+	siteID string,
+	stats ReplayStats,
+	replayErr error,
+) {
+	status := "completato"
+	if replayErr != nil {
+		status = "fallito"
+	}
+
+	fmt.Printf(
+		"\nReplay %s %s\n",
+		siteID,
+		status,
+	)
+	fmt.Printf("Eventi pubblicati: %d\n", stats.Events)
+	fmt.Printf("Scheduling lag medio: %s\n", stats.AverageSchedulingLag())
+	fmt.Printf("Scheduling lag massimo: %s\n", stats.SchedulingLagMax)
+	fmt.Printf("Peak MQTT in-flight: %d\n", stats.PeakInFlight)
+	fmt.Printf("Durata reale: %s\n", stats.Duration())
+	fmt.Printf("Throughput medio: %.2f eventi/s\n", stats.Throughput())
 }
 
 func buildColumnIndex(
@@ -401,6 +894,7 @@ func parseTimestamp(
 func buildSensorEvent(
 	measurement SensorMeasurement,
 	sequence uint64,
+	emittedAt time.Time,
 ) model.SensorEvent {
 	return model.SensorEvent{
 		SchemaVersion: 1,
@@ -418,7 +912,7 @@ func buildSensorEvent(
 
 		ObservedAt: measurement.Timestamp,
 
-		EmittedAt: time.Now().UTC(),
+		EmittedAt: emittedAt.UTC(),
 
 		Measurements: map[string]string{
 			"pressure":    measurement.Pressure,
@@ -508,41 +1002,40 @@ func connectMQTTClient(
 }
 
 func publishSensorEvent(
-	client mqtt.Client,
+	publish MQTTPublish,
 	topic string,
 	event model.SensorEvent,
-) error {
+	now func() time.Time,
+) (PublishResult, error) {
 	payload, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf(
-			"serializzazione SensorEvent fallita: %w",
-			err,
-		)
+		return PublishResult{},
+			fmt.Errorf(
+				"serializzazione SensorEvent fallita: %w",
+				err,
+			)
 	}
 
-	token := client.Publish(
+	publishedAt := now().UTC()
+	token := publish(
 		topic,
 		1,
 		false,
 		payload,
 	)
 
-	if !token.WaitTimeout(5 * time.Second) {
-		return fmt.Errorf(
-			"timeout pubblicazione MQTT sul topic %s",
-			topic,
-		)
+	if token == nil {
+		return PublishResult{},
+			fmt.Errorf(
+				"client MQTT ha restituito un token nil sul topic %s",
+				topic,
+			)
 	}
 
-	if token.Error() != nil {
-		return fmt.Errorf(
-			"errore pubblicazione MQTT sul topic %s: %w",
-			topic,
-			token.Error(),
-		)
-	}
-
-	return nil
+	return PublishResult{
+		Token:       token,
+		PublishedAt: publishedAt,
+	}, nil
 }
 
 func loadSimulatorConfig(
@@ -578,6 +1071,53 @@ func loadSimulatorConfig(
 			)
 	}
 
+	replayEpochValue := strings.TrimSpace(
+		getenv("REPLAY_EPOCH"),
+	)
+	if replayEpochValue == "" {
+		replayEpochValue = defaultReplayEpoch
+	}
+
+	replayEpoch, err := parseRFC3339UTC(
+		"REPLAY_EPOCH",
+		replayEpochValue,
+	)
+	if err != nil {
+		return SimulatorConfig{}, err
+	}
+
+	replayStartAtValue := strings.TrimSpace(
+		getenv("REPLAY_START_AT"),
+	)
+	if replayStartAtValue == "" {
+		return SimulatorConfig{},
+			fmt.Errorf(
+				"variabile REPLAY_START_AT non impostata",
+			)
+	}
+
+	replayStartAt, err := parseRFC3339UTC(
+		"REPLAY_START_AT",
+		replayStartAtValue,
+	)
+	if err != nil {
+		return SimulatorConfig{}, err
+	}
+
+	accelerationFactor, err := parseAccelerationFactor(
+		getenv("ACCELERATION_FACTOR"),
+	)
+	if err != nil {
+		return SimulatorConfig{}, err
+	}
+
+	mqttMaxInFlight, err := parseMQTTMaxInFlight(
+		getenv("MQTT_MAX_IN_FLIGHT"),
+	)
+	if err != nil {
+		return SimulatorConfig{}, err
+	}
+
 	maxEvents, err := parseMaxEvents(
 		getenv("MAX_EVENTS"),
 	)
@@ -586,11 +1126,107 @@ func loadSimulatorConfig(
 	}
 
 	return SimulatorConfig{
-		SiteID:       siteID,
-		MQTTEndpoint: mqttEndpoint,
-		ReplayFile:   replayFile,
-		MaxEvents:    maxEvents,
+		SiteID:             siteID,
+		MQTTEndpoint:       mqttEndpoint,
+		ReplayFile:         replayFile,
+		MaxEvents:          maxEvents,
+		ReplayEpoch:        replayEpoch,
+		ReplayStartAt:      replayStartAt,
+		AccelerationFactor: accelerationFactor,
+		MQTTMaxInFlight:    mqttMaxInFlight,
 	}, nil
+}
+
+func parseRFC3339UTC(
+	name string,
+	value string,
+) (time.Time, error) {
+	parsed, err := time.Parse(
+		time.RFC3339,
+		value,
+	)
+	if err != nil {
+		return time.Time{},
+			fmt.Errorf(
+				"%s non valido %q: atteso RFC3339 UTC: %w",
+				name,
+				value,
+				err,
+			)
+	}
+
+	_, offset := parsed.Zone()
+	if offset != 0 {
+		return time.Time{},
+			fmt.Errorf(
+				"%s deve essere espresso in UTC: %q",
+				name,
+				value,
+			)
+	}
+
+	return parsed.UTC(), nil
+}
+
+func parseAccelerationFactor(
+	value string,
+) (float64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultAccelerationFactor, nil
+	}
+
+	factor, err := strconv.ParseFloat(
+		value,
+		64,
+	)
+	if err != nil {
+		return 0,
+			fmt.Errorf(
+				"ACCELERATION_FACTOR non valido %q: %w",
+				value,
+				err,
+			)
+	}
+
+	if factor <= 0 ||
+		math.IsNaN(factor) ||
+		math.IsInf(factor, 0) {
+		return 0,
+			fmt.Errorf(
+				"ACCELERATION_FACTOR deve essere finito e maggiore di zero",
+			)
+	}
+
+	return factor, nil
+}
+
+func parseMQTTMaxInFlight(
+	value string,
+) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultMQTTMaxInFlight, nil
+	}
+
+	maxInFlight, err := strconv.Atoi(value)
+	if err != nil {
+		return 0,
+			fmt.Errorf(
+				"MQTT_MAX_IN_FLIGHT non valido %q: %w",
+				value,
+				err,
+			)
+	}
+
+	if maxInFlight <= 0 {
+		return 0,
+			fmt.Errorf(
+				"MQTT_MAX_IN_FLIGHT deve essere maggiore di zero",
+			)
+	}
+
+	return maxInFlight, nil
 }
 
 func parseMaxEvents(

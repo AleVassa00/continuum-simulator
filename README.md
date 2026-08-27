@@ -31,7 +31,10 @@ Lo stato dei requisiti della traccia e mantenuto in
   replay globale nei tredici workload locali.
 - Ogni **Simulator** legge soltanto il proprio `REPLAY_FILE` e pubblica su un
   unico `MQTT_ENDPOINT`. `SITE_ID` identifica l'istanza, ma non viene usato per
-  filtrare il dataset o derivare l'indirizzo del broker.
+  filtrare il dataset o derivare l'indirizzo del broker. Il pacing deriva da
+  `ObservedAt` rispetto a una `REPLAY_EPOCH` globale; tutti i Simulator ricevono
+  lo stesso `REPLAY_START_AT` e comprimono la timeline tramite
+  `ACCELERATION_FACTOR`.
 - Ogni **Edge** valida le misure e calcola media, somma, minimo, massimo e conteggi
   validi/non validi su finestre tumbling di event time, di default da 5 minuti.
   `GET /readyz` restituisce `200` soltanto dopo la connessione e la subscription
@@ -65,9 +68,15 @@ rifiutato esplicitamente.
 
 ## Semantica e limiti attuali
 
-MQTT usa QoS 1. I writer Kafka sono sincroni e richiedono gli acknowledgment del
-broker; il consumer effettua commit esplicito dopo avere incorporato l'input e
-dopo l'eventuale pubblicazione dell'output.
+MQTT usa QoS 1. Il Simulator pubblica in modo asincrono e conserva una FIFO
+limitata di token in-flight; il limite di default e 1000. Quando raggiunge il
+limite attende il token piu vecchio, mentre alla fine del CSV esegue il drain di
+tutti i token rimasti. Un timeout o errore MQTT rende il run non valido: non
+esiste alcun retry applicativo o tentativo di ripubblicazione.
+
+I writer Kafka sono sincroni e richiedono gli acknowledgment del broker; il
+consumer effettua commit esplicito dopo avere incorporato l'input e dopo
+l'eventuale pubblicazione dell'output.
 
 Lo stato del roll-up Cloud e in memoria. Kafka offre consegna at-least-once, ma
 questo incremento non garantisce at-least-once end-to-end in presenza di crash o
@@ -119,9 +128,40 @@ workload del sito. `MAX_EVENTS` limita ogni singola istanza; con valore `1000`,
 ciascuno dei tredici Simulator puo pubblicare fino a 1000 eventi. Non e un
 limite globale coordinato.
 
-Il replay procede il piu velocemente possibile. Pacing globale, accelerazione
-coordinata e simulazione di rete ai confini Simulator-Edge Site ed
-Edge-Cloud/Kafka verranno affrontati separatamente.
+## Replay temporale accelerato
+
+Ogni Simulator applica indipendentemente la stessa formula:
+
+```text
+eventOffset       = ObservedAt - REPLAY_EPOCH
+acceleratedOffset = eventOffset / ACCELERATION_FACTOR
+scheduledTime     = REPLAY_START_AT + acceleratedOffset
+```
+
+Se il processo e in anticipo, attende fino a `scheduledTime`; se e in ritardo,
+pubblica immediatamente senza aggiungere altre attese. Le deadline sono assolute,
+quindi il tempo impiegato per parsing e publish non produce deriva cumulativa.
+`ACCELERATION_FACTOR` comprime le distanze originali e non rappresenta un target
+di eventi al secondo: il throughput risultante dipende dalla densita del dataset.
+
+`REPLAY_EPOCH` e `REPLAY_START_AT` sono identici per tutti i tredici container e
+vengono passati dal deployment. Non esistono barrier, coordinatori, handshake o
+messaggi fra Simulator: e soltanto configurazione comune del singolo run. In
+particolare, nessun Simulator usa il primo evento del proprio shard come epoch.
+
+Il loop rimane sequenziale e conserva l'ordine del CSV. Non vengono introdotti
+holdback, watermark, allowed lateness o eventi out-of-order artificiali. Dopo la
+deadline, l'evento viene costruito con `ObservedAt` originale ed `EmittedAt`
+reale, quindi pubblicato QoS 1 senza attendere immediatamente il relativo PUBACK.
+
+`MQTT_MAX_IN_FLIGHT` limita i token pendenti e applica backpressure FIFO. A fine
+replay il riepilogo riporta eventi, scheduling lag medio e massimo, picco
+in-flight, durata reale e throughput medio. Questo controllo non implementa
+fault tolerance: non esistono checkpoint, recovery, durable producer queue o
+retry applicativi.
+
+La simulazione di rete ai confini Simulator-Edge Site ed Edge-Cloud/Kafka verra
+affrontata separatamente.
 
 ## Avvio locale
 
@@ -143,19 +183,39 @@ docker compose -f deploy/compose/continuum.generated.yml up -d
 Avviare quindi le tredici istanze del profilo `replay`:
 
 ```powershell
+$env:REPLAY_START_AT = (
+    Get-Date
+).ToUniversalTime().AddSeconds(10).ToString("o")
+
+$env:REPLAY_EPOCH="2025-01-01T00:00:00Z"
+$env:ACCELERATION_FACTOR="1000"
+$env:MQTT_MAX_IN_FLIGHT="1000"
 $env:MAX_EVENTS="1000"
-docker compose -f deploy/compose/continuum.generated.yml --profile replay up -d
+
+docker compose `
+  -f deploy/compose/continuum.generated.yml `
+  --profile replay up
 ```
+
+`REPLAY_START_AT` e obbligatorio. Va calcolato una sola volta, qualche secondo
+nel futuro, prima del comando Compose: in questo modo tutti i tredici container
+ricevono esattamente lo stesso valore. Non viene generato autonomamente nei
+container e non costituisce un protocollo di sincronizzazione.
 
 Compose attende automaticamente che Mosquitto sia healthy e che `/readyz`
 dell'Edge restituisca `200`. Tutte le istanze usano
-`continuum-simulator:local`; cambiano `SITE_ID`, `MQTT_ENDPOINT` e `REPLAY_FILE`.
+`continuum-simulator:local`; cambiano soltanto i parametri locali come `SITE_ID`,
+`MQTT_ENDPOINT` e `REPLAY_FILE`, mentre i riferimenti temporali sono globali.
 Per eseguire manualmente un solo sito dall'host:
 
 ```powershell
 $env:SITE_ID="edge-3"
 $env:MQTT_ENDPOINT="tcp://localhost:18833"
 $env:REPLAY_FILE="dataset/derived/replay_by_edge/edge-3.csv"
+$env:REPLAY_EPOCH="2025-01-01T00:00:00Z"
+$env:REPLAY_START_AT=(Get-Date).ToUniversalTime().AddSeconds(10).ToString("o")
+$env:ACCELERATION_FACTOR="1000"
+$env:MQTT_MAX_IN_FLIGHT="1000"
 $env:MAX_EVENTS="1000"
 go run ./cmd/simulator
 ```

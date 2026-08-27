@@ -1,27 +1,29 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
 
 func TestBuildComposeCreatesReadySiteScopedSimulators(t *testing.T) {
-	edges := []EdgeDeployment{
-		{
-			EdgeID:      "edge-0",
-			EdgeNumber:  0,
+	edges := make([]EdgeDeployment, 0, 13)
+	for edgeNumber := 0; edgeNumber < 13; edgeNumber++ {
+		edges = append(edges, EdgeDeployment{
+			EdgeID:      fmt.Sprintf("edge-%d", edgeNumber),
+			EdgeNumber:  edgeNumber,
 			SensorCount: 11,
-			MQTTPort:    18830,
-		},
-		{
-			EdgeID:      "edge-12",
-			EdgeNumber:  12,
-			SensorCount: 11,
-			MQTTPort:    18842,
-		},
+			MQTTPort:    mqttBasePort + edgeNumber,
+		})
 	}
 
 	compose := buildCompose(edges)
+	globalReplayEnvironment := []string{
+		"REPLAY_EPOCH: \"${REPLAY_EPOCH:-2025-01-01T00:00:00Z}\"",
+		"REPLAY_START_AT: \"${REPLAY_START_AT:-}\"",
+		"ACCELERATION_FACTOR: \"${ACCELERATION_FACTOR:-1000}\"",
+		"MQTT_MAX_IN_FLIGHT: \"${MQTT_MAX_IN_FLIGHT:-1000}\"",
+	}
 
 	if count := strings.Count(
 		compose,
@@ -30,7 +32,17 @@ func TestBuildComposeCreatesReadySiteScopedSimulators(t *testing.T) {
 		t.Fatalf("istanze continuum-simulator=%d, attese %d", count, len(edges))
 	}
 
-	for _, edgeID := range []string{"edge-0", "edge-12"} {
+	for _, expected := range globalReplayEnvironment {
+		if count := strings.Count(
+			compose,
+			"      "+expected+"\n",
+		); count != len(edges) {
+			t.Errorf("configurazioni globali %q=%d, attese %d", expected, count, len(edges))
+		}
+	}
+
+	for _, edgeDeployment := range edges {
+		edgeID := edgeDeployment.EdgeID
 		t.Run(
 			edgeID,
 			func(t *testing.T) {
@@ -45,12 +57,19 @@ func TestBuildComposeCreatesReadySiteScopedSimulators(t *testing.T) {
 					"SITE_ID: \"" + edgeID + "\"",
 					"MQTT_ENDPOINT: \"tcp://mqtt-" + edgeID + ":1883\"",
 					"REPLAY_FILE: \"/app/dataset/derived/replay_by_edge/" + edgeID + ".csv\"",
+					"MAX_EVENTS: \"${MAX_EVENTS:-0}\"",
 					"mqtt-" + edgeID + ":\n        condition: service_healthy",
 					edgeID + ":\n        condition: service_healthy",
 					"- zone-" + edgeID,
 				} {
 					if !strings.Contains(simulator, expected) {
 						t.Errorf("configurazione Simulator senza %q", expected)
+					}
+				}
+
+				for _, expected := range globalReplayEnvironment {
+					if count := strings.Count(simulator, expected); count != 1 {
+						t.Errorf("configurazione globale %q presente %d volte, attesa 1", expected, count)
 					}
 				}
 
