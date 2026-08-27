@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -64,7 +68,14 @@ type WindowAggregator struct {
 	kafkaWriter *kafka.Writer
 }
 
-const telemetrySubscriptionTopic = "sensors/+/telemetry"
+type ReadinessState struct {
+	ready atomic.Bool
+}
+
+const (
+	telemetrySubscriptionTopic = "sensors/+/telemetry"
+	readinessAddress           = ":8080"
+)
 
 func main() {
 	edgeID := strings.TrimSpace(
@@ -115,6 +126,20 @@ func main() {
 		kafkaWriter: kafkaWriter,
 	}
 
+	readiness := &ReadinessState{}
+	readinessServer, err := startReadinessServer(
+		readiness,
+		edgeID,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	defer stopReadinessServer(
+		readinessServer,
+		edgeID,
+	)
+
 	fmt.Printf(
 		"Avvio Edge %s\n",
 		edgeID,
@@ -160,6 +185,8 @@ func main() {
 
 	options.SetOnConnectHandler(
 		func(client mqtt.Client) {
+			readiness.MarkNotReady()
+
 			fmt.Printf(
 				"%s connesso al broker MQTT\n",
 				edgeID,
@@ -169,6 +196,7 @@ func main() {
 				client,
 				edgeID,
 				aggregator,
+				readiness,
 			)
 		},
 	)
@@ -178,6 +206,8 @@ func main() {
 			client mqtt.Client,
 			err error,
 		) {
+			readiness.MarkNotReady()
+
 			fmt.Printf(
 				"%s ha perso la connessione MQTT: %v\n",
 				edgeID,
@@ -220,6 +250,7 @@ func main() {
 		edgeID,
 	)
 
+	readiness.MarkNotReady()
 	client.Disconnect(250)
 
 	aggregator.Flush()
@@ -228,6 +259,111 @@ func main() {
 	if err != nil {
 		fmt.Printf(
 			"%s: errore chiusura Kafka writer: %v\n",
+			edgeID,
+			err,
+		)
+	}
+}
+
+func (
+	state *ReadinessState,
+) MarkReady() {
+	state.ready.Store(true)
+}
+
+func (
+	state *ReadinessState,
+) MarkNotReady() {
+	state.ready.Store(false)
+}
+
+func (
+	state *ReadinessState,
+) IsReady() bool {
+	return state.ready.Load()
+}
+
+func (
+	state *ReadinessState,
+) ServeHTTP(
+	response http.ResponseWriter,
+	request *http.Request,
+) {
+	response.Header().Set(
+		"Content-Type",
+		"text/plain; charset=utf-8",
+	)
+
+	if !state.IsReady() {
+		response.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = response.Write([]byte("not ready\n"))
+
+		return
+	}
+
+	response.WriteHeader(http.StatusOK)
+	_, _ = response.Write([]byte("ready\n"))
+}
+
+func startReadinessServer(
+	readiness *ReadinessState,
+	edgeID string,
+) (*http.Server, error) {
+	listener, err := net.Listen(
+		"tcp",
+		readinessAddress,
+	)
+	if err != nil {
+		return nil,
+			fmt.Errorf(
+				"%s: avvio readiness server su %s fallito: %w",
+				edgeID,
+				readinessAddress,
+				err,
+			)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(
+		"GET /readyz",
+		readiness,
+	)
+
+	server := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 2 * time.Second,
+		WriteTimeout:      2 * time.Second,
+		IdleTimeout:       5 * time.Second,
+	}
+
+	go func() {
+		err := server.Serve(listener)
+		if err != nil &&
+			!errors.Is(err, http.ErrServerClosed) {
+			fmt.Printf(
+				"%s: readiness server terminato: %v\n",
+				edgeID,
+				err,
+			)
+		}
+	}()
+
+	return server, nil
+}
+
+func stopReadinessServer(
+	server *http.Server,
+	edgeID string,
+) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		2*time.Second,
+	)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		fmt.Printf(
+			"%s: arresto readiness server fallito: %v\n",
 			edgeID,
 			err,
 		)
@@ -312,7 +448,10 @@ func subscribeToTelemetry(
 	client mqtt.Client,
 	edgeID string,
 	aggregator *WindowAggregator,
+	readiness *ReadinessState,
 ) {
+	readiness.MarkNotReady()
+
 	topic := telemetrySubscriptionTopic
 
 	token := client.Subscribe(
@@ -344,6 +483,17 @@ func subscribeToTelemetry(
 
 		return
 	}
+
+	if !client.IsConnected() {
+		fmt.Printf(
+			"%s: connessione MQTT persa durante la sottoscrizione\n",
+			edgeID,
+		)
+
+		return
+	}
+
+	readiness.MarkReady()
 
 	fmt.Printf(
 		"%s sottoscritto a %s\n\n",

@@ -15,11 +15,6 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-const (
-	datasetPath  = "dataset/derived/2025-01_bme280_europe_sensors-150_seed-42.csv"
-	topologyPath = "dataset/output/kmeans_topology.csv"
-)
-
 type SensorMeasurement struct {
 	SensorID   string
 	SensorType string
@@ -34,14 +29,10 @@ type SensorMeasurement struct {
 	Humidity    string
 }
 
-type SensorAssignment struct {
-	EdgeID      string
-	MacroareaID string
-}
-
 type SimulatorConfig struct {
 	SiteID       string
 	MQTTEndpoint string
+	ReplayFile   string
 	MaxEvents    int
 }
 
@@ -58,16 +49,6 @@ func main() {
 		panic(err)
 	}
 
-	topology, err := loadTopology(topologyPath)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf(
-		"Topologia caricata: %d sensori\n\n",
-		len(topology),
-	)
-
 	client, err := connectMQTTClient(
 		config.SiteID,
 		config.MQTTEndpoint,
@@ -82,7 +63,14 @@ func main() {
 		}
 	}()
 
-	file, err := os.Open(datasetPath)
+	fmt.Printf(
+		"Replay file: %s\n",
+		config.ReplayFile,
+	)
+
+	file, err := openReplayFile(
+		config.ReplayFile,
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -93,7 +81,6 @@ func main() {
 
 	publishedEvents, err := replaySite(
 		reader,
-		topology,
 		config,
 		func(
 			topic string,
@@ -119,7 +106,6 @@ func main() {
 
 func replaySite(
 	reader *csv.Reader,
-	topology map[string]SensorAssignment,
 	config SimulatorConfig,
 	publish EventPublisher,
 ) (int, error) {
@@ -156,8 +142,7 @@ func replaySite(
 			return publishedEvents, err
 		}
 
-		// Il replay globale resta ordinato temporalmente anche se questa
-		// istanza pubblica soltanto le misure del proprio sito.
+		// Ogni shard deve conservare l'ordine temporale del replay globale.
 		if !lastObservedAt.IsZero() &&
 			measurement.Timestamp.Before(lastObservedAt) {
 			return publishedEvents,
@@ -169,22 +154,6 @@ func replaySite(
 		}
 
 		lastObservedAt = measurement.Timestamp
-
-		assignment, found := topology[measurement.SensorID]
-		if !found {
-			return publishedEvents,
-				fmt.Errorf(
-					"sensore %q non presente nella topologia",
-					measurement.SensorID,
-				)
-		}
-
-		if !belongsToSite(
-			assignment,
-			config.SiteID,
-		) {
-			continue
-		}
 
 		sequence := sequences[measurement.SensorID] + 1
 		event := buildSensorEvent(
@@ -459,89 +428,20 @@ func buildSensorEvent(
 	}
 }
 
-func loadTopology(
+func openReplayFile(
 	path string,
-) (map[string]SensorAssignment, error) {
+) (*os.File, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	reader.Comma = ','
-
-	header, err := reader.Read()
-	if err != nil {
-		return nil, err
+		return nil,
+			fmt.Errorf(
+				"apertura REPLAY_FILE %q fallita: %w",
+				path,
+				err,
+			)
 	}
 
-	columns := buildColumnIndex(header)
-
-	sensorIDIndex, err := requiredColumn(
-		columns,
-		"sensor_id",
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	edgeIDIndex, err := requiredColumn(
-		columns,
-		"edge_id",
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	macroareaIDIndex, err := requiredColumn(
-		columns,
-		"macroarea_id",
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	topology := make(
-		map[string]SensorAssignment,
-	)
-
-	for {
-		row, err := reader.Read()
-
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		sensorID := strings.TrimSpace(
-			row[sensorIDIndex],
-		)
-
-		assignment := SensorAssignment{
-			EdgeID: strings.TrimSpace(
-				row[edgeIDIndex],
-			),
-
-			MacroareaID: strings.TrimSpace(
-				row[macroareaIDIndex],
-			),
-		}
-
-		topology[sensorID] = assignment
-	}
-
-	return topology, nil
-}
-
-func belongsToSite(
-	assignment SensorAssignment,
-	siteID string,
-) bool {
-	return assignment.EdgeID == siteID
+	return file, nil
 }
 
 func telemetryTopic(
@@ -668,6 +568,16 @@ func loadSimulatorConfig(
 			)
 	}
 
+	replayFile := strings.TrimSpace(
+		getenv("REPLAY_FILE"),
+	)
+	if replayFile == "" {
+		return SimulatorConfig{},
+			fmt.Errorf(
+				"variabile REPLAY_FILE non impostata",
+			)
+	}
+
 	maxEvents, err := parseMaxEvents(
 		getenv("MAX_EVENTS"),
 	)
@@ -678,6 +588,7 @@ func loadSimulatorConfig(
 	return SimulatorConfig{
 		SiteID:       siteID,
 		MQTTEndpoint: mqttEndpoint,
+		ReplayFile:   replayFile,
 		MaxEvents:    maxEvents,
 	}, nil
 }

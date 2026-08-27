@@ -4,9 +4,12 @@ Progetto Edge-Cloud in Go basato sul dataset BME280 di Sensor.Community. La
 pipeline attualmente implementata termina al secondo topic Kafka:
 
 ```text
-CSV di gennaio
+Replay globale di gennaio
+  -> sharding offline con la topologia sperimentale
+  -> 13 replay shard
   -> Simulator x 13, una istanza per Edge Site
-  -> MQTT/Mosquitto per zona
+  -> Mosquitto x 13
+  -> Edge Gateway x 13
   -> EdgeAggregate 5m per edge_id
   -> Kafka topic edge-aggregates
   -> Cloud Worker x N, stesso consumer group
@@ -24,11 +27,15 @@ Lo stato dei requisiti della traccia e mantenuto in
 
 ## Responsabilita
 
-- Ogni **Simulator** legge la traccia CSV ordinata, conserva soltanto i sensori
-  assegnati al proprio `SITE_ID` e pubblica su un unico `MQTT_ENDPOINT`. Il nome
-  logico del broker viene fornito dal deployment e non e derivato da `edge_id`.
+- Il **notebook** usa offline la topologia `sensor_id -> edge_id` per dividere il
+  replay globale nei tredici workload locali.
+- Ogni **Simulator** legge soltanto il proprio `REPLAY_FILE` e pubblica su un
+  unico `MQTT_ENDPOINT`. `SITE_ID` identifica l'istanza, ma non viene usato per
+  filtrare il dataset o derivare l'indirizzo del broker.
 - Ogni **Edge** valida le misure e calcola media, somma, minimo, massimo e conteggi
   validi/non validi su finestre tumbling di event time, di default da 5 minuti.
+  `GET /readyz` restituisce `200` soltanto dopo la connessione e la subscription
+  MQTT a `sensors/+/telemetry`; altrimenti restituisce `503`.
 - **Kafka** persiste gli `EdgeAggregate` e li distribuisce ai Cloud Worker usando
   la chiave `edge_id`.
 - I **Cloud Worker** eseguono un temporal roll-up indipendente per ogni Edge: tre
@@ -72,16 +79,25 @@ finestra parziale ancora in memoria.
 
 ## Dati
 
-Il Simulator usa:
+Il notebook mantiene il replay globale:
 
-- `dataset/derived/2025-01_bme280_europe_sensors-150_seed-42.csv`;
-- `dataset/output/kmeans_topology.csv`.
+- `dataset/derived/2025-01_bme280_europe_sensors-150_seed-42.csv`.
 
-I dati derivati non sono tracciati da Git e devono essere presenti localmente.
-Le tredici istanze leggono lo stesso CSV, ma ciascuna pubblica soltanto gli eventi
-del proprio sito. `MAX_EVENTS` limita le pubblicazioni di ogni singola istanza. Il
-replay procede il piu velocemente possibile: e un generatore di carico bounded,
-non un replay temporizzato.
+Una singola scansione chunked, basata sulla topologia sperimentale, genera:
+
+- `dataset/derived/replay_by_edge/edge-0.csv`;
+- ...;
+- `dataset/derived/replay_by_edge/edge-12.csv`;
+- `dataset/output/replay_shards_summary.csv`.
+
+I dati derivati non sono tracciati da Git e devono essere materializzati tramite
+le celle finali del notebook. Il Simulator non legge la topologia a runtime:
+`REPLAY_FILE` identifica gia il workload del sito. `MAX_EVENTS` limita ogni
+singola istanza; con valore `1000`, ciascuno dei tredici Simulator puo pubblicare
+fino a 1000 eventi. Non e un limite globale coordinato.
+
+Il replay procede il piu velocemente possibile. Pacing globale, accelerazione
+coordinata e simulazione di rete verranno affrontati separatamente.
 
 ## Avvio locale
 
@@ -93,27 +109,29 @@ docker build -f deploy/docker/edge.Dockerfile -t continuum-edge:local .
 docker build -f deploy/docker/cloud-worker.Dockerfile -t continuum-cloud-worker:local .
 ```
 
-Generare il Compose e avviare prima broker, Edge e Cloud Worker:
+Generare il Compose e avviare broker, Edge e Cloud Worker:
 
 ```powershell
 go run ./cmd/deploygen
 docker compose -f deploy/compose/continuum.generated.yml up -d
 ```
 
-Quando gli Edge risultano connessi ai rispettivi broker, avviare le tredici
-istanze del profilo `replay`:
+Avviare quindi le tredici istanze del profilo `replay`:
 
 ```powershell
 $env:MAX_EVENTS="1000"
 docker compose -f deploy/compose/continuum.generated.yml --profile replay up -d
 ```
 
-Tutte usano `continuum-simulator:local`; cambiano soltanto `SITE_ID` e
-`MQTT_ENDPOINT`. Per eseguire manualmente un solo sito dall'host:
+Compose attende automaticamente che Mosquitto sia healthy e che `/readyz`
+dell'Edge restituisca `200`. Tutte le istanze usano
+`continuum-simulator:local`; cambiano `SITE_ID`, `MQTT_ENDPOINT` e `REPLAY_FILE`.
+Per eseguire manualmente un solo sito dall'host:
 
 ```powershell
 $env:SITE_ID="edge-3"
 $env:MQTT_ENDPOINT="tcp://localhost:18833"
+$env:REPLAY_FILE="dataset/derived/replay_by_edge/edge-3.csv"
 $env:MAX_EVENTS="1000"
 go run ./cmd/simulator
 ```

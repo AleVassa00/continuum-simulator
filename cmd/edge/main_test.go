@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -110,6 +112,70 @@ func TestTelemetrySubscriptionUsesSensorScopedTopic(t *testing.T) {
 		t.Fatalf(
 			"topic sottoscrizione=%q, atteso %q",
 			telemetrySubscriptionTopic,
+			expected,
+		)
+	}
+}
+
+func TestReadinessStateTransitions(t *testing.T) {
+	state := &ReadinessState{}
+
+	if state.IsReady() {
+		t.Fatal("lo stato iniziale deve essere not ready")
+	}
+
+	state.MarkReady()
+	if !state.IsReady() {
+		t.Fatal("la subscription completata deve rendere ready l'Edge")
+	}
+
+	state.MarkNotReady()
+	if state.IsReady() {
+		t.Fatal("la perdita di connessione deve rendere not ready l'Edge")
+	}
+}
+
+func TestReadinessEndpoint(t *testing.T) {
+	state := &ReadinessState{}
+
+	assertReadinessStatus(
+		t,
+		state,
+		http.StatusServiceUnavailable,
+	)
+
+	state.MarkReady()
+
+	assertReadinessStatus(
+		t,
+		state,
+		http.StatusOK,
+	)
+}
+
+func assertReadinessStatus(
+	t *testing.T,
+	state *ReadinessState,
+	expected int,
+) {
+	t.Helper()
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/readyz",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	state.ServeHTTP(
+		response,
+		request,
+	)
+
+	if response.Code != expected {
+		t.Fatalf(
+			"GET /readyz status=%d, atteso %d",
+			response.Code,
 			expected,
 		)
 	}

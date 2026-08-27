@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestBuildComposeCreatesOneConfiguredSimulatorPerEdge(t *testing.T) {
+func TestBuildComposeCreatesReadySiteScopedSimulators(t *testing.T) {
 	edges := []EdgeDeployment{
 		{
 			EdgeID:      "edge-0",
@@ -23,22 +23,6 @@ func TestBuildComposeCreatesOneConfiguredSimulatorPerEdge(t *testing.T) {
 
 	compose := buildCompose(edges)
 
-	for _, expected := range []string{
-		"  simulator-edge-0:\n",
-		"      SITE_ID: \"edge-0\"\n",
-		"      MQTT_ENDPOINT: \"tcp://mqtt-edge-0:1883\"\n",
-		"      - zone-edge-0\n",
-		"  simulator-edge-12:\n",
-		"      SITE_ID: \"edge-12\"\n",
-		"      MQTT_ENDPOINT: \"tcp://mqtt-edge-12:1883\"\n",
-		"      - zone-edge-12\n",
-		"      - ../../dataset:/app/dataset:ro\n",
-	} {
-		if !strings.Contains(compose, expected) {
-			t.Errorf("configurazione generata senza %q", expected)
-		}
-	}
-
 	if count := strings.Count(
 		compose,
 		"    image: continuum-simulator:local\n",
@@ -46,7 +30,98 @@ func TestBuildComposeCreatesOneConfiguredSimulatorPerEdge(t *testing.T) {
 		t.Fatalf("istanze continuum-simulator=%d, attese %d", count, len(edges))
 	}
 
-	if strings.Contains(compose, "MQTT_ENDPOINT: \"tcp://localhost:") {
-		t.Fatal("il Simulator non deve ricevere localhost come endpoint MQTT")
+	for _, edgeID := range []string{"edge-0", "edge-12"} {
+		t.Run(
+			edgeID,
+			func(t *testing.T) {
+				simulator := composeServiceBlock(
+					t,
+					compose,
+					"simulator-"+edgeID,
+				)
+
+				for _, expected := range []string{
+					"image: continuum-simulator:local",
+					"SITE_ID: \"" + edgeID + "\"",
+					"MQTT_ENDPOINT: \"tcp://mqtt-" + edgeID + ":1883\"",
+					"REPLAY_FILE: \"/app/dataset/derived/replay_by_edge/" + edgeID + ".csv\"",
+					"mqtt-" + edgeID + ":\n        condition: service_healthy",
+					edgeID + ":\n        condition: service_healthy",
+					"- zone-" + edgeID,
+				} {
+					if !strings.Contains(simulator, expected) {
+						t.Errorf("configurazione Simulator senza %q", expected)
+					}
+				}
+
+				if count := strings.Count(
+					simulator,
+					"MQTT_ENDPOINT:",
+				); count != 1 {
+					t.Errorf("MQTT_ENDPOINT presenti=%d, atteso 1", count)
+				}
+
+				if strings.Contains(simulator, "localhost") ||
+					strings.Contains(simulator, "continuum-backbone") {
+					t.Errorf("Simulator non isolato nella propria zona:\n%s", simulator)
+				}
+
+				edge := composeServiceBlock(
+					t,
+					compose,
+					edgeID,
+				)
+
+				for _, expected := range []string{
+					"healthcheck:",
+					"http://localhost:8080/readyz",
+					"interval: 2s",
+					"timeout: 1s",
+				} {
+					if !strings.Contains(edge, expected) {
+						t.Errorf("healthcheck Edge senza %q", expected)
+					}
+				}
+			},
+		)
 	}
+}
+
+func composeServiceBlock(
+	t *testing.T,
+	compose string,
+	service string,
+) string {
+	t.Helper()
+
+	lines := strings.Split(compose, "\n")
+	start := -1
+
+	for index, line := range lines {
+		if line == "  "+service+":" {
+			start = index
+			break
+		}
+	}
+
+	if start == -1 {
+		t.Fatalf("servizio %s non trovato", service)
+	}
+
+	end := len(lines)
+	for index := start + 1; index < len(lines); index++ {
+		line := lines[index]
+		isNextService := strings.HasPrefix(line, "  ") &&
+			!strings.HasPrefix(line, "    ")
+		isTopLevel := line != "" &&
+			!strings.HasPrefix(line, " ")
+
+		if strings.TrimSpace(line) != "" &&
+			(isNextService || isTopLevel) {
+			end = index
+			break
+		}
+	}
+
+	return strings.Join(lines[start:end], "\n")
 }

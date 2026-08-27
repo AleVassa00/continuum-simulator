@@ -5,29 +5,27 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strconv"
 	"strings"
 	"testing"
 
 	"continuum/internal/model"
 )
 
-func TestReplaySitePublishesAssignedSensor(t *testing.T) {
+func TestReplayPublishesEveryShardRowWithPerSensorSequence(t *testing.T) {
 	reader := replayReader(
 		"101;BME280;1;45.0;9.0;2025-01-01T10:00:00Z;100000;20;50",
+		"102;BME280;2;45.0;9.0;2025-01-01T10:00:01Z;100001;21;51",
+		"101;BME280;1;45.0;9.0;2025-01-01T10:00:02Z;100002;22;52",
 	)
 
-	topology := map[string]SensorAssignment{
-		"101": {EdgeID: "edge-3"},
-	}
-
-	var published []model.SensorEvent
+	var events []model.SensorEvent
 
 	count, err := replaySite(
 		reader,
-		topology,
 		SimulatorConfig{SiteID: "edge-3"},
 		func(_ string, event model.SensorEvent) error {
-			published = append(published, event)
+			events = append(events, event)
 			return nil
 		},
 	)
@@ -35,30 +33,44 @@ func TestReplaySitePublishesAssignedSensor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if count != 1 || len(published) != 1 {
-		t.Fatalf("pubblicazioni=%d, eventi catturati=%d", count, len(published))
+	if count != 3 || len(events) != 3 {
+		t.Fatalf("pubblicazioni=%d, eventi catturati=%d", count, len(events))
 	}
 
-	if published[0].Sequence != 1 || published[0].EventID != "101-1" {
-		t.Fatalf("sequence o event_id inattesi: %#v", published[0])
+	for index, expected := range []struct {
+		sensorID string
+		sequence uint64
+		eventID  string
+	}{
+		{sensorID: "101", sequence: 1, eventID: "101-1"},
+		{sensorID: "102", sequence: 1, eventID: "102-1"},
+		{sensorID: "101", sequence: 2, eventID: "101-2"},
+	} {
+		actual := events[index]
+
+		if actual.SensorID != expected.sensorID ||
+			actual.Sequence != expected.sequence ||
+			actual.EventID != expected.eventID {
+			t.Fatalf("evento %d inatteso: %#v", index, actual)
+		}
 	}
 }
 
-func TestReplaySiteIgnoresSensorFromAnotherSite(t *testing.T) {
+func TestMaxEventsLimitsOnlyThisSimulatorInstance(t *testing.T) {
 	reader := replayReader(
-		"101;BME280;1;45.0;9.0;2025-01-01T10:00:00Z;100000;20;50",
+		"301;BME280;3;45.0;9.0;2025-01-01T10:00:00Z;100000;20;50",
+		"302;BME280;3;45.0;9.0;2025-01-01T10:00:01Z;100001;21;51",
+		"303;BME280;3;45.0;9.0;2025-01-01T10:00:02Z;100002;22;52",
 	)
-
-	topology := map[string]SensorAssignment{
-		"101": {EdgeID: "edge-4"},
-	}
 
 	publishCalls := 0
 
 	count, err := replaySite(
 		reader,
-		topology,
-		SimulatorConfig{SiteID: "edge-3"},
+		SimulatorConfig{
+			SiteID:    "edge-3",
+			MaxEvents: 2,
+		},
 		func(_ string, _ model.SensorEvent) error {
 			publishCalls++
 			return nil
@@ -68,51 +80,26 @@ func TestReplaySiteIgnoresSensorFromAnotherSite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if count != 0 || publishCalls != 0 {
+	if count != 2 || publishCalls != 2 {
 		t.Fatalf("pubblicazioni=%d, chiamate publisher=%d", count, publishCalls)
 	}
 }
 
-func TestMaxEventsCountsOnlyPublishedSiteEvents(t *testing.T) {
+func TestReplayRejectsDecreasingTimestamp(t *testing.T) {
 	reader := replayReader(
-		"401;BME280;4;45.0;9.0;2025-01-01T10:00:00Z;100000;20;50",
-		"301;BME280;3;45.0;9.0;2025-01-01T10:00:01Z;100000;21;51",
-		"402;BME280;4;45.0;9.0;2025-01-01T10:00:02Z;100000;22;52",
-		"301;BME280;3;45.0;9.0;2025-01-01T10:00:03Z;100000;23;53",
-		"302;BME280;3;45.0;9.0;2025-01-01T10:00:04Z;100000;24;54",
+		"301;BME280;3;45.0;9.0;2025-01-01T10:00:02Z;100000;20;50",
+		"302;BME280;3;45.0;9.0;2025-01-01T10:00:01Z;100001;21;51",
 	)
 
-	topology := map[string]SensorAssignment{
-		"301": {EdgeID: "edge-3"},
-		"302": {EdgeID: "edge-3"},
-		"401": {EdgeID: "edge-4"},
-		"402": {EdgeID: "edge-4"},
-	}
-
-	var eventIDs []string
-
-	count, err := replaySite(
+	_, err := replaySite(
 		reader,
-		topology,
-		SimulatorConfig{
-			SiteID:    "edge-3",
-			MaxEvents: 2,
-		},
-		func(_ string, event model.SensorEvent) error {
-			eventIDs = append(eventIDs, event.EventID)
+		SimulatorConfig{SiteID: "edge-3"},
+		func(_ string, _ model.SensorEvent) error {
 			return nil
 		},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if count != 2 {
-		t.Fatalf("pubblicazioni=%d, attese 2", count)
-	}
-
-	if strings.Join(eventIDs, ",") != "301-1,301-2" {
-		t.Fatalf("event_id pubblicati inattesi: %v", eventIDs)
+	if err == nil || !strings.Contains(err.Error(), "non ordinato") {
+		t.Fatalf("errore inatteso: %v", err)
 	}
 }
 
@@ -122,49 +109,82 @@ func TestTelemetryTopic(t *testing.T) {
 	}
 }
 
-func TestLoadSimulatorConfigRequiresSiteID(t *testing.T) {
-	_, err := loadSimulatorConfig(
-		envFrom(map[string]string{
-			"MQTT_ENDPOINT": "tcp://mqtt-edge-3:1883",
-		}),
-	)
-	if err == nil || !strings.Contains(err.Error(), "SITE_ID") {
+func TestLoadSimulatorConfigRequiresEveryRuntimeValue(t *testing.T) {
+	valid := map[string]string{
+		"SITE_ID":       "edge-3",
+		"MQTT_ENDPOINT": "tcp://mqtt-edge-3:1883",
+		"REPLAY_FILE":   "/app/dataset/derived/replay_by_edge/edge-3.csv",
+	}
+
+	for _, missing := range []string{
+		"SITE_ID",
+		"MQTT_ENDPOINT",
+		"REPLAY_FILE",
+	} {
+		t.Run(
+			missing,
+			func(t *testing.T) {
+				values := make(map[string]string, len(valid))
+				for name, value := range valid {
+					values[name] = value
+				}
+				delete(values, missing)
+
+				_, err := loadSimulatorConfig(envFrom(values))
+				if err == nil || !strings.Contains(err.Error(), missing) {
+					t.Fatalf("errore inatteso: %v", err)
+				}
+			},
+		)
+	}
+}
+
+func TestOpenReplayFileReportsMissingFile(t *testing.T) {
+	missingPath := t.TempDir() + "/missing.csv"
+
+	_, err := openReplayFile(missingPath)
+	if err == nil || !strings.Contains(err.Error(), "REPLAY_FILE") {
 		t.Fatalf("errore inatteso: %v", err)
 	}
 }
 
-func TestLoadSimulatorConfigRequiresMQTTEndpoint(t *testing.T) {
-	_, err := loadSimulatorConfig(
-		envFrom(map[string]string{
-			"SITE_ID": "edge-3",
-		}),
-	)
-	if err == nil || !strings.Contains(err.Error(), "MQTT_ENDPOINT") {
-		t.Fatalf("errore inatteso: %v", err)
-	}
-}
-
-func TestSimulatorHasNoEdgeDerivedBrokerRouting(t *testing.T) {
+func TestSimulatorHasNoRuntimeTopologyDependency(t *testing.T) {
 	file := parseSimulatorSource(t)
-
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok {
-			continue
-		}
-
-		if function.Name.Name == "brokerAddress" ||
-			function.Name.Name == "getMQTTClient" {
-			t.Fatalf("funzione di routing multi-broker ancora presente: %s", function.Name.Name)
-		}
+	forbiddenIdentifiers := map[string]struct{}{
+		"SensorAssignment": {},
+		"belongsToSite":    {},
+		"brokerAddress":    {},
+		"getMQTTClient":    {},
+	}
+	forbiddenStrings := []string{
+		"kmeans_topology.csv",
+		"macroarea_id",
 	}
 
 	ast.Inspect(
 		file,
 		func(node ast.Node) bool {
-			identifier, ok := node.(*ast.Ident)
-			if ok && identifier.Name == "mqttBasePort" {
-				t.Fatal("mqttBasePort non deve esistere nel Simulator")
+			switch value := node.(type) {
+			case *ast.Ident:
+				if _, forbidden := forbiddenIdentifiers[value.Name]; forbidden {
+					t.Fatalf("dipendenza topologica runtime presente: %s", value.Name)
+				}
+
+			case *ast.BasicLit:
+				if value.Kind != token.STRING {
+					return true
+				}
+
+				literal, err := strconv.Unquote(value.Value)
+				if err != nil {
+					t.Fatalf("stringa Go non valida %s: %v", value.Value, err)
+				}
+
+				for _, forbidden := range forbiddenStrings {
+					if strings.Contains(literal, forbidden) {
+						t.Fatalf("riferimento runtime vietato: %s", forbidden)
+					}
+				}
 			}
 
 			return true

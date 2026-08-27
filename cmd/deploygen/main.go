@@ -507,6 +507,26 @@ func buildCompose(
 		)
 
 		builder.WriteString(
+			"    healthcheck:\n",
+		)
+
+		builder.WriteString(
+			"      test: [\"CMD-SHELL\", \"wget -q -O - http://localhost:8080/readyz >/dev/null 2>&1\"]\n",
+		)
+
+		builder.WriteString(
+			"      interval: 2s\n",
+		)
+
+		builder.WriteString(
+			"      timeout: 1s\n",
+		)
+
+		builder.WriteString(
+			"      retries: 15\n",
+		)
+
+		builder.WriteString(
 			"    restart: unless-stopped\n",
 		)
 
@@ -562,6 +582,12 @@ func buildCompose(
 			mqttService,
 		)
 
+		fmt.Fprintf(
+			&builder,
+			"      REPLAY_FILE: \"/app/dataset/derived/replay_by_edge/%s.csv\"\n",
+			edge.EdgeID,
+		)
+
 		builder.WriteString(
 			"      MAX_EVENTS: \"${MAX_EVENTS:-0}\"\n",
 		)
@@ -595,7 +621,7 @@ func buildCompose(
 		)
 
 		builder.WriteString(
-			"        condition: service_started\n",
+			"        condition: service_healthy\n",
 		)
 
 		builder.WriteString(
