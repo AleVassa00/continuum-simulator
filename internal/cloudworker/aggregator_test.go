@@ -254,6 +254,46 @@ func TestWindowAggregatorFlushesPartialWindowsDeterministically(t *testing.T) {
 	}
 }
 
+func TestWindowAggregatorFlushEdgeRemovesOnlyRequestedEdge(t *testing.T) {
+	aggregator := newTestAggregator(t)
+	start := testTime(10, 0)
+
+	for _, edgeID := range []string{"edge-1", "edge-2"} {
+		_, err := aggregator.Add(
+			newEdgeAggregate(
+				edgeID,
+				start,
+				metricAggregate(1, 0, 10, 10, 10),
+			),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	output, found := aggregator.FlushEdge("edge-1")
+	if !found || output == nil || output.EdgeID != "edge-1" {
+		t.Fatalf("output edge-1 inatteso: found=%t output=%#v", found, output)
+	}
+
+	if _, found := aggregator.states["edge-1"]; found {
+		t.Fatal("stato edge-1 ancora presente")
+	}
+	if _, found := aggregator.states["edge-2"]; !found {
+		t.Fatal("FlushEdge(edge-1) ha rimosso edge-2")
+	}
+
+	second, found := aggregator.FlushEdge("edge-1")
+	if found || second != nil {
+		t.Fatalf("secondo FlushEdge inatteso: found=%t output=%#v", found, second)
+	}
+
+	remaining := aggregator.Flush()
+	if len(remaining) != 1 || remaining[0].EdgeID != "edge-2" {
+		t.Fatalf("stato edge-2 modificato: %#v", remaining)
+	}
+}
+
 func TestCloudAggregateIDIsDeterministic(t *testing.T) {
 	start := testTime(10, 0)
 	input := newEdgeAggregate(

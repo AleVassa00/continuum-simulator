@@ -87,10 +87,16 @@ type EventPublisher func(
 	event model.SensorEvent,
 ) (PublishResult, error)
 
+type EndOfReplayPublisher func(
+	topic string,
+	record model.EndOfReplay,
+) (PublishResult, error)
+
 type ReplayRuntime struct {
-	Now     func() time.Time
-	Sleep   func(time.Duration)
-	Publish EventPublisher
+	Now                func() time.Time
+	Sleep              func(time.Duration)
+	Publish            EventPublisher
+	PublishEndOfReplay EndOfReplayPublisher
 }
 
 type ReplayStats struct {
@@ -101,6 +107,8 @@ type ReplayStats struct {
 	FirstPublishedAt   time.Time
 	LastPublishedAt    time.Time
 	CompletedAt        time.Time
+	ReachedEOF         bool
+	LastObservedAt     time.Time
 }
 
 const (
@@ -163,6 +171,17 @@ func main() {
 					client.Publish,
 					topic,
 					event,
+					time.Now,
+				)
+			},
+			PublishEndOfReplay: func(
+				topic string,
+				record model.EndOfReplay,
+			) (PublishResult, error) {
+				return publishEndOfReplay(
+					client.Publish,
+					topic,
+					record,
 					time.Now,
 				)
 			},
@@ -614,7 +633,7 @@ func replaySite(
 	columns := buildColumnIndex(header)
 	sequences := make(map[string]uint64)
 
-	var lastObservedAt time.Time
+	var previousObservedAt time.Time
 
 	for {
 		if config.MaxEvents > 0 &&
@@ -624,6 +643,7 @@ func replaySite(
 
 		row, err := reader.Read()
 		if err == io.EOF {
+			stats.ReachedEOF = true
 			break
 		}
 		if err != nil {
@@ -639,17 +659,17 @@ func replaySite(
 		}
 
 		// Ogni shard deve conservare l'ordine temporale del replay globale.
-		if !lastObservedAt.IsZero() &&
-			measurement.Timestamp.Before(lastObservedAt) {
+		if !previousObservedAt.IsZero() &&
+			measurement.Timestamp.Before(previousObservedAt) {
 			return stats,
 				fmt.Errorf(
 					"replay non ordinato temporalmente: %s arriva dopo %s",
 					measurement.Timestamp.Format(time.RFC3339),
-					lastObservedAt.Format(time.RFC3339),
+					previousObservedAt.Format(time.RFC3339),
 				)
 		}
 
-		lastObservedAt = measurement.Timestamp
+		previousObservedAt = measurement.Timestamp
 		scheduledTime, err := pacer.ScheduledTime(
 			measurement.Timestamp,
 		)
@@ -719,6 +739,8 @@ func replaySite(
 			return stats, err
 		}
 
+		stats.LastObservedAt = event.ObservedAt
+
 		if stats.Events%1000 == 0 {
 			fmt.Printf(
 				"%s: pubblicati=%d pending=%d peak_in_flight=%d lag_medio=%s lag_massimo=%s\n",
@@ -734,6 +756,71 @@ func replaySite(
 
 	if err := pending.Drain(); err != nil {
 		return stats, err
+	}
+
+	if !stats.ReachedEOF {
+		return stats, nil
+	}
+
+	if stats.LastObservedAt.IsZero() {
+		return stats,
+			fmt.Errorf(
+				"replay %s ha raggiunto EOF senza eventi pubblicati",
+				config.SiteID,
+			)
+	}
+
+	if runtime.PublishEndOfReplay == nil {
+		return stats,
+			fmt.Errorf(
+				"publisher EndOfReplay non configurato per %s",
+				config.SiteID,
+			)
+	}
+
+	endRecord := model.EndOfReplay{
+		SchemaVersion:  model.EndOfReplaySchemaVersion,
+		EdgeID:         config.SiteID,
+		LastObservedAt: stats.LastObservedAt,
+		EmittedAt:      runtime.Now().UTC(),
+	}
+	endTopic := replayEndTopic(config.SiteID)
+	endResult, err := runtime.PublishEndOfReplay(
+		endTopic,
+		endRecord,
+	)
+	if err != nil {
+		return stats,
+			fmt.Errorf(
+				"pubblicazione EndOfReplay MQTT edge=%s fallita: %w",
+				config.SiteID,
+				err,
+			)
+	}
+
+	endPending, err := newPendingPublishes(
+		1,
+		publishAckTimeout,
+		runtime.Now,
+	)
+	if err != nil {
+		return stats, err
+	}
+
+	if err := endPending.Track(
+		PendingPublish{
+			EventID:     "end-of-replay:" + config.SiteID,
+			Topic:       endTopic,
+			PublishedAt: endResult.PublishedAt,
+			Token:       endResult.Token,
+		},
+	); err != nil {
+		return stats,
+			fmt.Errorf(
+				"PUBACK EndOfReplay MQTT edge=%s fallito: %w",
+				config.SiteID,
+				err,
+			)
 	}
 
 	return stats, nil
@@ -1030,6 +1117,15 @@ func telemetryTopic(
 	)
 }
 
+func replayEndTopic(
+	edgeID string,
+) string {
+	return fmt.Sprintf(
+		"replay/%s/end",
+		edgeID,
+	)
+}
+
 func connectMQTTClient(
 	siteID string,
 	endpoint string,
@@ -1098,6 +1194,52 @@ func publishSensorEvent(
 				err,
 			)
 	}
+
+	return publishMQTTPayload(
+		publish,
+		topic,
+		payload,
+		now,
+	)
+}
+
+func publishEndOfReplay(
+	publish MQTTPublish,
+	topic string,
+	record model.EndOfReplay,
+	now func() time.Time,
+) (PublishResult, error) {
+	if err := model.ValidateEndOfReplay(record); err != nil {
+		return PublishResult{},
+			fmt.Errorf(
+				"EndOfReplay non valido: %w",
+				err,
+			)
+	}
+
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return PublishResult{},
+			fmt.Errorf(
+				"serializzazione EndOfReplay fallita: %w",
+				err,
+			)
+	}
+
+	return publishMQTTPayload(
+		publish,
+		topic,
+		payload,
+		now,
+	)
+}
+
+func publishMQTTPayload(
+	publish MQTTPublish,
+	topic string,
+	payload []byte,
+	now func() time.Time,
+) (PublishResult, error) {
 
 	publishedAt := now()
 	token := publish(

@@ -172,6 +172,28 @@ func (
 
 func (
 	aggregator *WindowAggregator,
+) FlushEdge(
+	edgeID string,
+) (*model.CloudEdgeAggregate, bool) {
+	state, found := aggregator.states[edgeID]
+	if !found {
+		return nil, false
+	}
+
+	delete(aggregator.states, edgeID)
+	if state.inputAggregates == 0 {
+		return nil, false
+	}
+
+	output := state.buildAggregate(
+		aggregator.now().UTC(),
+	)
+
+	return &output, true
+}
+
+func (
+	aggregator *WindowAggregator,
 ) cloudWindowFor(
 	input model.EdgeAggregate,
 ) (

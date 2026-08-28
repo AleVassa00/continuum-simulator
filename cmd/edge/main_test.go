@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,6 +124,20 @@ func TestTelemetrySubscriptionUsesSensorScopedTopic(t *testing.T) {
 	}
 }
 
+func TestEdgeSubscriptionsIncludeTelemetryAndOwnReplayEnd(t *testing.T) {
+	topics := edgeSubscriptionTopics("edge-3")
+
+	if len(topics) != 2 ||
+		topics[telemetrySubscriptionTopic] != 1 ||
+		topics["replay/edge-3/end"] != 1 {
+		t.Fatalf("subscription inattese: %#v", topics)
+	}
+
+	if _, found := topics["replay/edge-4/end"]; found {
+		t.Fatal("Edge sottoscritto al control topic di un altro sito")
+	}
+}
+
 func TestWindowAggregatorKeepsEventsInSameFiveMinuteWindow(t *testing.T) {
 	aggregator, messages := newTestEdgeAggregator()
 
@@ -176,6 +191,9 @@ func TestWindowAggregatorEmitsPreviousWindowOnTransition(t *testing.T) {
 
 	if string((*messages)[0].Key) != "edge-0" {
 		t.Fatalf("chiave Kafka=%q, attesa edge-0", (*messages)[0].Key)
+	}
+	if recordType(t, (*messages)[0]) != model.RecordTypeEdgeAggregate {
+		t.Fatalf("record_type aggregate inatteso: %#v", (*messages)[0].Headers)
 	}
 
 	if aggregator.current == nil ||
@@ -244,8 +262,12 @@ func TestWindowAggregatorFlushIsIdempotent(t *testing.T) {
 		t.Fatalf("Add() ha restituito un errore: %v", err)
 	}
 
-	aggregator.Flush()
-	aggregator.Flush()
+	if err := aggregator.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := aggregator.Flush(); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(*messages) != 1 {
 		t.Fatalf("aggregati emessi da due Flush=%d, atteso 1", len(*messages))
@@ -282,12 +304,184 @@ func TestWindowAggregatorTracksValidAndInvalidMetrics(t *testing.T) {
 		}
 	}
 
-	aggregator.Flush()
+	if err := aggregator.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	emitted := decodeEdgeAggregate(t, (*messages)[0])
 
 	assertEdgeMetric(t, emitted.Temperature, 2, 1, 50, 25, 20, 30)
 	assertEdgeMetric(t, emitted.Humidity, 2, 1, 110, 55, 50, 60)
 	assertEdgeMetric(t, emitted.Pressure, 2, 1, 190000, 95000, 90000, 100000)
+}
+
+func TestWindowAggregatorFlushPropagatesPublishFailure(t *testing.T) {
+	aggregator := &WindowAggregator{
+		edgeID:     "edge-0",
+		windowSize: 5 * time.Minute,
+		kafkaTopic: "edge-aggregates",
+		publishMessage: func(context.Context, kafka.Message) error {
+			return errors.New("Kafka non disponibile")
+		},
+	}
+
+	if err := aggregator.Add(
+		"event-1",
+		edgeTestTime(10, 1),
+		validMeasurement(20, 50, 100000),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	err := aggregator.Flush()
+	if err == nil || !strings.Contains(err.Error(), "Kafka non disponibile") {
+		t.Fatalf("errore inatteso: %v", err)
+	}
+
+	if aggregator.current == nil {
+		t.Fatal("stato finale perso dopo flush fallito")
+	}
+}
+
+func TestHandleEndOfReplayRejectsEdgeMismatch(t *testing.T) {
+	aggregator, messages := newTestEdgeAggregator()
+	record := validEndOfReplay("edge-4")
+	payload, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = handleEndOfReplayPayload(
+		"edge-0",
+		payload,
+		aggregator,
+		edgeTestTime(12, 0),
+	)
+	if err == nil || !strings.Contains(err.Error(), "edge-4") {
+		t.Fatalf("errore inatteso: %v", err)
+	}
+
+	if len(*messages) != 0 {
+		t.Fatalf("messaggi Kafka inattesi: %d", len(*messages))
+	}
+}
+
+func TestEndOfReplayFlushesFinalWindowBeforeKafkaControl(t *testing.T) {
+	aggregator, messages := newTestEdgeAggregator()
+	lastObservedAt := edgeTestTime(10, 3)
+	if err := aggregator.Add(
+		"event-1",
+		lastObservedAt,
+		validMeasurement(20, 50, 100000),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	record := validEndOfReplay("edge-0")
+	record.LastObservedAt = lastObservedAt
+	edgeEmittedAt := edgeTestTime(12, 5)
+	if err := aggregator.EndReplay(record, edgeEmittedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(*messages) != 2 {
+		t.Fatalf("messaggi Kafka=%d, attesi aggregate+control", len(*messages))
+	}
+
+	if recordType(t, (*messages)[0]) != model.RecordTypeEdgeAggregate ||
+		recordType(t, (*messages)[1]) != model.RecordTypeEndOfReplay {
+		t.Fatalf(
+			"ordine record_type inatteso: %s, %s",
+			recordType(t, (*messages)[0]),
+			recordType(t, (*messages)[1]),
+		)
+	}
+
+	for index, message := range *messages {
+		if string(message.Key) != "edge-0" {
+			t.Fatalf("messaggio %d key=%q", index, message.Key)
+		}
+	}
+
+	finalAggregate := decodeEdgeAggregate(t, (*messages)[0])
+	if finalAggregate.Events != 1 ||
+		!finalAggregate.WindowStart.Equal(edgeTestTime(10, 0)) {
+		t.Fatalf("aggregate finale inatteso: %#v", finalAggregate)
+	}
+
+	var forwarded model.EndOfReplay
+	if err := json.Unmarshal((*messages)[1].Value, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if !forwarded.LastObservedAt.Equal(lastObservedAt) ||
+		!forwarded.EmittedAt.Equal(edgeEmittedAt) {
+		t.Fatalf("EndOfReplay inoltrato inatteso: %#v", forwarded)
+	}
+
+	if aggregator.current != nil || !aggregator.ended {
+		t.Fatalf("stato finale Edge inatteso: current=%#v ended=%t", aggregator.current, aggregator.ended)
+	}
+}
+
+func TestEndOfReplayDoesNotPropagateWhenFinalFlushFails(t *testing.T) {
+	publishedTypes := make([]string, 0, 2)
+	aggregator := &WindowAggregator{
+		edgeID:     "edge-0",
+		windowSize: 5 * time.Minute,
+		kafkaTopic: "edge-aggregates",
+		publishMessage: func(_ context.Context, message kafka.Message) error {
+			publishedTypes = append(publishedTypes, recordType(t, message))
+			return errors.New("aggregate finale fallito")
+		},
+	}
+
+	if err := aggregator.Add(
+		"event-1",
+		edgeTestTime(10, 1),
+		validMeasurement(20, 50, 100000),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	err := aggregator.EndReplay(
+		validEndOfReplay("edge-0"),
+		edgeTestTime(12, 0),
+	)
+	if err == nil || !strings.Contains(err.Error(), "aggregate finale fallito") {
+		t.Fatalf("errore inatteso: %v", err)
+	}
+
+	if len(publishedTypes) != 1 ||
+		publishedTypes[0] != model.RecordTypeEdgeAggregate ||
+		aggregator.ended {
+		t.Fatalf(
+			"publish=%v ended=%t",
+			publishedTypes,
+			aggregator.ended,
+		)
+	}
+}
+
+func TestDuplicateEndOfReplayIsIgnored(t *testing.T) {
+	aggregator, messages := newTestEdgeAggregator()
+	if err := aggregator.Add(
+		"event-1",
+		edgeTestTime(10, 1),
+		validMeasurement(20, 50, 100000),
+	); err != nil {
+		t.Fatal(err)
+	}
+	record := validEndOfReplay("edge-0")
+
+	if err := aggregator.EndReplay(record, edgeTestTime(12, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := aggregator.EndReplay(record, edgeTestTime(12, 1)); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(*messages) != 2 {
+		t.Fatalf("EOS duplicato ha prodotto %d messaggi", len(*messages))
+	}
 }
 
 func TestRetrySubscriptionSucceedsAfterTransientFailures(t *testing.T) {
@@ -474,6 +668,33 @@ func decodeEdgeAggregate(
 	}
 
 	return aggregate
+}
+
+func recordType(
+	t *testing.T,
+	message kafka.Message,
+) string {
+	t.Helper()
+
+	for _, header := range message.Headers {
+		if header.Key == model.RecordTypeHeader {
+			return string(header.Value)
+		}
+	}
+
+	t.Fatalf("header %q mancante", model.RecordTypeHeader)
+	return ""
+}
+
+func validEndOfReplay(
+	edgeID string,
+) model.EndOfReplay {
+	return model.EndOfReplay{
+		SchemaVersion:  model.EndOfReplaySchemaVersion,
+		EdgeID:         edgeID,
+		LastObservedAt: edgeTestTime(10, 3),
+		EmittedAt:      edgeTestTime(11, 0),
+	}
 }
 
 func validMeasurement(

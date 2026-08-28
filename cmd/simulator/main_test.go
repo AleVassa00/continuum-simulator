@@ -147,8 +147,9 @@ func TestReplayDoesNotUseFirstShardEventAsEpoch(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				return PublishResult{
 					Token:       token,
@@ -190,8 +191,9 @@ func TestReplayPublishesEveryShardRowWithEventSemanticsUnchanged(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(topic string, event model.SensorEvent) (PublishResult, error) {
 				topics = append(topics, topic)
 				events = append(events, event)
@@ -251,6 +253,7 @@ func TestMaxEventsLimitsOnlyThisSimulatorInstance(t *testing.T) {
 	config.MaxEvents = 2
 	clock := newFakeClock(config.ReplayStartAt)
 	publishCalls := 0
+	endPublishCalls := 0
 
 	stats, err := replaySite(
 		replayReader(
@@ -262,6 +265,10 @@ func TestMaxEventsLimitsOnlyThisSimulatorInstance(t *testing.T) {
 		ReplayRuntime{
 			Now:   clock.Now,
 			Sleep: clock.Sleep,
+			PublishEndOfReplay: func(_ string, _ model.EndOfReplay) (PublishResult, error) {
+				endPublishCalls++
+				return PublishResult{}, nil
+			},
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				publishCalls++
 
@@ -276,8 +283,14 @@ func TestMaxEventsLimitsOnlyThisSimulatorInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if stats.Events != 2 || publishCalls != 2 {
-		t.Fatalf("eventi=%d, chiamate publisher=%d", stats.Events, publishCalls)
+	if stats.Events != 2 || publishCalls != 2 || endPublishCalls != 0 || stats.ReachedEOF {
+		t.Fatalf(
+			"eventi=%d publish=%d end=%d reached_eof=%t",
+			stats.Events,
+			publishCalls,
+			endPublishCalls,
+			stats.ReachedEOF,
+		)
 	}
 }
 
@@ -292,8 +305,9 @@ func TestReplayRejectsDecreasingTimestamp(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				return PublishResult{
 					Token:       newAwaitableToken(nil),
@@ -319,8 +333,9 @@ func TestReplayMeasuresSchedulingLag(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				publishCalls++
 				lag := time.Duration(publishCalls*200-100) * time.Millisecond
@@ -360,8 +375,9 @@ func TestReplayRejectsStartBeyondLateTolerance(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				publishCalls++
 
@@ -395,8 +411,9 @@ func TestReplayAcceptsSmallInitialLateness(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				return PublishResult{
 					Token:       newCompletedToken(nil),
@@ -431,8 +448,9 @@ func TestReplayDoesNotAbortForLatenessAfterFirstPublish(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				publishedAt := clock.Now()
 				publishCalls++
@@ -472,8 +490,9 @@ func TestReplayThroughputUsesOnlyPublishWindow(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				return PublishResult{
 					Token:       newCompletedToken(nil),
@@ -514,8 +533,9 @@ func TestReplayCompletedAtIsRecordedAfterDrain(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				return PublishResult{
 					Token:       token,
@@ -825,8 +845,9 @@ func TestReplayPublishesAsynchronouslyUntilInFlightLimit(t *testing.T) {
 		),
 		config,
 		ReplayRuntime{
-			Now:   clock.Now,
-			Sleep: clock.Sleep,
+			Now:                clock.Now,
+			Sleep:              clock.Sleep,
+			PublishEndOfReplay: completedEndPublisher(clock),
 			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
 				result := PublishResult{
 					Token:       tokens[publishCalls],
@@ -850,6 +871,205 @@ func TestReplayPublishesAsynchronouslyUntilInFlightLimit(t *testing.T) {
 		if publishToken.waitCalls != 1 {
 			t.Fatalf("token %d non drenato: waitCalls=%d", index, publishToken.waitCalls)
 		}
+	}
+}
+
+func TestReplayPublishesEndOfReplayOnlyAfterTelemetryDrain(t *testing.T) {
+	config := validSimulatorConfig()
+	clock := newFakeClock(config.ReplayStartAt)
+	telemetryTokens := []*fakeToken{
+		newAwaitableToken(nil),
+		newAwaitableToken(nil),
+	}
+	endToken := newAwaitableToken(nil)
+	order := make([]string, 0, 5)
+	telemetryTokens[0].onWait = func() { order = append(order, "ack-a") }
+	telemetryTokens[1].onWait = func() { order = append(order, "ack-b") }
+	endToken.onWait = func() { order = append(order, "ack-end") }
+	var endTopic string
+	var endRecord model.EndOfReplay
+	publishCalls := 0
+
+	stats, err := replaySite(
+		replayReader(
+			"501;BME280;5;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
+			"502;BME280;5;45.0;9.0;2025-01-01T00:00:01Z;100000;20;50",
+		),
+		config,
+		ReplayRuntime{
+			Now:   clock.Now,
+			Sleep: clock.Sleep,
+			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
+				order = append(order, "telemetry-"+strconv.Itoa(publishCalls))
+				result := PublishResult{
+					Token:       telemetryTokens[publishCalls],
+					PublishedAt: clock.Now(),
+				}
+				publishCalls++
+
+				return result, nil
+			},
+			PublishEndOfReplay: func(
+				topic string,
+				record model.EndOfReplay,
+			) (PublishResult, error) {
+				if telemetryTokens[0].waitCalls != 1 ||
+					telemetryTokens[1].waitCalls != 1 {
+					t.Fatal("EndOfReplay pubblicato prima del drain telemetry")
+				}
+
+				order = append(order, "publish-end")
+				endTopic = topic
+				endRecord = record
+
+				return PublishResult{
+					Token:       endToken,
+					PublishedAt: clock.Now(),
+				}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectedOrder := []string{
+		"telemetry-0",
+		"telemetry-1",
+		"ack-a",
+		"ack-b",
+		"publish-end",
+		"ack-end",
+	}
+	if len(order) != len(expectedOrder) {
+		t.Fatalf("ordine=%v, atteso %v", order, expectedOrder)
+	}
+	for index := range expectedOrder {
+		if order[index] != expectedOrder[index] {
+			t.Fatalf("ordine=%v, atteso %v", order, expectedOrder)
+		}
+	}
+
+	lastObservedAt := mustTime("2025-01-01T00:00:01Z")
+	if !stats.ReachedEOF ||
+		!stats.LastObservedAt.Equal(lastObservedAt) ||
+		endTopic != "replay/edge-3/end" ||
+		endRecord.SchemaVersion != model.EndOfReplaySchemaVersion ||
+		endRecord.EdgeID != "edge-3" ||
+		!endRecord.LastObservedAt.Equal(lastObservedAt) ||
+		endRecord.EmittedAt.IsZero() ||
+		endToken.waitCalls != 1 {
+		t.Fatalf(
+			"stats=%#v topic=%q record=%#v end_wait=%d",
+			stats,
+			endTopic,
+			endRecord,
+			endToken.waitCalls,
+		)
+	}
+}
+
+func TestReplayDoesNotPublishEndOfReplayWhenTelemetryDrainFails(t *testing.T) {
+	config := validSimulatorConfig()
+	clock := newFakeClock(config.ReplayStartAt)
+	endPublishCalls := 0
+
+	_, err := replaySite(
+		replayReader(
+			"501;BME280;5;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
+		),
+		config,
+		ReplayRuntime{
+			Now:   clock.Now,
+			Sleep: clock.Sleep,
+			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
+				return PublishResult{
+					Token:       newAwaitableToken(errors.New("telemetry PUBACK fallito")),
+					PublishedAt: clock.Now(),
+				}, nil
+			},
+			PublishEndOfReplay: func(_ string, _ model.EndOfReplay) (PublishResult, error) {
+				endPublishCalls++
+				return PublishResult{}, nil
+			},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "telemetry PUBACK fallito") {
+		t.Fatalf("errore inatteso: %v", err)
+	}
+
+	if endPublishCalls != 0 {
+		t.Fatalf("EndOfReplay pubblicato %d volte", endPublishCalls)
+	}
+}
+
+func TestReplayFailsWhenEndOfReplayPublishFails(t *testing.T) {
+	config := validSimulatorConfig()
+	clock := newFakeClock(config.ReplayStartAt)
+
+	_, err := replaySite(
+		replayReader(
+			"501;BME280;5;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
+		),
+		config,
+		ReplayRuntime{
+			Now:   clock.Now,
+			Sleep: clock.Sleep,
+			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
+				return PublishResult{
+					Token:       newCompletedToken(nil),
+					PublishedAt: clock.Now(),
+				}, nil
+			},
+			PublishEndOfReplay: func(_ string, _ model.EndOfReplay) (PublishResult, error) {
+				return PublishResult{}, errors.New("publish end fallito")
+			},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "publish end fallito") {
+		t.Fatalf("errore inatteso: %v", err)
+	}
+}
+
+func TestReplayFailsWhenEndOfReplayAckTimesOut(t *testing.T) {
+	config := validSimulatorConfig()
+	clock := newFakeClock(config.ReplayStartAt)
+	endToken := newTimeoutToken()
+
+	_, err := replaySite(
+		replayReader(
+			"501;BME280;5;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
+		),
+		config,
+		ReplayRuntime{
+			Now:   clock.Now,
+			Sleep: clock.Sleep,
+			Publish: func(_ string, _ model.SensorEvent) (PublishResult, error) {
+				return PublishResult{
+					Token:       newCompletedToken(nil),
+					PublishedAt: clock.Now(),
+				}, nil
+			},
+			PublishEndOfReplay: func(_ string, _ model.EndOfReplay) (PublishResult, error) {
+				return PublishResult{
+					Token:       endToken,
+					PublishedAt: clock.Now(),
+				}, nil
+			},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "timeout PUBACK") {
+		t.Fatalf("errore inatteso: %v", err)
+	}
+
+	if endToken.waitCalls != 1 {
+		t.Fatalf("token EndOfReplay atteso %d volte", endToken.waitCalls)
+	}
+}
+
+func TestReplayEndTopic(t *testing.T) {
+	if topic := replayEndTopic("edge-3"); topic != "replay/edge-3/end" {
+		t.Fatalf("topic=%q", topic)
 	}
 }
 
@@ -919,6 +1139,67 @@ func TestPublishSensorEventUsesQoSOneWithoutWaiting(t *testing.T) {
 		!decoded.ObservedAt.Equal(event.ObservedAt) ||
 		!decoded.EmittedAt.Equal(event.EmittedAt) {
 		t.Fatalf("evento serializzato modificato: %#v", decoded)
+	}
+}
+
+func TestPublishEndOfReplayUsesQoSOneWithoutRetain(t *testing.T) {
+	fixedNow := mustTime("2026-08-28T20:00:01Z")
+	token := newCompletedToken(nil)
+	var capturedTopic string
+	var capturedQoS byte
+	var capturedRetained bool
+	var capturedPayload []byte
+	record := model.EndOfReplay{
+		SchemaVersion:  model.EndOfReplaySchemaVersion,
+		EdgeID:         "edge-3",
+		LastObservedAt: mustTime("2025-01-01T00:00:00Z"),
+		EmittedAt:      fixedNow,
+	}
+
+	result, err := publishEndOfReplay(
+		func(
+			topic string,
+			qos byte,
+			retained bool,
+			payload interface{},
+		) mqtt.Token {
+			capturedTopic = topic
+			capturedQoS = qos
+			capturedRetained = retained
+			capturedPayload = append([]byte(nil), payload.([]byte)...)
+
+			return token
+		},
+		"replay/edge-3/end",
+		record,
+		func() time.Time { return fixedNow },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if capturedTopic != "replay/edge-3/end" ||
+		capturedQoS != 1 ||
+		capturedRetained ||
+		result.Token != token ||
+		!result.PublishedAt.Equal(fixedNow) ||
+		token.waitCalls != 0 {
+		t.Fatalf(
+			"topic=%q qos=%d retained=%t result=%#v waits=%d",
+			capturedTopic,
+			capturedQoS,
+			capturedRetained,
+			result,
+			token.waitCalls,
+		)
+	}
+
+	var decoded model.EndOfReplay
+	if err := json.Unmarshal(capturedPayload, &decoded); err != nil {
+		t.Fatalf("payload EndOfReplay non valido: %v", err)
+	}
+	if decoded != record {
+		t.Fatalf("record=%#v, atteso %#v", decoded, record)
 	}
 }
 
@@ -1274,6 +1555,20 @@ func testPending(
 		Topic:       "sensors/101/telemetry",
 		PublishedAt: testPublishTime,
 		Token:       token,
+	}
+}
+
+func completedEndPublisher(
+	clock *fakeClock,
+) EndOfReplayPublisher {
+	return func(
+		_ string,
+		_ model.EndOfReplay,
+	) (PublishResult, error) {
+		return PublishResult{
+			Token:       newCompletedToken(nil),
+			PublishedAt: clock.Now(),
+		}, nil
 	}
 }
 

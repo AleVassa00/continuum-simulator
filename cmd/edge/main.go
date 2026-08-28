@@ -64,6 +64,7 @@ type WindowAggregator struct {
 	edgeID     string
 	windowSize time.Duration
 	current    *WindowState
+	ended      bool
 
 	kafkaTopic     string
 	publishMessage func(context.Context, kafka.Message) error
@@ -208,6 +209,8 @@ func main() {
 		5 * time.Second,
 	)
 
+	options.SetOrderMatters(true)
+
 	subscriptions := &SubscriptionCoordinator{}
 
 	options.SetOnConnectHandler(
@@ -220,7 +223,7 @@ func main() {
 				edgeID,
 			)
 
-			subscribeToTelemetry(
+			subscribeToEdgeTopics(
 				client,
 				edgeID,
 				aggregator,
@@ -285,7 +288,13 @@ func main() {
 	readiness.MarkNotReady()
 	client.Disconnect(250)
 
-	aggregator.Flush()
+	if err := aggregator.Flush(); err != nil {
+		fmt.Printf(
+			"%s: errore flush ultima finestra: %v\n",
+			edgeID,
+			err,
+		)
+	}
 
 	err = kafkaWriter.Close()
 	if err != nil {
@@ -496,7 +505,7 @@ func loadWindowSize() (
 	return windowSize, nil
 }
 
-func subscribeToTelemetry(
+func subscribeToEdgeTopics(
 	client mqtt.Client,
 	edgeID string,
 	aggregator *WindowAggregator,
@@ -506,8 +515,8 @@ func subscribeToTelemetry(
 ) {
 	readiness.MarkNotReady()
 
-	topic := telemetrySubscriptionTopic
-	handler := makeTelemetryHandler(
+	topics := edgeSubscriptionTopics(edgeID)
+	handler := makeEdgeMessageHandler(
 		edgeID,
 		aggregator,
 	)
@@ -523,9 +532,8 @@ func subscribeToTelemetry(
 				client.IsConnected()
 		},
 		func(timeout time.Duration) error {
-			token := client.Subscribe(
-				topic,
-				1,
+			token := client.SubscribeMultiple(
+				topics,
 				handler,
 			)
 
@@ -558,9 +566,28 @@ func subscribeToTelemetry(
 	readiness.MarkReady()
 
 	fmt.Printf(
-		"%s sottoscritto a %s\n\n",
+		"%s sottoscritto a %s e %s\n\n",
 		edgeID,
-		topic,
+		telemetrySubscriptionTopic,
+		replayEndTopic(edgeID),
+	)
+}
+
+func edgeSubscriptionTopics(
+	edgeID string,
+) map[string]byte {
+	return map[string]byte{
+		telemetrySubscriptionTopic: 1,
+		replayEndTopic(edgeID):     1,
+	}
+}
+
+func replayEndTopic(
+	edgeID string,
+) string {
+	return fmt.Sprintf(
+		"replay/%s/end",
+		edgeID,
 	)
 }
 
@@ -667,6 +694,66 @@ func makeTelemetryHandler(
 			return
 		}
 	}
+}
+
+func makeEdgeMessageHandler(
+	edgeID string,
+	aggregator *WindowAggregator,
+) mqtt.MessageHandler {
+	telemetryHandler := makeTelemetryHandler(
+		edgeID,
+		aggregator,
+	)
+	endTopic := replayEndTopic(edgeID)
+
+	return func(
+		client mqtt.Client,
+		message mqtt.Message,
+	) {
+		if message.Topic() != endTopic {
+			telemetryHandler(client, message)
+			return
+		}
+
+		if err := handleEndOfReplayPayload(
+			edgeID,
+			message.Payload(),
+			aggregator,
+			time.Now().UTC(),
+		); err != nil {
+			fmt.Printf(
+				"%s: EndOfReplay scartato: %v\n",
+				edgeID,
+				err,
+			)
+		}
+	}
+}
+
+func handleEndOfReplayPayload(
+	edgeID string,
+	payload []byte,
+	aggregator *WindowAggregator,
+	emittedAt time.Time,
+) error {
+	var record model.EndOfReplay
+	if err := json.Unmarshal(payload, &record); err != nil {
+		return fmt.Errorf("EndOfReplay JSON non valido: %w", err)
+	}
+
+	if err := model.ValidateEndOfReplay(record); err != nil {
+		return err
+	}
+
+	if record.EdgeID != edgeID {
+		return fmt.Errorf(
+			"EndOfReplay edge_id=%s ricevuto da %s",
+			record.EdgeID,
+			edgeID,
+		)
+	}
+
+	return aggregator.EndReplay(record, emittedAt)
 }
 
 func validateSensorEvent(
@@ -965,6 +1052,13 @@ func (
 
 			Value: payload,
 
+			Headers: []kafka.Header{
+				{
+					Key:   model.RecordTypeHeader,
+					Value: []byte(model.RecordTypeEdgeAggregate),
+				},
+			},
+
 			Time: aggregate.EmittedAt,
 		},
 	)
@@ -990,22 +1084,98 @@ func (
 
 func (
 	aggregator *WindowAggregator,
-) Flush() {
+) Flush() error {
 	aggregator.mu.Lock()
 	defer aggregator.mu.Unlock()
 
-	err := aggregator.emitCurrentWindow()
-	if err != nil {
-		fmt.Printf(
-			"%s: errore flush ultima finestra: %v\n",
-			aggregator.edgeID,
-			err,
-		)
-
-		return
+	if err := aggregator.emitCurrentWindow(); err != nil {
+		return err
 	}
 
 	aggregator.current = nil
+
+	return nil
+}
+
+func (
+	aggregator *WindowAggregator,
+) EndReplay(
+	record model.EndOfReplay,
+	emittedAt time.Time,
+) error {
+	if err := model.ValidateEndOfReplay(record); err != nil {
+		return err
+	}
+
+	if record.EdgeID != aggregator.edgeID {
+		return fmt.Errorf(
+			"EndOfReplay edge_id=%s non coerente con Edge %s",
+			record.EdgeID,
+			aggregator.edgeID,
+		)
+	}
+
+	aggregator.mu.Lock()
+	defer aggregator.mu.Unlock()
+
+	if aggregator.ended {
+		fmt.Printf(
+			"%s: EndOfReplay duplicato ignorato\n",
+			aggregator.edgeID,
+		)
+		return nil
+	}
+
+	if err := aggregator.emitCurrentWindow(); err != nil {
+		return fmt.Errorf(
+			"flush finestra finale Edge %s fallito: %w",
+			aggregator.edgeID,
+			err,
+		)
+	}
+	aggregator.current = nil
+
+	forwarded := record
+	forwarded.EmittedAt = emittedAt.UTC()
+	payload, err := json.Marshal(forwarded)
+	if err != nil {
+		return fmt.Errorf(
+			"serializzazione EndOfReplay Edge %s fallita: %w",
+			aggregator.edgeID,
+			err,
+		)
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	if err := aggregator.publishMessage(
+		ctx,
+		kafka.Message{
+			Key:   []byte(aggregator.edgeID),
+			Value: payload,
+			Headers: []kafka.Header{
+				{
+					Key:   model.RecordTypeHeader,
+					Value: []byte(model.RecordTypeEndOfReplay),
+				},
+			},
+			Time: forwarded.EmittedAt,
+		},
+	); err != nil {
+		return fmt.Errorf(
+			"pubblicazione Kafka EndOfReplay edge=%s fallita: %w",
+			aggregator.edgeID,
+			err,
+		)
+	}
+
+	aggregator.ended = true
+
+	return nil
 }
 
 func buildMetricAggregate(
