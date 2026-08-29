@@ -31,14 +31,14 @@ type SensorMeasurement struct {
 }
 
 type SimulatorConfig struct {
-	SiteID             string
-	MQTTEndpoint       string
-	ReplayFile         string
-	MaxEvents          int
-	ReplayEpoch        time.Time
-	ReplayStartAt      time.Time
-	AccelerationFactor float64
-	MQTTMaxInFlight    int
+	SiteID                 string
+	MQTTEndpoint           string
+	ReplayFile             string
+	MaxEvents              int
+	ReplayEpoch            time.Time
+	ReplayStartAt          time.Time
+	AccelerationFactor     float64
+	TelemetryQueueCapacity int
 }
 
 type ReplayPacer struct {
@@ -53,23 +53,6 @@ type PublishToken interface {
 	Error() error
 }
 
-type PendingPublish struct {
-	EventID     string
-	Topic       string
-	PublishedAt time.Time
-	Token       PublishToken
-}
-
-type PendingPublishes struct {
-	maxInFlight int
-	ackTimeout  time.Duration
-	now         func() time.Time
-	pending     []PendingPublish
-	head        int
-	size        int
-	peak        int
-}
-
 type PublishResult struct {
 	Token       PublishToken
 	PublishedAt time.Time
@@ -82,11 +65,6 @@ type MQTTPublish func(
 	payload interface{},
 ) mqtt.Token
 
-type EventPublisher func(
-	topic string,
-	event model.SensorEvent,
-) (PublishResult, error)
-
 type EndOfReplayPublisher func(
 	topic string,
 	record model.EndOfReplay,
@@ -95,28 +73,34 @@ type EndOfReplayPublisher func(
 type ReplayRuntime struct {
 	Now                func() time.Time
 	Sleep              func(time.Duration)
-	Publish            EventPublisher
+	PublishTelemetry   TelemetryPublisher
 	PublishEndOfReplay EndOfReplayPublisher
+	NewTelemetryEgress TelemetryEgressFactory
 }
 
 type ReplayStats struct {
-	Events             int
-	SchedulingLagTotal time.Duration
-	SchedulingLagMax   time.Duration
-	PeakInFlight       int
-	FirstPublishedAt   time.Time
-	LastPublishedAt    time.Time
-	CompletedAt        time.Time
-	ReachedEOF         bool
-	LastObservedAt     time.Time
+	OfferedEvents           int
+	TelemetryEnqueued       int
+	TelemetryLocallyDropped int
+	MQTTPublishAttempts     uint64
+	MQTTPublishErrors       uint64
+	SchedulingLagTotal      time.Duration
+	SchedulingLagMax        time.Duration
+	FirstOfferedAt          time.Time
+	LastOfferedAt           time.Time
+	CompletedAt             time.Time
+	ReachedEOF              bool
+	LastObservedAt          time.Time
+	EOSSuccesses            int
+	EOSFailures             int
 }
 
 const (
-	defaultReplayEpoch        = "2025-01-01T00:00:00Z"
-	defaultAccelerationFactor = 1000.0
-	defaultMQTTMaxInFlight    = 1000
-	publishAckTimeout         = 5 * time.Second
-	replayStartLateTolerance  = 1 * time.Second
+	defaultReplayEpoch            = "2025-01-01T00:00:00Z"
+	defaultAccelerationFactor     = 1000.0
+	defaultTelemetryQueueCapacity = 1000
+	publishAckTimeout             = 5 * time.Second
+	replayStartLateTolerance      = 1 * time.Second
 )
 
 func main() {
@@ -163,15 +147,14 @@ func main() {
 		ReplayRuntime{
 			Now:   time.Now,
 			Sleep: time.Sleep,
-			Publish: func(
+			PublishTelemetry: func(
 				topic string,
 				event model.SensorEvent,
-			) (PublishResult, error) {
+			) error {
 				return publishSensorEvent(
 					client.Publish,
 					topic,
 					event,
-					time.Now,
 				)
 			},
 			PublishEndOfReplay: func(
@@ -260,281 +243,87 @@ func localReplayStart(
 	return now.Add(configuredStart.Sub(now))
 }
 
-func newPendingPublishes(
-	maxInFlight int,
-	ackTimeout time.Duration,
-	now func() time.Time,
-) (*PendingPublishes, error) {
-	if maxInFlight <= 0 {
-		return nil, fmt.Errorf("MQTT_MAX_IN_FLIGHT deve essere maggiore di zero")
-	}
-
-	if ackTimeout <= 0 {
-		return nil, fmt.Errorf("timeout PUBACK deve essere maggiore di zero")
-	}
-
-	if now == nil {
-		return nil, fmt.Errorf("clock PUBACK non configurato")
-	}
-
-	return &PendingPublishes{
-		maxInFlight: maxInFlight,
-		ackTimeout:  ackTimeout,
-		now:         now,
-		pending: make(
-			[]PendingPublish,
-			maxInFlight,
-		),
-	}, nil
-}
-
-func (
-	pending *PendingPublishes,
-) Track(
-	publish PendingPublish,
-) error {
-	if publish.Token == nil {
-		return fmt.Errorf(
-			"token MQTT nil per event_id=%s topic=%s",
-			publish.EventID,
-			publish.Topic,
-		)
-	}
-
-	if publish.PublishedAt.IsZero() {
-		return fmt.Errorf(
-			"istante di pubblicazione MQTT mancante per event_id=%s topic=%s",
-			publish.EventID,
-			publish.Topic,
-		)
-	}
-
-	if pending.Len() >= pending.maxInFlight {
-		return fmt.Errorf(
-			"coda MQTT in-flight già piena prima di tracciare event_id=%s topic=%s",
-			publish.EventID,
-			publish.Topic,
-		)
-	}
-
-	pending.enqueue(publish)
-	if pending.Len() > pending.peak {
-		pending.peak = pending.Len()
-	}
-
-	if err := pending.reapCompletedPrefix(); err != nil {
-		return err
-	}
-
-	if pending.Len() < pending.maxInFlight {
-		return nil
-	}
-
-	return pending.waitOldest()
-}
-
-func (
-	pending *PendingPublishes,
-) reapCompletedPrefix() error {
-	for pending.Len() > 0 {
-		publish := pending.oldest()
-		select {
-		case <-publish.Token.Done():
-			pending.popOldest()
-			if err := pending.publishError(publish); err != nil {
-				return err
-			}
-		default:
-			return nil
-		}
-	}
-
-	return nil
-}
-
-func (
-	pending *PendingPublishes,
-) waitOldest() error {
-	publish := pending.oldest()
-	pending.popOldest()
-	select {
-	case <-publish.Token.Done():
-		return pending.publishError(publish)
-	default:
-	}
-
-	timeRemaining := publish.PublishedAt.
-		Add(pending.ackTimeout).
-		Sub(pending.now())
-	if timeRemaining <= 0 {
-		return pending.timeoutError(publish)
-	}
-
-	if !publish.Token.WaitTimeout(timeRemaining) {
-		return pending.timeoutError(publish)
-	}
-
-	return pending.publishError(publish)
-}
-
-func (
-	pending *PendingPublishes,
-) publishError(
-	publish PendingPublish,
-) error {
-	if err := publish.Token.Error(); err != nil {
-		return fmt.Errorf(
-			"pubblicazione MQTT event_id=%s topic=%s fallita: %w",
-			publish.EventID,
-			publish.Topic,
-			err,
-		)
-	}
-
-	return nil
-}
-
-func (
-	pending *PendingPublishes,
-) timeoutError(
-	publish PendingPublish,
-) error {
-	return fmt.Errorf(
-		"timeout PUBACK MQTT event_id=%s topic=%s dopo %s dal publish",
-		publish.EventID,
-		publish.Topic,
-		pending.ackTimeout,
-	)
-}
-
-func (
-	pending *PendingPublishes,
-) WaitUntil(
+func waitUntil(
 	scheduledTime time.Time,
+	now func() time.Time,
 	sleep func(time.Duration),
 ) error {
+	if now == nil {
+		return fmt.Errorf("clock replay non configurato")
+	}
 	if sleep == nil {
 		return fmt.Errorf("funzione di sleep non configurata")
 	}
 
-	for {
-		if err := pending.reapCompletedPrefix(); err != nil {
-			return err
-		}
-
-		now := pending.now()
-		if pending.Len() > 0 {
-			ackDeadline := pending.oldest().PublishedAt.
-				Add(pending.ackTimeout)
-			if !ackDeadline.After(now) {
-				if err := pending.waitOldest(); err != nil {
-					return err
-				}
-
-				continue
-			}
-		}
-
-		wait := scheduledTime.Sub(now)
-		if wait <= 0 {
-			return nil
-		}
-
-		if pending.Len() == 0 {
-			sleep(wait)
-			return nil
-		}
-
-		ackDeadline := pending.oldest().PublishedAt.
-			Add(pending.ackTimeout)
-		if !ackDeadline.After(scheduledTime) {
-			if err := pending.waitOldest(); err != nil {
-				return err
-			}
-
-			continue
-		}
-
+	wait := scheduledTime.Sub(now())
+	if wait > 0 {
 		sleep(wait)
-		return nil
 	}
+
+	return nil
 }
 
-func (
-	pending *PendingPublishes,
-) Drain() error {
-	var firstErr error
+func waitForPublishCompletion(
+	result PublishResult,
+	topic string,
+	now func() time.Time,
+) error {
+	if result.Token == nil {
+		return fmt.Errorf("token MQTT nil sul topic %s", topic)
+	}
+	if result.PublishedAt.IsZero() {
+		return fmt.Errorf("istante publish MQTT mancante sul topic %s", topic)
+	}
 
-	for pending.Len() > 0 {
-		if err := pending.waitOldest(); err != nil && firstErr == nil {
-			firstErr = err
+	select {
+	case <-result.Token.Done():
+		if err := result.Token.Error(); err != nil {
+			return fmt.Errorf("publish MQTT topic=%s fallito: %w", topic, err)
 		}
+		return nil
+	default:
 	}
 
-	return firstErr
-}
-
-func (
-	pending *PendingPublishes,
-) Len() int {
-	return pending.size
-}
-
-func (
-	pending *PendingPublishes,
-) enqueue(
-	publish PendingPublish,
-) {
-	tail := (pending.head + pending.size) % len(pending.pending)
-	pending.pending[tail] = publish
-	pending.size++
-}
-
-func (
-	pending *PendingPublishes,
-) oldest() PendingPublish {
-	return pending.pending[pending.head]
-}
-
-func (
-	pending *PendingPublishes,
-) popOldest() {
-	pending.pending[pending.head] = PendingPublish{}
-	pending.head = (pending.head + 1) % len(pending.pending)
-	pending.size--
-
-	if pending.size == 0 {
-		pending.head = 0
+	timeRemaining := result.PublishedAt.
+		Add(publishAckTimeout).
+		Sub(now())
+	if timeRemaining <= 0 ||
+		!result.Token.WaitTimeout(timeRemaining) {
+		return fmt.Errorf(
+			"timeout PUBACK MQTT topic=%s dopo %s dal publish",
+			topic,
+			publishAckTimeout,
+		)
 	}
-}
 
-func (
-	pending *PendingPublishes,
-) Peak() int {
-	return pending.peak
+	if err := result.Token.Error(); err != nil {
+		return fmt.Errorf("publish MQTT topic=%s fallito: %w", topic, err)
+	}
+
+	return nil
 }
 
 func (
 	stats ReplayStats,
 ) AverageSchedulingLag() time.Duration {
-	if stats.Events == 0 {
+	if stats.OfferedEvents == 0 {
 		return 0
 	}
 
 	return stats.SchedulingLagTotal /
-		time.Duration(stats.Events)
+		time.Duration(stats.OfferedEvents)
 }
 
 func (
 	stats ReplayStats,
-) PublishDuration() time.Duration {
-	if stats.Events <= 1 ||
-		stats.FirstPublishedAt.IsZero() ||
-		stats.LastPublishedAt.IsZero() {
+) OfferDuration() time.Duration {
+	if stats.OfferedEvents <= 1 ||
+		stats.FirstOfferedAt.IsZero() ||
+		stats.LastOfferedAt.IsZero() {
 		return 0
 	}
 
-	duration := stats.LastPublishedAt.Sub(stats.FirstPublishedAt)
+	duration := stats.LastOfferedAt.Sub(stats.FirstOfferedAt)
 	if duration <= 0 {
 		return 0
 	}
@@ -545,11 +334,11 @@ func (
 func (
 	stats ReplayStats,
 ) DrainDuration() time.Duration {
-	if stats.LastPublishedAt.IsZero() || stats.CompletedAt.IsZero() {
+	if stats.LastOfferedAt.IsZero() || stats.CompletedAt.IsZero() {
 		return 0
 	}
 
-	duration := stats.CompletedAt.Sub(stats.LastPublishedAt)
+	duration := stats.CompletedAt.Sub(stats.LastOfferedAt)
 	if duration <= 0 {
 		return 0
 	}
@@ -560,32 +349,32 @@ func (
 func (
 	stats ReplayStats,
 ) Throughput() float64 {
-	duration := stats.PublishDuration()
-	if stats.Events <= 1 || duration <= 0 {
+	duration := stats.OfferDuration()
+	if stats.OfferedEvents <= 1 || duration <= 0 {
 		return 0
 	}
 
-	// Primo e ultimo publish delimitano Events-1 intervalli di emissione.
-	return float64(stats.Events-1) /
+	// Prima e ultima offerta delimitano OfferedEvents-1 intervalli.
+	return float64(stats.OfferedEvents-1) /
 		duration.Seconds()
 }
 
 func (
 	stats *ReplayStats,
-) RecordPublish(
-	publishedAt time.Time,
+) RecordOffer(
+	offeredAt time.Time,
 	schedulingLag time.Duration,
 ) {
 	if schedulingLag < 0 {
 		schedulingLag = 0
 	}
 
-	if stats.Events == 0 {
-		stats.FirstPublishedAt = publishedAt
+	if stats.OfferedEvents == 0 {
+		stats.FirstOfferedAt = offeredAt
 	}
 
-	stats.Events++
-	stats.LastPublishedAt = publishedAt
+	stats.OfferedEvents++
+	stats.LastOfferedAt = offeredAt
 	stats.SchedulingLagTotal += schedulingLag
 	stats.SchedulingLagMax = max(
 		stats.SchedulingLagMax,
@@ -611,18 +400,39 @@ func replaySite(
 		AccelerationFactor: config.AccelerationFactor,
 	}
 
-	pending, err := newPendingPublishes(
-		config.MQTTMaxInFlight,
-		publishAckTimeout,
+	egressFactory := runtime.NewTelemetryEgress
+	if egressFactory == nil {
+		egressFactory = func(
+			capacity int,
+			publish TelemetryPublisher,
+			now func() time.Time,
+		) (TelemetryQueue, error) {
+			return newTelemetryEgress(capacity, publish, now)
+		}
+	}
+
+	egress, err := egressFactory(
+		config.TelemetryQueueCapacity,
+		runtime.PublishTelemetry,
 		runtime.Now,
 	)
 	if err != nil {
 		return stats, err
 	}
+	egressClosed := false
+	closeEgress := func() {
+		if egressClosed {
+			return
+		}
+		egressStats := egress.CloseAndWait()
+		stats.MQTTPublishAttempts = egressStats.PublishAttempts
+		stats.MQTTPublishErrors = egressStats.PublishErrors
+		egressClosed = true
+	}
 
 	defer func() {
+		closeEgress()
 		stats.CompletedAt = runtime.Now()
-		stats.PeakInFlight = pending.Peak()
 	}()
 
 	header, err := reader.Read()
@@ -637,7 +447,7 @@ func replaySite(
 
 	for {
 		if config.MaxEvents > 0 &&
-			stats.Events >= config.MaxEvents {
+			stats.OfferedEvents >= config.MaxEvents {
 			break
 		}
 
@@ -677,7 +487,7 @@ func replaySite(
 			return stats, err
 		}
 
-		if stats.Events == 0 {
+		if stats.OfferedEvents == 0 {
 			actualTime := runtime.Now()
 			lateness := actualTime.Sub(scheduledTime)
 			if lateness > replayStartLateTolerance {
@@ -693,70 +503,44 @@ func replaySite(
 			}
 		}
 
-		if err := pending.WaitUntil(
+		if err := waitUntil(
 			scheduledTime,
+			runtime.Now,
 			runtime.Sleep,
 		); err != nil {
 			return stats, err
 		}
 
 		sequence := sequences[measurement.SensorID] + 1
-		emittedAt := runtime.Now().UTC()
-		event := buildSensorEvent(
-			measurement,
-			sequence,
-			emittedAt,
-		)
-
-		topic := telemetryTopic(
-			measurement.SensorID,
-		)
-
-		result, err := runtime.Publish(
-			topic,
-			event,
-		)
-		if err != nil {
-			return stats, err
-		}
-
-		schedulingLag := result.PublishedAt.Sub(scheduledTime)
+		offeredAt := runtime.Now()
+		schedulingLag := offeredAt.Sub(scheduledTime)
 		sequences[measurement.SensorID] = sequence
-		stats.RecordPublish(
-			result.PublishedAt,
+		stats.RecordOffer(
+			offeredAt,
 			schedulingLag,
 		)
+		stats.LastObservedAt = measurement.Timestamp
 
-		err = pending.Track(
-			PendingPublish{
-				EventID:     event.EventID,
-				Topic:       topic,
-				PublishedAt: result.PublishedAt,
-				Token:       result.Token,
-			},
-		)
-		if err != nil {
-			return stats, err
+		if egress.TryEnqueue(measurement, sequence) {
+			stats.TelemetryEnqueued++
+		} else {
+			stats.TelemetryLocallyDropped++
 		}
 
-		stats.LastObservedAt = event.ObservedAt
-
-		if stats.Events%1000 == 0 {
+		if stats.OfferedEvents%1000 == 0 {
 			fmt.Printf(
-				"%s: pubblicati=%d pending=%d peak_in_flight=%d lag_medio=%s lag_massimo=%s\n",
+				"%s: offered=%d enqueued=%d locally_dropped=%d lag_medio=%s lag_massimo=%s\n",
 				config.SiteID,
-				stats.Events,
-				pending.Len(),
-				pending.Peak(),
+				stats.OfferedEvents,
+				stats.TelemetryEnqueued,
+				stats.TelemetryLocallyDropped,
 				stats.AverageSchedulingLag(),
 				stats.SchedulingLagMax,
 			)
 		}
 	}
 
-	if err := pending.Drain(); err != nil {
-		return stats, err
-	}
+	closeEgress()
 
 	if !stats.ReachedEOF {
 		return stats, nil
@@ -765,12 +549,13 @@ func replaySite(
 	if stats.LastObservedAt.IsZero() {
 		return stats,
 			fmt.Errorf(
-				"replay %s ha raggiunto EOF senza eventi pubblicati",
+				"replay %s ha raggiunto EOF senza eventi offerti",
 				config.SiteID,
 			)
 	}
 
 	if runtime.PublishEndOfReplay == nil {
+		stats.EOSFailures++
 		return stats,
 			fmt.Errorf(
 				"publisher EndOfReplay non configurato per %s",
@@ -790,6 +575,7 @@ func replaySite(
 		endRecord,
 	)
 	if err != nil {
+		stats.EOSFailures++
 		return stats,
 			fmt.Errorf(
 				"pubblicazione EndOfReplay MQTT edge=%s fallita: %w",
@@ -798,23 +584,12 @@ func replaySite(
 			)
 	}
 
-	endPending, err := newPendingPublishes(
-		1,
-		publishAckTimeout,
+	if err := waitForPublishCompletion(
+		endResult,
+		endTopic,
 		runtime.Now,
-	)
-	if err != nil {
-		return stats, err
-	}
-
-	if err := endPending.Track(
-		PendingPublish{
-			EventID:     "end-of-replay:" + config.SiteID,
-			Topic:       endTopic,
-			PublishedAt: endResult.PublishedAt,
-			Token:       endResult.Token,
-		},
 	); err != nil {
+		stats.EOSFailures++
 		return stats,
 			fmt.Errorf(
 				"PUBACK EndOfReplay MQTT edge=%s fallito: %w",
@@ -822,6 +597,7 @@ func replaySite(
 				err,
 			)
 	}
+	stats.EOSSuccesses++
 
 	return stats, nil
 }
@@ -841,13 +617,18 @@ func printReplaySummary(
 		siteID,
 		status,
 	)
-	fmt.Printf("Eventi pubblicati: %d\n", stats.Events)
+	fmt.Printf("Eventi offered/generated: %d\n", stats.OfferedEvents)
+	fmt.Printf("Telemetry accettata in coda: %d\n", stats.TelemetryEnqueued)
+	fmt.Printf("Telemetry scartata localmente: %d\n", stats.TelemetryLocallyDropped)
+	fmt.Printf("Tentativi publish MQTT QoS0: %d\n", stats.MQTTPublishAttempts)
+	fmt.Printf("Errori publish MQTT QoS0: %d\n", stats.MQTTPublishErrors)
 	fmt.Printf("Scheduling lag medio: %s\n", stats.AverageSchedulingLag())
 	fmt.Printf("Scheduling lag massimo: %s\n", stats.SchedulingLagMax)
-	fmt.Printf("Peak MQTT in-flight: %d\n", stats.PeakInFlight)
-	fmt.Printf("Durata pubblicazione: %s\n", stats.PublishDuration())
-	fmt.Printf("Durata drain finale: %s\n", stats.DrainDuration())
-	fmt.Printf("Throughput medio: %.2f eventi/s\n", stats.Throughput())
+	fmt.Printf("Durata workload offerto: %s\n", stats.OfferDuration())
+	fmt.Printf("Durata completamento dopo ultima offerta: %s\n", stats.DrainDuration())
+	fmt.Printf("Throughput workload offerto: %.2f eventi/s\n", stats.Throughput())
+	fmt.Printf("EOS successi: %d\n", stats.EOSSuccesses)
+	fmt.Printf("EOS fallimenti: %d\n", stats.EOSFailures)
 }
 
 func buildColumnIndex(
@@ -1184,23 +965,30 @@ func publishSensorEvent(
 	publish MQTTPublish,
 	topic string,
 	event model.SensorEvent,
-	now func() time.Time,
-) (PublishResult, error) {
+) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
-		return PublishResult{},
-			fmt.Errorf(
-				"serializzazione SensorEvent fallita: %w",
-				err,
-			)
+		return fmt.Errorf(
+			"serializzazione SensorEvent fallita: %w",
+			err,
+		)
 	}
 
-	return publishMQTTPayload(
-		publish,
+	token := publish(
 		topic,
+		0,
+		false,
 		payload,
-		now,
 	)
+	if token == nil {
+		return fmt.Errorf(
+			"client MQTT ha restituito un token nil sul topic %s",
+			topic,
+		)
+	}
+
+	// QoS0 e best effort: non attendiamo il completamento del token.
+	return token.Error()
 }
 
 func publishEndOfReplay(
@@ -1230,6 +1018,7 @@ func publishEndOfReplay(
 		publish,
 		topic,
 		payload,
+		1,
 		now,
 	)
 }
@@ -1238,13 +1027,14 @@ func publishMQTTPayload(
 	publish MQTTPublish,
 	topic string,
 	payload []byte,
+	qos byte,
 	now func() time.Time,
 ) (PublishResult, error) {
 
 	publishedAt := now()
 	token := publish(
 		topic,
-		1,
+		qos,
 		false,
 		payload,
 	)
@@ -1336,8 +1126,8 @@ func loadSimulatorConfig(
 		return SimulatorConfig{}, err
 	}
 
-	mqttMaxInFlight, err := parseMQTTMaxInFlight(
-		getenv("MQTT_MAX_IN_FLIGHT"),
+	telemetryQueueCapacity, err := parseTelemetryQueueCapacity(
+		getenv("TELEMETRY_QUEUE_CAPACITY"),
 	)
 	if err != nil {
 		return SimulatorConfig{}, err
@@ -1351,14 +1141,14 @@ func loadSimulatorConfig(
 	}
 
 	return SimulatorConfig{
-		SiteID:             siteID,
-		MQTTEndpoint:       mqttEndpoint,
-		ReplayFile:         replayFile,
-		MaxEvents:          maxEvents,
-		ReplayEpoch:        replayEpoch,
-		ReplayStartAt:      replayStartAt,
-		AccelerationFactor: accelerationFactor,
-		MQTTMaxInFlight:    mqttMaxInFlight,
+		SiteID:                 siteID,
+		MQTTEndpoint:           mqttEndpoint,
+		ReplayFile:             replayFile,
+		MaxEvents:              maxEvents,
+		ReplayEpoch:            replayEpoch,
+		ReplayStartAt:          replayStartAt,
+		AccelerationFactor:     accelerationFactor,
+		TelemetryQueueCapacity: telemetryQueueCapacity,
 	}, nil
 }
 
@@ -1426,32 +1216,32 @@ func parseAccelerationFactor(
 	return factor, nil
 }
 
-func parseMQTTMaxInFlight(
+func parseTelemetryQueueCapacity(
 	value string,
 ) (int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return defaultMQTTMaxInFlight, nil
+		return defaultTelemetryQueueCapacity, nil
 	}
 
-	maxInFlight, err := strconv.Atoi(value)
+	capacity, err := strconv.Atoi(value)
 	if err != nil {
 		return 0,
 			fmt.Errorf(
-				"MQTT_MAX_IN_FLIGHT non valido %q: %w",
+				"TELEMETRY_QUEUE_CAPACITY non valida %q: %w",
 				value,
 				err,
 			)
 	}
 
-	if maxInFlight <= 0 {
+	if capacity <= 0 {
 		return 0,
 			fmt.Errorf(
-				"MQTT_MAX_IN_FLIGHT deve essere maggiore di zero",
+				"TELEMETRY_QUEUE_CAPACITY deve essere maggiore di zero",
 			)
 	}
 
-	return maxInFlight, nil
+	return capacity, nil
 }
 
 func parseMaxEvents(

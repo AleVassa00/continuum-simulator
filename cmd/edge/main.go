@@ -68,6 +68,7 @@ type WindowAggregator struct {
 
 	kafkaTopic     string
 	publishMessage func(context.Context, kafka.Message) error
+	stats          *EdgeStats
 }
 
 type ReadinessState struct {
@@ -85,14 +86,19 @@ type SubscriptionRetryPolicy struct {
 }
 
 const (
-	telemetrySubscriptionTopic = "sensors/+/telemetry"
-	readinessAddress           = ":8080"
-	mqttSubscriptionAttempts   = 3
-	mqttSubscriptionTimeout    = 5 * time.Second
-	mqttSubscriptionBackoff    = 250 * time.Millisecond
+	telemetrySubscriptionTopic      = "sensors/+/telemetry"
+	readinessAddress                = ":8080"
+	mqttSubscriptionAttempts        = 3
+	mqttSubscriptionTimeout         = 5 * time.Second
+	mqttSubscriptionBackoff         = 250 * time.Millisecond
+	defaultEdgeIngressQueueCapacity = 1000
 )
 
-var errSubscriptionInactive = errors.New("tentativo di sottoscrizione MQTT non piu attivo")
+var (
+	errSubscriptionInactive = errors.New("tentativo di sottoscrizione MQTT non piu attivo")
+	errEdgeWindowClosed     = errors.New("evento appartenente a finestra Edge gia chiusa")
+	errEdgeReplayEnded      = errors.New("replay Edge gia terminato")
+)
 
 func main() {
 	edgeID := strings.TrimSpace(
@@ -132,6 +138,17 @@ func main() {
 		panic(err)
 	}
 
+	ingressCapacity, err := loadEdgeIngressQueueCapacity(os.Getenv)
+	if err != nil {
+		panic(err)
+	}
+
+	ingress, err := newEdgeIngressQueue(ingressCapacity)
+	if err != nil {
+		panic(err)
+	}
+	stats := &EdgeStats{}
+
 	kafkaWriter := newKafkaWriter(
 		kafkaBroker,
 		kafkaTopic,
@@ -150,7 +167,20 @@ func main() {
 				message,
 			)
 		},
+		stats: stats,
 	}
+
+	processor := &EdgeProcessor{
+		edgeID:     edgeID,
+		ingress:    ingress,
+		aggregator: aggregator,
+		stats:      stats,
+		now:        time.Now,
+	}
+	processorDone := make(chan error, 1)
+	go func() {
+		processorDone <- processor.Run()
+	}()
 
 	readiness := &ReadinessState{}
 	readinessServer, err := startReadinessServer(
@@ -190,6 +220,10 @@ func main() {
 		"Kafka topic: %s\n\n",
 		kafkaTopic,
 	)
+	fmt.Printf(
+		"Edge ingress queue capacity: %d\n\n",
+		ingressCapacity,
+	)
 
 	options := mqtt.NewClientOptions()
 
@@ -226,7 +260,8 @@ func main() {
 			subscribeToEdgeTopics(
 				client,
 				edgeID,
-				aggregator,
+				ingress,
+				stats,
 				readiness,
 				subscriptions,
 				generation,
@@ -277,7 +312,7 @@ func main() {
 		)
 	}
 
-	waitForShutdown()
+	processorErr := waitForShutdown(processorDone)
 
 	fmt.Printf(
 		"\nArresto %s...\n",
@@ -287,12 +322,19 @@ func main() {
 	subscriptions.Invalidate()
 	readiness.MarkNotReady()
 	client.Disconnect(250)
+	ingress.Close()
+	if processorErr == nil {
+		processorErr = <-processorDone
+	}
 
-	if err := aggregator.Flush(); err != nil {
+	if processorErr == nil {
+		processorErr = aggregator.Flush()
+	}
+	if processorErr != nil {
 		fmt.Printf(
-			"%s: errore flush ultima finestra: %v\n",
+			"%s: processing fallito: %v\n",
 			edgeID,
-			err,
+			processorErr,
 		)
 	}
 
@@ -303,6 +345,11 @@ func main() {
 			edgeID,
 			err,
 		)
+	}
+
+	printEdgeSummary(edgeID, stats.Snapshot())
+	if processorErr != nil {
+		panic(processorErr)
 	}
 }
 
@@ -505,10 +552,38 @@ func loadWindowSize() (
 	return windowSize, nil
 }
 
+func loadEdgeIngressQueueCapacity(
+	getenv func(string) string,
+) (int, error) {
+	value := strings.TrimSpace(
+		getenv("EDGE_INGRESS_QUEUE_CAPACITY"),
+	)
+	if value == "" {
+		return defaultEdgeIngressQueueCapacity, nil
+	}
+
+	capacity, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"EDGE_INGRESS_QUEUE_CAPACITY non valida %q: %w",
+			value,
+			err,
+		)
+	}
+	if capacity <= 0 {
+		return 0, fmt.Errorf(
+			"EDGE_INGRESS_QUEUE_CAPACITY deve essere maggiore di zero",
+		)
+	}
+
+	return capacity, nil
+}
+
 func subscribeToEdgeTopics(
 	client mqtt.Client,
 	edgeID string,
-	aggregator *WindowAggregator,
+	ingress *EdgeIngressQueue,
+	stats *EdgeStats,
 	readiness *ReadinessState,
 	coordinator *SubscriptionCoordinator,
 	generation uint64,
@@ -518,7 +593,8 @@ func subscribeToEdgeTopics(
 	topics := edgeSubscriptionTopics(edgeID)
 	handler := makeEdgeMessageHandler(
 		edgeID,
-		aggregator,
+		ingress,
+		stats,
 	)
 
 	attempts, err := retrySubscription(
@@ -577,7 +653,7 @@ func edgeSubscriptionTopics(
 	edgeID string,
 ) map[string]byte {
 	return map[string]byte{
-		telemetrySubscriptionTopic: 1,
+		telemetrySubscriptionTopic: 0,
 		replayEndTopic(edgeID):     1,
 	}
 }
@@ -637,95 +713,31 @@ func retrySubscription(
 		)
 }
 
-func makeTelemetryHandler(
-	edgeID string,
-	aggregator *WindowAggregator,
-) mqtt.MessageHandler {
-	return func(
-		client mqtt.Client,
-		message mqtt.Message,
-	) {
-		var event model.SensorEvent
-
-		err := json.Unmarshal(
-			message.Payload(),
-			&event,
-		)
-		if err != nil {
-			fmt.Printf(
-				"%s: JSON non valido: %v\n",
-				edgeID,
-				err,
-			)
-
-			return
-		}
-
-		err = validateSensorEvent(
-			event,
-		)
-		if err != nil {
-			fmt.Printf(
-				"%s: evento scartato: %v\n",
-				edgeID,
-				err,
-			)
-
-			return
-		}
-
-		measurement := parseMeasurements(
-			event,
-		)
-
-		err = aggregator.Add(
-			event.EventID,
-			event.ObservedAt,
-			measurement,
-		)
-		if err != nil {
-			fmt.Printf(
-				"%s: evento %s scartato: %v\n",
-				edgeID,
-				event.EventID,
-				err,
-			)
-
-			return
-		}
-	}
-}
-
 func makeEdgeMessageHandler(
 	edgeID string,
-	aggregator *WindowAggregator,
+	ingress *EdgeIngressQueue,
+	stats *EdgeStats,
 ) mqtt.MessageHandler {
-	telemetryHandler := makeTelemetryHandler(
-		edgeID,
-		aggregator,
-	)
 	endTopic := replayEndTopic(edgeID)
 
 	return func(
-		client mqtt.Client,
+		_ mqtt.Client,
 		message mqtt.Message,
 	) {
-		if message.Topic() != endTopic {
-			telemetryHandler(client, message)
+		if message.Topic() == endTopic {
+			ingress.RegisterEndOfReplay(message.Payload())
 			return
 		}
 
-		if err := handleEndOfReplayPayload(
-			edgeID,
-			message.Payload(),
-			aggregator,
-			time.Now().UTC(),
-		); err != nil {
-			fmt.Printf(
-				"%s: EndOfReplay scartato: %v\n",
-				edgeID,
-				err,
-			)
+		stats.telemetryReceived.Add(1)
+		switch ingress.TryEnqueueTelemetry(message.Payload()) {
+		case TelemetryEnqueued:
+			stats.ingressAccepted.Add(1)
+		case TelemetryDroppedAfterEOS:
+			stats.postEOSDropped.Add(1)
+		case TelemetryDroppedQueueFull,
+			TelemetryDroppedQueueClosed:
+			stats.ingressQueueDropped.Add(1)
 		}
 	}
 }
@@ -903,6 +915,15 @@ func (
 	aggregator.mu.Lock()
 	defer aggregator.mu.Unlock()
 
+	if aggregator.ended {
+		return fmt.Errorf(
+			"%w: edge=%s event_id=%s",
+			errEdgeReplayEnded,
+			aggregator.edgeID,
+			eventID,
+		)
+	}
+
 	windowStart := observedAt.Truncate(
 		aggregator.windowSize,
 	)
@@ -922,7 +943,8 @@ func (
 		aggregator.current.Start,
 	) {
 		return fmt.Errorf(
-			"evento fuori ordine: event_id=%s observed_at=%s current_window=%s",
+			"%w: event_id=%s observed_at=%s current_window=%s",
+			errEdgeWindowClosed,
 			eventID,
 			observedAt.Format(time.RFC3339),
 			aggregator.current.Start.Format(time.RFC3339),
@@ -1078,6 +1100,9 @@ func (
 		aggregate.DuplicateEvents,
 		aggregator.kafkaTopic,
 	)
+	if aggregator.stats != nil {
+		aggregator.stats.aggregatesEmitted.Add(1)
+	}
 
 	return nil
 }
@@ -1262,7 +1287,9 @@ func buildEdgeAggregate(
 	}
 }
 
-func waitForShutdown() {
+func waitForShutdown(
+	processorDone <-chan error,
+) error {
 	signals := make(
 		chan os.Signal,
 		1,
@@ -1274,5 +1301,26 @@ func waitForShutdown() {
 		syscall.SIGTERM,
 	)
 
-	<-signals
+	select {
+	case <-signals:
+		return nil
+	case err := <-processorDone:
+		return err
+	}
+}
+
+func printEdgeSummary(
+	edgeID string,
+	stats EdgeStatsSnapshot,
+) {
+	fmt.Printf("\nEdge %s summary\n", edgeID)
+	fmt.Printf("MQTT telemetry ricevuta: %d\n", stats.TelemetryReceived)
+	fmt.Printf("Ingress accettata: %d\n", stats.IngressAccepted)
+	fmt.Printf("Ingress queue drop: %d\n", stats.IngressQueueDropped)
+	fmt.Printf("Telemetry invalida scartata: %d\n", stats.InvalidTelemetry)
+	fmt.Printf("Finestre chiuse/out-of-order scartati: %d\n", stats.OutOfOrderDropped)
+	fmt.Printf("Telemetry post-EOS scartata: %d\n", stats.PostEOSDropped)
+	fmt.Printf("Telemetry processata: %d\n", stats.Processed)
+	fmt.Printf("Aggregate Kafka emessi: %d\n", stats.AggregatesEmitted)
+	fmt.Printf("EndOfReplay processati: %d\n", stats.EndOfReplayProcessed)
 }

@@ -116,6 +116,7 @@ services:
       EDGE_ID: "edge-0"
       MQTT_BROKER: "tcp://mqtt-edge-0:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -145,7 +146,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -181,6 +182,7 @@ services:
       EDGE_ID: "edge-1"
       MQTT_BROKER: "tcp://mqtt-edge-1:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -210,7 +212,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -246,6 +248,7 @@ services:
       EDGE_ID: "edge-2"
       MQTT_BROKER: "tcp://mqtt-edge-2:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -275,7 +278,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -311,6 +314,7 @@ services:
       EDGE_ID: "edge-3"
       MQTT_BROKER: "tcp://mqtt-edge-3:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -340,7 +344,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -376,6 +380,7 @@ services:
       EDGE_ID: "edge-4"
       MQTT_BROKER: "tcp://mqtt-edge-4:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -405,7 +410,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -441,6 +446,7 @@ services:
       EDGE_ID: "edge-5"
       MQTT_BROKER: "tcp://mqtt-edge-5:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -470,7 +476,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -506,6 +512,7 @@ services:
       EDGE_ID: "edge-6"
       MQTT_BROKER: "tcp://mqtt-edge-6:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -535,7 +542,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -571,6 +578,7 @@ services:
       EDGE_ID: "edge-7"
       MQTT_BROKER: "tcp://mqtt-edge-7:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -600,7 +608,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -636,6 +644,7 @@ services:
       EDGE_ID: "edge-8"
       MQTT_BROKER: "tcp://mqtt-edge-8:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -665,7 +674,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -701,6 +710,7 @@ services:
       EDGE_ID: "edge-9"
       MQTT_BROKER: "tcp://mqtt-edge-9:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -730,7 +740,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -766,6 +776,7 @@ services:
       EDGE_ID: "edge-10"
       MQTT_BROKER: "tcp://mqtt-edge-10:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -795,7 +806,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -831,6 +842,7 @@ services:
       EDGE_ID: "edge-11"
       MQTT_BROKER: "tcp://mqtt-edge-11:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -860,7 +872,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:
@@ -896,6 +908,7 @@ services:
       EDGE_ID: "edge-12"
       MQTT_BROKER: "tcp://mqtt-edge-12:1883"
       WINDOW_SIZE: "${EDGE_WINDOW_SIZE:-5m}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "${EDGE_INGRESS_QUEUE_CAPACITY:-1000}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -925,7 +938,7 @@ services:
       REPLAY_EPOCH: "${REPLAY_EPOCH:-2025-01-01T00:00:00Z}"
       REPLAY_START_AT: "${REPLAY_START_AT:-}"
       ACCELERATION_FACTOR: "${ACCELERATION_FACTOR:-1000}"
-      MQTT_MAX_IN_FLIGHT: "${MQTT_MAX_IN_FLIGHT:-1000}"
+      TELEMETRY_QUEUE_CAPACITY: "${TELEMETRY_QUEUE_CAPACITY:-1000}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:

@@ -22,7 +22,7 @@ func TestBuildComposeCreatesReadySiteScopedSimulators(t *testing.T) {
 		"REPLAY_EPOCH: \"${REPLAY_EPOCH:-2025-01-01T00:00:00Z}\"",
 		"REPLAY_START_AT: \"${REPLAY_START_AT:-}\"",
 		"ACCELERATION_FACTOR: \"${ACCELERATION_FACTOR:-1000}\"",
-		"MQTT_MAX_IN_FLIGHT: \"${MQTT_MAX_IN_FLIGHT:-1000}\"",
+		"TELEMETRY_QUEUE_CAPACITY: \"${TELEMETRY_QUEUE_CAPACITY:-1000}\"",
 	}
 
 	if count := strings.Count(
@@ -93,6 +93,7 @@ func TestBuildComposeCreatesReadySiteScopedSimulators(t *testing.T) {
 
 				for _, expected := range []string{
 					"healthcheck:",
+					"EDGE_INGRESS_QUEUE_CAPACITY: \"${EDGE_INGRESS_QUEUE_CAPACITY:-1000}\"",
 					"http://localhost:8080/readyz",
 					"interval: 2s",
 					"timeout: 1s",

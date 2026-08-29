@@ -264,6 +264,24 @@ func (
 	if err != nil {
 		return err
 	}
+	if string(message.Key) != input.EdgeID {
+		return fmt.Errorf(
+			"EdgeAggregate key Kafka=%q non coerente con edge_id=%q",
+			message.Key,
+			input.EdgeID,
+		)
+	}
+
+	if processor.endedEdges == nil {
+		processor.endedEdges = make(map[string]bool)
+	}
+	if processor.endedEdges[input.EdgeID] {
+		return fmt.Errorf(
+			"violazione invariant terminale: EdgeAggregate %s ricevuto dopo EndOfReplay edge=%s",
+			input.AggregateID,
+			input.EdgeID,
+		)
+	}
 
 	output, err := processor.aggregator.Add(input)
 	if err != nil {

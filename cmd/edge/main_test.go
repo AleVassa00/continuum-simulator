@@ -128,7 +128,7 @@ func TestEdgeSubscriptionsIncludeTelemetryAndOwnReplayEnd(t *testing.T) {
 	topics := edgeSubscriptionTopics("edge-3")
 
 	if len(topics) != 2 ||
-		topics[telemetrySubscriptionTopic] != 1 ||
+		topics[telemetrySubscriptionTopic] != 0 ||
 		topics["replay/edge-3/end"] != 1 {
 		t.Fatalf("subscription inattese: %#v", topics)
 	}
@@ -242,12 +242,34 @@ func TestWindowAggregatorRejectsEventFromPreviousWindow(t *testing.T) {
 		edgeTestTime(10, 1),
 		measurement,
 	)
-	if err == nil {
+	if !errors.Is(err, errEdgeWindowClosed) {
 		t.Fatal("evento appartenente a una finestra precedente accettato")
 	}
 
 	if aggregator.current.Events != 1 {
 		t.Fatalf("evento fuori ordine ha modificato lo stato: %#v", aggregator.current)
+	}
+}
+
+func TestWindowAggregatorRejectsEventsAfterEndOfReplay(t *testing.T) {
+	aggregator, _ := newTestEdgeAggregator()
+	if err := aggregator.EndReplay(
+		validEndOfReplay("edge-0"),
+		edgeTestTime(12, 0),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	err := aggregator.Add(
+		"event-after-eos",
+		edgeTestTime(12, 1),
+		validMeasurement(20, 50, 100000),
+	)
+	if !errors.Is(err, errEdgeReplayEnded) {
+		t.Fatalf("evento post-EOS non rifiutato: %v", err)
+	}
+	if aggregator.current != nil {
+		t.Fatalf("finestra riaperta dopo EOS: %#v", aggregator.current)
 	}
 }
 

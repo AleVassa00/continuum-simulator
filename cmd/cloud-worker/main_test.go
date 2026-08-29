@@ -299,6 +299,59 @@ func TestCloudEndOfReplayDuplicateIsNotRepublished(t *testing.T) {
 	}
 }
 
+func TestCloudRejectsAggregateAfterEndOfReplayForSameEdge(t *testing.T) {
+	processor := newTestCloudProcessor(t, func(
+		context.Context,
+		kafka.Message,
+	) error {
+		return nil
+	})
+
+	if err := processor.Process(endOfReplayKafkaMessage(
+		t,
+		cloudTestEndOfReplay("edge-1"),
+		"edge-1",
+	)); err != nil {
+		t.Fatal(err)
+	}
+
+	err := processor.Process(edgeAggregateKafkaMessage(
+		t,
+		cloudTestEdgeAggregate("edge-1", cloudTestTime(10, 0)),
+	))
+	if err == nil || !strings.Contains(err.Error(), "dopo EndOfReplay") {
+		t.Fatalf("aggregate post-EOS non rifiutato: %v", err)
+	}
+}
+
+func TestCloudOtherEdgeContinuesAfterOneEdgeEnds(t *testing.T) {
+	processor := newTestCloudProcessor(t, func(
+		context.Context,
+		kafka.Message,
+	) error {
+		return nil
+	})
+
+	if err := processor.Process(endOfReplayKafkaMessage(
+		t,
+		cloudTestEndOfReplay("edge-1"),
+		"edge-1",
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if err := processor.Process(edgeAggregateKafkaMessage(
+		t,
+		cloudTestEdgeAggregate("edge-2", cloudTestTime(10, 0)),
+	)); err != nil {
+		t.Fatalf("aggregate di edge-2 rifiutato dopo EOS edge-1: %v", err)
+	}
+
+	output, found := processor.aggregator.FlushEdge("edge-2")
+	if !found || output.EdgeID != "edge-2" {
+		t.Fatalf("stato edge-2 inatteso: output=%#v found=%t", output, found)
+	}
+}
+
 func newTestCloudProcessor(
 	t *testing.T,
 	publish KafkaMessagePublisher,

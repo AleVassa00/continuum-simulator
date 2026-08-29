@@ -477,6 +477,10 @@ func buildCompose(
 		)
 
 		builder.WriteString(
+			"      EDGE_INGRESS_QUEUE_CAPACITY: \"${EDGE_INGRESS_QUEUE_CAPACITY:-1000}\"\n",
+		)
+
+		builder.WriteString(
 			"      KAFKA_BROKER: \"kafka:29092\"\n",
 		)
 
@@ -605,7 +609,7 @@ func buildCompose(
 		)
 
 		builder.WriteString(
-			"      MQTT_MAX_IN_FLIGHT: \"${MQTT_MAX_IN_FLIGHT:-1000}\"\n",
+			"      TELEMETRY_QUEUE_CAPACITY: \"${TELEMETRY_QUEUE_CAPACITY:-1000}\"\n",
 		)
 
 		builder.WriteString(
