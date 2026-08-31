@@ -48,10 +48,7 @@ type WindowState struct {
 	Start time.Time
 	End   time.Time
 
-	Events          uint64
-	DuplicateEvents uint64
-
-	SeenEventIDs map[string]struct{}
+	Events uint64
 
 	Temperature MetricState
 	Humidity    MetricState
@@ -493,7 +490,7 @@ func newKafkaWriter(
 
 		RequiredAcks: kafka.RequireAll,
 
-		MaxAttempts: 5,
+		MaxAttempts: 1,
 
 		BatchSize: 1,
 
@@ -511,10 +508,6 @@ func newWindowState(
 	return &WindowState{
 		Start: start,
 		End:   end,
-
-		SeenEventIDs: make(
-			map[string]struct{},
-		),
 	}
 }
 
@@ -965,17 +958,6 @@ func (
 		)
 	}
 
-	if _, found :=
-		aggregator.current.SeenEventIDs[eventID]; found {
-
-		aggregator.current.DuplicateEvents++
-
-		return nil
-	}
-
-	aggregator.current.SeenEventIDs[eventID] =
-		struct{}{}
-
 	aggregator.current.Add(
 		measurement,
 	)
@@ -1093,11 +1075,10 @@ func (
 	}
 
 	fmt.Printf(
-		"KAFKA_PUBLISHED edge=%s aggregate_id=%s events=%d duplicates=%d topic=%s\n",
+		"KAFKA_PUBLISHED edge=%s aggregate_id=%s events=%d topic=%s\n",
 		aggregate.EdgeID,
 		aggregate.AggregateID,
 		aggregate.Events,
-		aggregate.DuplicateEvents,
 		aggregator.kafkaTopic,
 	)
 	if aggregator.stats != nil {
@@ -1268,8 +1249,7 @@ func buildEdgeAggregate(
 		WindowStart: window.Start,
 		WindowEnd:   window.End,
 
-		Events:          window.Events,
-		DuplicateEvents: window.DuplicateEvents,
+		Events: window.Events,
 
 		Temperature: buildMetricAggregate(
 			window.Temperature,

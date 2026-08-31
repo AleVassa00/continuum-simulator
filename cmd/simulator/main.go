@@ -16,6 +16,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+/* Riga del dataset */
 type SensorMeasurement struct {
 	SensorID   string
 	SensorType string
@@ -184,7 +185,7 @@ func main() {
 }
 
 func (
-pacer ReplayPacer,
+	pacer ReplayPacer,
 ) ScheduledTime(
 	observedAt time.Time,
 ) (time.Time, error) {
@@ -299,7 +300,7 @@ func waitForPublishCompletion(
 }
 
 func (
-stats ReplayStats,
+	stats ReplayStats,
 ) AverageSchedulingLag() time.Duration {
 	if stats.OfferedEvents == 0 {
 		return 0
@@ -310,7 +311,7 @@ stats ReplayStats,
 }
 
 func (
-stats ReplayStats,
+	stats ReplayStats,
 ) OfferDuration() time.Duration {
 	if stats.OfferedEvents <= 1 ||
 		stats.FirstOfferedAt.IsZero() ||
@@ -327,7 +328,7 @@ stats ReplayStats,
 }
 
 func (
-stats ReplayStats,
+	stats ReplayStats,
 ) DrainDuration() time.Duration {
 	if stats.LastOfferedAt.IsZero() || stats.CompletedAt.IsZero() {
 		return 0
@@ -342,7 +343,7 @@ stats ReplayStats,
 }
 
 func (
-stats ReplayStats,
+	stats ReplayStats,
 ) Throughput() float64 {
 	duration := stats.OfferDuration()
 	if stats.OfferedEvents <= 1 || duration <= 0 {
@@ -364,7 +365,7 @@ func (stats ReplayStats) MaxQueueUtilization() float64 {
 }
 
 func (
-stats *ReplayStats,
+	stats *ReplayStats,
 ) RecordOffer(
 	offeredAt time.Time,
 	schedulingLag time.Duration,
@@ -386,23 +387,13 @@ stats *ReplayStats,
 	)
 }
 
-func replaySite(
-	reader *csv.Reader,
-	config SimulatorConfig,
-	runtime ReplayRuntime,
-) (
-	stats ReplayStats,
-	replayErr error,
-) {
+func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntime) (stats ReplayStats, replayErr error) {
 	stats.QueueCapacity = config.TelemetryQueueCapacity
 
 	anchorNow := runtime.Now()
 	pacer := ReplayPacer{
-		Epoch: config.ReplayEpoch,
-		StartAt: localReplayStart(
-			anchorNow,
-			config.ReplayStartAt,
-		),
+		Epoch:              config.ReplayEpoch,
+		StartAt:            localReplayStart(anchorNow, config.ReplayStartAt),
 		AccelerationFactor: config.AccelerationFactor,
 	}
 
@@ -417,11 +408,7 @@ func replaySite(
 		}
 	}
 
-	egress, err := egressFactory(
-		config.TelemetryQueueCapacity,
-		runtime.PublishTelemetry,
-		runtime.Now,
-	)
+	egress, err := egressFactory(config.TelemetryQueueCapacity, runtime.PublishTelemetry, runtime.Now)
 	if err != nil {
 		return stats, err
 	}
@@ -1072,76 +1059,48 @@ func loadSimulatorConfig(getenv func(string) string) (SimulatorConfig, error) {
 		return SimulatorConfig{}, fmt.Errorf("variabile SITE_ID non impostata")
 	}
 
-	mqttEndpoint := strings.TrimSpace(
-		getenv("MQTT_ENDPOINT"),
-	)
+	mqttEndpoint := strings.TrimSpace(getenv("MQTT_ENDPOINT"))
 	if mqttEndpoint == "" {
-		return SimulatorConfig{},
-			fmt.Errorf(
-				"variabile MQTT_ENDPOINT non impostata",
-			)
+		return SimulatorConfig{}, fmt.Errorf("variabile MQTT_ENDPOINT non impostata")
 	}
 
-	replayFile := strings.TrimSpace(
-		getenv("REPLAY_FILE"),
-	)
+	replayFile := strings.TrimSpace(getenv("REPLAY_FILE"))
 	if replayFile == "" {
 		return SimulatorConfig{},
-			fmt.Errorf(
-				"variabile REPLAY_FILE non impostata",
-			)
+			fmt.Errorf("variabile REPLAY_FILE non impostata")
 	}
 
-	replayEpochValue := strings.TrimSpace(
-		getenv("REPLAY_EPOCH"),
-	)
+	replayEpochValue := strings.TrimSpace(getenv("REPLAY_EPOCH"))
 	if replayEpochValue == "" {
 		replayEpochValue = defaultReplayEpoch
 	}
 
-	replayEpoch, err := parseRFC3339UTC(
-		"REPLAY_EPOCH",
-		replayEpochValue,
-	)
+	replayEpoch, err := parseRFC3339UTC("REPLAY_EPOCH", replayEpochValue)
 	if err != nil {
 		return SimulatorConfig{}, err
 	}
 
-	replayStartAtValue := strings.TrimSpace(
-		getenv("REPLAY_START_AT"),
-	)
+	replayStartAtValue := strings.TrimSpace(getenv("REPLAY_START_AT"))
 	if replayStartAtValue == "" {
-		return SimulatorConfig{},
-			fmt.Errorf(
-				"variabile REPLAY_START_AT non impostata",
-			)
+		return SimulatorConfig{}, fmt.Errorf("variabile REPLAY_START_AT non impostata")
 	}
 
-	replayStartAt, err := parseRFC3339UTC(
-		"REPLAY_START_AT",
-		replayStartAtValue,
-	)
+	replayStartAt, err := parseRFC3339UTC("REPLAY_START_AT", replayStartAtValue)
 	if err != nil {
 		return SimulatorConfig{}, err
 	}
 
-	accelerationFactor, err := parseAccelerationFactor(
-		getenv("ACCELERATION_FACTOR"),
-	)
+	accelerationFactor, err := parseAccelerationFactor(getenv("ACCELERATION_FACTOR"))
 	if err != nil {
 		return SimulatorConfig{}, err
 	}
 
-	telemetryQueueCapacity, err := parseTelemetryQueueCapacity(
-		getenv("TELEMETRY_QUEUE_CAPACITY"),
-	)
+	telemetryQueueCapacity, err := parseTelemetryQueueCapacity(getenv("TELEMETRY_QUEUE_CAPACITY"))
 	if err != nil {
 		return SimulatorConfig{}, err
 	}
 
-	maxEvents, err := parseMaxEvents(
-		getenv("MAX_EVENTS"),
-	)
+	maxEvents, err := parseMaxEvents(getenv("MAX_EVENTS"))
 	if err != nil {
 		return SimulatorConfig{}, err
 	}

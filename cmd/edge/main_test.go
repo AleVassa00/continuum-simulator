@@ -112,6 +112,21 @@ func TestBuildEdgeAggregateUsesCurrentSchema(t *testing.T) {
 	}
 }
 
+func TestEdgeKafkaWriterUsesSingleSynchronousAttempt(t *testing.T) {
+	writer := newKafkaWriter("kafka:29092", "edge-aggregates")
+
+	if writer.MaxAttempts != 1 ||
+		writer.RequiredAcks != kafka.RequireAll ||
+		writer.Async {
+		t.Fatalf(
+			"writer Kafka Edge inatteso: attempts=%d acks=%d async=%t",
+			writer.MaxAttempts,
+			writer.RequiredAcks,
+			writer.Async,
+		)
+	}
+}
+
 func TestTelemetrySubscriptionUsesSensorScopedTopic(t *testing.T) {
 	const expected = "sensors/+/telemetry"
 
@@ -201,27 +216,6 @@ func TestWindowAggregatorEmitsPreviousWindowOnTransition(t *testing.T) {
 		!aggregator.current.End.Equal(edgeTestTime(10, 10)) ||
 		aggregator.current.Events != 1 {
 		t.Fatalf("nuova finestra inattesa: %#v", aggregator.current)
-	}
-}
-
-func TestWindowAggregatorCountsDuplicateEventIDOnce(t *testing.T) {
-	aggregator, _ := newTestEdgeAggregator()
-	measurement := validMeasurement(20, 50, 100000)
-
-	for _, minute := range []int{1, 3} {
-		if err := aggregator.Add(
-			"event-duplicate",
-			edgeTestTime(10, minute),
-			measurement,
-		); err != nil {
-			t.Fatalf("Add() ha restituito un errore: %v", err)
-		}
-	}
-
-	if aggregator.current.Events != 1 ||
-		aggregator.current.DuplicateEvents != 1 ||
-		aggregator.current.Temperature.Valid != 1 {
-		t.Fatalf("duplicato conteggiato nello stato: %#v", aggregator.current)
 	}
 }
 

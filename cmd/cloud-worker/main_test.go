@@ -56,6 +56,21 @@ func TestCloudMessageProcessorDispatchesEdgeAggregate(t *testing.T) {
 	}
 }
 
+func TestCloudKafkaWriterUsesSingleSynchronousAttempt(t *testing.T) {
+	writer := newKafkaWriter("kafka:29092", "cloud-edge-aggregates")
+
+	if writer.MaxAttempts != 1 ||
+		writer.RequiredAcks != kafka.RequireAll ||
+		writer.Async {
+		t.Fatalf(
+			"writer Kafka Cloud inatteso: attempts=%d acks=%d async=%t",
+			writer.MaxAttempts,
+			writer.RequiredAcks,
+			writer.Async,
+		)
+	}
+}
+
 func TestCloudMessageProcessorRejectsMissingAndUnknownRecordType(t *testing.T) {
 	processor := newTestCloudProcessor(t, func(
 		context.Context,

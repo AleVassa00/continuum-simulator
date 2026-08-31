@@ -3,8 +3,8 @@ package model
 import "time"
 
 const (
-	EdgeAggregateSchemaVersion      = 2
-	CloudEdgeAggregateSchemaVersion = 1
+	EdgeAggregateSchemaVersion      = 3
+	CloudEdgeAggregateSchemaVersion = 2
 )
 
 type MetricAggregate struct {
@@ -26,8 +26,7 @@ type EdgeAggregate struct {
 	WindowStart time.Time `json:"window_start"`
 	WindowEnd   time.Time `json:"window_end"`
 
-	Events          uint64 `json:"events"`
-	DuplicateEvents uint64 `json:"duplicate_events"`
+	Events uint64 `json:"events"`
 
 	Temperature MetricAggregate `json:"temperature"`
 	Humidity    MetricAggregate `json:"humidity"`
@@ -47,8 +46,7 @@ type CloudEdgeAggregate struct {
 
 	InputAggregates uint64 `json:"input_aggregates"`
 
-	Events          uint64 `json:"events"`
-	DuplicateEvents uint64 `json:"duplicate_events"`
+	Events uint64 `json:"events"`
 
 	Temperature MetricAggregate `json:"temperature"`
 	Humidity    MetricAggregate `json:"humidity"`

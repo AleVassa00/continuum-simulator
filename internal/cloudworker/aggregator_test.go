@@ -141,44 +141,6 @@ func TestWindowAggregatorKeepsEdgesSeparate(t *testing.T) {
 	}
 }
 
-func TestWindowAggregatorIgnoresDuplicateAggregateID(t *testing.T) {
-	aggregator := newTestAggregator(t)
-	start := testTime(10, 0)
-	input := newEdgeAggregate(
-		"edge-2",
-		start,
-		metricAggregate(4, 1, 40, 5, 15),
-	)
-
-	for index := 0; index < 2; index++ {
-		output, err := aggregator.Add(input)
-		if err != nil {
-			t.Fatalf("Add() ha restituito un errore: %v", err)
-		}
-
-		if output != nil {
-			t.Fatal("output inatteso durante la stessa finestra")
-		}
-	}
-
-	output, err := aggregator.Add(
-		newEdgeAggregate(
-			"edge-2",
-			start.Add(15*time.Minute),
-			metricAggregate(1, 0, 10, 10, 10),
-		),
-	)
-	if err != nil {
-		t.Fatalf("Add() ha restituito un errore: %v", err)
-	}
-
-	if output.InputAggregates != 1 ||
-		output.Events != 5 ||
-		output.Temperature.Sum != 40 {
-		t.Fatalf("duplicato incorporato nell'output: %#v", output)
-	}
-}
-
 func TestWindowAggregatorRejectsPreviousWindow(t *testing.T) {
 	aggregator := newTestAggregator(t)
 	start := testTime(10, 0)

@@ -221,7 +221,7 @@ func processAndCommitMessage(
 }
 
 func (
-processor *CloudMessageProcessor,
+	processor *CloudMessageProcessor,
 ) Process(
 	message kafka.Message,
 ) error {
@@ -246,7 +246,7 @@ processor *CloudMessageProcessor,
 }
 
 func (
-processor *CloudMessageProcessor,
+	processor *CloudMessageProcessor,
 ) processEdgeAggregate(
 	message kafka.Message,
 ) error {
@@ -290,7 +290,7 @@ processor *CloudMessageProcessor,
 }
 
 func (
-processor *CloudMessageProcessor,
+	processor *CloudMessageProcessor,
 ) processEndOfReplay(
 	message kafka.Message,
 ) error {
@@ -341,7 +341,7 @@ processor *CloudMessageProcessor,
 }
 
 func (
-processor *CloudMessageProcessor,
+	processor *CloudMessageProcessor,
 ) publishCloudAggregate(
 	aggregate model.CloudEdgeAggregate,
 	partial bool,
@@ -374,7 +374,7 @@ processor *CloudMessageProcessor,
 }
 
 func (
-processor *CloudMessageProcessor,
+	processor *CloudMessageProcessor,
 ) publishEndOfReplay(
 	record model.EndOfReplay,
 ) error {
@@ -655,7 +655,7 @@ func newKafkaWriter(
 		Topic:        topic,
 		Balancer:     &kafka.Hash{},
 		RequiredAcks: kafka.RequireAll,
-		MaxAttempts:  5,
+		MaxAttempts:  1,
 		BatchSize:    1,
 		WriteTimeout: operationTimeout,
 		ReadTimeout:  operationTimeout,

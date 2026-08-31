@@ -23,9 +23,6 @@ type cloudWindowState struct {
 
 	inputAggregates uint64
 	events          uint64
-	duplicateEvents uint64
-
-	seenAggregateIDs map[string]struct{}
 
 	temperature metricState
 	humidity    metricState
@@ -258,9 +255,6 @@ func newCloudWindowState(
 		edgeID: edgeID,
 		start:  start,
 		end:    end,
-		seenAggregateIDs: make(
-			map[string]struct{},
-		),
 	}
 }
 
@@ -268,24 +262,13 @@ func (
 	state *cloudWindowState,
 ) add(
 	input model.EdgeAggregate,
-) bool {
-	if _, found :=
-		state.seenAggregateIDs[input.AggregateID]; found {
-		return false
-	}
-
-	state.seenAggregateIDs[input.AggregateID] =
-		struct{}{}
-
+) {
 	state.inputAggregates++
 	state.events += input.Events
-	state.duplicateEvents += input.DuplicateEvents
 
 	state.temperature.add(input.Temperature)
 	state.humidity.add(input.Humidity)
 	state.pressure.add(input.Pressure)
-
-	return true
 }
 
 func (
@@ -332,7 +315,6 @@ func (
 		WindowEnd:       state.end,
 		InputAggregates: state.inputAggregates,
 		Events:          state.events,
-		DuplicateEvents: state.duplicateEvents,
 		Temperature:     state.temperature.buildAggregate(),
 		Humidity:        state.humidity.buildAggregate(),
 		Pressure:        state.pressure.buildAggregate(),

@@ -33,3 +33,4 @@ dataset/output/*
 !dataset/output/kmeans_topology.csv
 !dataset/output/replay_load_scenarios.csv
 !dataset/output/replay_shards_summary.csv
+continuum-key.pem
