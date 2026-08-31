@@ -322,8 +322,67 @@ func TestTelemetryEgressDropsWithoutBlockingWhenQueueIsFull(t *testing.T) {
 
 	close(release)
 	stats := egress.CloseAndWait()
-	if stats.PublishAttempts != 2 || stats.PublishErrors != 0 {
+	if stats.QueueCapacity != 1 ||
+		stats.CurrentQueueDepth != 0 ||
+		stats.MaxQueueDepthObserved != 1 ||
+		stats.PublishAttempts != 2 ||
+		stats.PublishErrors != 0 {
 		t.Fatalf("egress stats=%#v", stats)
+	}
+}
+
+func TestTelemetryEgressTracksCurrentAndMaximumQueueDepth(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	egress, err := newTelemetryEgress(
+		2,
+		func(_ string, _ model.SensorEvent) error {
+			once.Do(func() { close(started) })
+			<-release
+			return nil
+		},
+		time.Now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	initial := egress.Stats()
+	if initial.QueueCapacity != 2 ||
+		initial.CurrentQueueDepth != 0 ||
+		initial.MaxQueueDepthObserved != 0 {
+		t.Fatalf("stats iniziali=%#v", initial)
+	}
+
+	if !egress.TryEnqueue(testMeasurement("1", 0), 1) {
+		t.Fatal("prima telemetry non accettata")
+	}
+	<-started
+	if current := egress.Stats().CurrentQueueDepth; current != 0 {
+		t.Fatalf("depth dopo dequeue=%d, attesa 0", current)
+	}
+	if !egress.TryEnqueue(testMeasurement("1", 1), 2) ||
+		!egress.TryEnqueue(testMeasurement("1", 2), 3) {
+		t.Fatal("queue non riempita fino alla capacity")
+	}
+	if egress.TryEnqueue(testMeasurement("1", 3), 4) {
+		t.Fatal("enqueue su queue piena non scartata")
+	}
+
+	full := egress.Stats()
+	if full.CurrentQueueDepth != 2 ||
+		full.MaxQueueDepthObserved != 2 ||
+		full.MaxQueueDepthObserved > full.QueueCapacity {
+		t.Fatalf("stats queue piena=%#v", full)
+	}
+
+	close(release)
+	final := egress.CloseAndWait()
+	if final.CurrentQueueDepth != 0 ||
+		final.MaxQueueDepthObserved != 2 ||
+		final.PublishAttempts != 3 {
+		t.Fatalf("stats finali=%#v", final)
 	}
 }
 

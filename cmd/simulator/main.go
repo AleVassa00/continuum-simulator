@@ -82,6 +82,8 @@ type ReplayStats struct {
 	OfferedEvents           int
 	TelemetryEnqueued       int
 	TelemetryLocallyDropped int
+	QueueCapacity           int
+	MaxQueueDepthObserved   int
 	MQTTPublishAttempts     uint64
 	MQTTPublishErrors       uint64
 	SchedulingLagTotal      time.Duration
@@ -104,9 +106,7 @@ const (
 )
 
 func main() {
-	config, err := loadSimulatorConfig(
-		os.Getenv,
-	)
+	config, err := loadSimulatorConfig(os.Getenv)
 	if err != nil {
 		panic(err)
 	}
@@ -125,14 +125,9 @@ func main() {
 		}
 	}()
 
-	fmt.Printf(
-		"Replay file: %s\n",
-		config.ReplayFile,
-	)
+	fmt.Printf("Replay file: %s\n", config.ReplayFile)
 
-	file, err := openReplayFile(
-		config.ReplayFile,
-	)
+	file, err := openReplayFile(config.ReplayFile)
 	if err != nil {
 		panic(err)
 	}
@@ -189,7 +184,7 @@ func main() {
 }
 
 func (
-	pacer ReplayPacer,
+pacer ReplayPacer,
 ) ScheduledTime(
 	observedAt time.Time,
 ) (time.Time, error) {
@@ -304,7 +299,7 @@ func waitForPublishCompletion(
 }
 
 func (
-	stats ReplayStats,
+stats ReplayStats,
 ) AverageSchedulingLag() time.Duration {
 	if stats.OfferedEvents == 0 {
 		return 0
@@ -315,7 +310,7 @@ func (
 }
 
 func (
-	stats ReplayStats,
+stats ReplayStats,
 ) OfferDuration() time.Duration {
 	if stats.OfferedEvents <= 1 ||
 		stats.FirstOfferedAt.IsZero() ||
@@ -332,7 +327,7 @@ func (
 }
 
 func (
-	stats ReplayStats,
+stats ReplayStats,
 ) DrainDuration() time.Duration {
 	if stats.LastOfferedAt.IsZero() || stats.CompletedAt.IsZero() {
 		return 0
@@ -347,7 +342,7 @@ func (
 }
 
 func (
-	stats ReplayStats,
+stats ReplayStats,
 ) Throughput() float64 {
 	duration := stats.OfferDuration()
 	if stats.OfferedEvents <= 1 || duration <= 0 {
@@ -359,8 +354,17 @@ func (
 		duration.Seconds()
 }
 
+func (stats ReplayStats) MaxQueueUtilization() float64 {
+	if stats.QueueCapacity <= 0 {
+		return 0
+	}
+
+	return float64(stats.MaxQueueDepthObserved) /
+		float64(stats.QueueCapacity) * 100
+}
+
 func (
-	stats *ReplayStats,
+stats *ReplayStats,
 ) RecordOffer(
 	offeredAt time.Time,
 	schedulingLag time.Duration,
@@ -390,6 +394,8 @@ func replaySite(
 	stats ReplayStats,
 	replayErr error,
 ) {
+	stats.QueueCapacity = config.TelemetryQueueCapacity
+
 	anchorNow := runtime.Now()
 	pacer := ReplayPacer{
 		Epoch: config.ReplayEpoch,
@@ -425,6 +431,10 @@ func replaySite(
 			return
 		}
 		egressStats := egress.CloseAndWait()
+		if egressStats.QueueCapacity > 0 {
+			stats.QueueCapacity = egressStats.QueueCapacity
+		}
+		stats.MaxQueueDepthObserved = egressStats.MaxQueueDepthObserved
 		stats.MQTTPublishAttempts = egressStats.PublishAttempts
 		stats.MQTTPublishErrors = egressStats.PublishErrors
 		egressClosed = true
@@ -620,6 +630,9 @@ func printReplaySummary(
 	fmt.Printf("Eventi offered/generated: %d\n", stats.OfferedEvents)
 	fmt.Printf("Telemetry accettata in coda: %d\n", stats.TelemetryEnqueued)
 	fmt.Printf("Telemetry scartata localmente: %d\n", stats.TelemetryLocallyDropped)
+	fmt.Printf("Telemetry queue capacity: %d\n", stats.QueueCapacity)
+	fmt.Printf("Max telemetry queue depth: %d\n", stats.MaxQueueDepthObserved)
+	fmt.Printf("Max telemetry queue utilization: %.1f%%\n", stats.MaxQueueUtilization())
 	fmt.Printf("Tentativi publish MQTT QoS0: %d\n", stats.MQTTPublishAttempts)
 	fmt.Printf("Errori publish MQTT QoS0: %d\n", stats.MQTTPublishErrors)
 	fmt.Printf("Scheduling lag medio: %s\n", stats.AverageSchedulingLag())
@@ -1053,17 +1066,10 @@ func publishMQTTPayload(
 	}, nil
 }
 
-func loadSimulatorConfig(
-	getenv func(string) string,
-) (SimulatorConfig, error) {
-	siteID := strings.TrimSpace(
-		getenv("SITE_ID"),
-	)
+func loadSimulatorConfig(getenv func(string) string) (SimulatorConfig, error) {
+	siteID := strings.TrimSpace(getenv("SITE_ID"))
 	if siteID == "" {
-		return SimulatorConfig{},
-			fmt.Errorf(
-				"variabile SITE_ID non impostata",
-			)
+		return SimulatorConfig{}, fmt.Errorf("variabile SITE_ID non impostata")
 	}
 
 	mqttEndpoint := strings.TrimSpace(

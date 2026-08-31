@@ -35,9 +35,10 @@ const (
 type EdgeIngressQueue struct {
 	mu sync.Mutex
 
-	data []EdgeIngressRecord
-	head int
-	size int
+	data     []EdgeIngressRecord
+	head     int
+	size     int
+	maxDepth int
 
 	terminal      *EdgeIngressRecord
 	eosRegistered bool
@@ -58,15 +59,24 @@ type EdgeStats struct {
 }
 
 type EdgeStatsSnapshot struct {
-	TelemetryReceived    uint64
-	IngressAccepted      uint64
-	IngressQueueDropped  uint64
-	InvalidTelemetry     uint64
-	OutOfOrderDropped    uint64
-	PostEOSDropped       uint64
-	Processed            uint64
-	AggregatesEmitted    uint64
-	EndOfReplayProcessed uint64
+	IngressQueueCapacity         int
+	CurrentIngressQueueDepth     int
+	MaxIngressQueueDepthObserved int
+	TelemetryReceived            uint64
+	IngressAccepted              uint64
+	IngressQueueDropped          uint64
+	InvalidTelemetry             uint64
+	OutOfOrderDropped            uint64
+	PostEOSDropped               uint64
+	Processed                    uint64
+	AggregatesEmitted            uint64
+	EndOfReplayProcessed         uint64
+}
+
+type EdgeIngressQueueStats struct {
+	Capacity         int
+	CurrentDepth     int
+	MaxDepthObserved int
 }
 
 type EdgeProcessor struct {
@@ -112,9 +122,21 @@ func (
 		Payload: append([]byte(nil), payload...),
 	}
 	queue.size++
+	queue.maxDepth = max(queue.maxDepth, queue.size)
 	queue.signal()
 
 	return TelemetryEnqueued
+}
+
+func (queue *EdgeIngressQueue) Stats() EdgeIngressQueueStats {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+
+	return EdgeIngressQueueStats{
+		Capacity:         len(queue.data),
+		CurrentDepth:     queue.size,
+		MaxDepthObserved: queue.maxDepth,
+	}
 }
 
 func (
@@ -202,6 +224,27 @@ func (
 		AggregatesEmitted:    stats.aggregatesEmitted.Load(),
 		EndOfReplayProcessed: stats.endOfReplayProcessed.Load(),
 	}
+}
+
+func (
+	stats *EdgeStats,
+) SnapshotWithQueue(queue *EdgeIngressQueue) EdgeStatsSnapshot {
+	snapshot := stats.Snapshot()
+	queueStats := queue.Stats()
+	snapshot.IngressQueueCapacity = queueStats.Capacity
+	snapshot.CurrentIngressQueueDepth = queueStats.CurrentDepth
+	snapshot.MaxIngressQueueDepthObserved = queueStats.MaxDepthObserved
+
+	return snapshot
+}
+
+func (stats EdgeStatsSnapshot) MaxIngressQueueUtilization() float64 {
+	if stats.IngressQueueCapacity <= 0 {
+		return 0
+	}
+
+	return float64(stats.MaxIngressQueueDepthObserved) /
+		float64(stats.IngressQueueCapacity) * 100
 }
 
 func (

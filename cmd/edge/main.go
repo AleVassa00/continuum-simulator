@@ -347,7 +347,7 @@ func main() {
 		)
 	}
 
-	printEdgeSummary(edgeID, stats.Snapshot())
+	printEdgeSummary(edgeID, stats.SnapshotWithQueue(ingress))
 	if processorErr != nil {
 		panic(processorErr)
 	}
@@ -1315,6 +1315,9 @@ func printEdgeSummary(
 ) {
 	fmt.Printf("\nEdge %s summary\n", edgeID)
 	fmt.Printf("MQTT telemetry ricevuta: %d\n", stats.TelemetryReceived)
+	fmt.Printf("Ingress queue capacity: %d\n", stats.IngressQueueCapacity)
+	fmt.Printf("Max ingress queue depth: %d\n", stats.MaxIngressQueueDepthObserved)
+	fmt.Printf("Max ingress queue utilization: %.1f%%\n", stats.MaxIngressQueueUtilization())
 	fmt.Printf("Ingress accettata: %d\n", stats.IngressAccepted)
 	fmt.Printf("Ingress queue drop: %d\n", stats.IngressQueueDropped)
 	fmt.Printf("Telemetry invalida scartata: %d\n", stats.InvalidTelemetry)

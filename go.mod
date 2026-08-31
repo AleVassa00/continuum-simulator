@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/segmentio/kafka-go v0.4.51
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require golang.org/x/sync v0.17.0 // indirect

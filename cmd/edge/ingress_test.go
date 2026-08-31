@@ -27,6 +27,12 @@ func TestEdgeIngressQueueKeepsAcceptedDataBeforeReservedEndOfReplay(t *testing.T
 	if result := queue.TryEnqueueTelemetry([]byte("D")); result != TelemetryDroppedQueueFull {
 		t.Fatalf("queue piena result=%d", result)
 	}
+	full := queue.Stats()
+	if full.Capacity != 3 ||
+		full.CurrentDepth != 3 ||
+		full.MaxDepthObserved != 3 {
+		t.Fatalf("metriche queue piena=%#v", full)
+	}
 	if !queue.RegisterEndOfReplay([]byte("EOS")) {
 		t.Fatal("EOS perso con data queue piena")
 	}
@@ -37,8 +43,17 @@ func TestEdgeIngressQueueKeepsAcceptedDataBeforeReservedEndOfReplay(t *testing.T
 		t.Fatalf("telemetry post-EOS result=%d", result)
 	}
 
+	first, ok := queue.Next()
+	if !ok || string(first.Payload) != "A" {
+		t.Fatalf("primo record=%#v ok=%t", first, ok)
+	}
+	afterDequeue := queue.Stats()
+	if afterDequeue.CurrentDepth != 2 || afterDequeue.MaxDepthObserved != 3 {
+		t.Fatalf("metriche dopo dequeue=%#v", afterDequeue)
+	}
+
 	queue.Close()
-	var order []string
+	order := []string{string(first.Payload)}
 	for {
 		record, ok := queue.Next()
 		if !ok {
@@ -76,11 +91,15 @@ func TestEdgeMQTTCallbackOnlyEnqueuesAndCountsDrops(t *testing.T) {
 		payload: []byte("telemetry-post"),
 	})
 
-	snapshot := stats.Snapshot()
+	snapshot := stats.SnapshotWithQueue(queue)
 	if snapshot.TelemetryReceived != 3 ||
 		snapshot.IngressAccepted != 1 ||
 		snapshot.IngressQueueDropped != 1 ||
 		snapshot.PostEOSDropped != 1 ||
+		snapshot.IngressQueueCapacity != 1 ||
+		snapshot.CurrentIngressQueueDepth != 1 ||
+		snapshot.MaxIngressQueueDepthObserved != 1 ||
+		snapshot.MaxIngressQueueUtilization() != 100 ||
 		snapshot.Processed != 0 ||
 		snapshot.AggregatesEmitted != 0 {
 		t.Fatalf("callback stats=%#v", snapshot)

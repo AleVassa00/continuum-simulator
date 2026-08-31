@@ -33,24 +33,14 @@ type CloudMessageProcessor struct {
 }
 
 func main() {
-	kafkaBroker := requiredEnv(
-		"KAFKA_BROKER",
-	)
+	kafkaBroker := requiredEnv("KAFKA_BROKER")
 
 	inputTopic := loadInputTopic()
-	outputTopic := envOrDefault(
-		"KAFKA_OUTPUT_TOPIC",
-		"cloud-edge-aggregates",
-	)
-
-	groupID := envOrDefault(
-		"KAFKA_GROUP_ID",
-		"cloud-workers",
-	)
-
+	outputTopic := envOrDefault("KAFKA_OUTPUT_TOPIC", "cloud-edge-aggregates")
+	groupID := envOrDefault("KAFKA_GROUP_ID", "cloud-workers")
 	workerID := loadWorkerID()
-
 	windowSize, err := loadCloudWindowSize()
+
 	if err != nil {
 		panic(err)
 	}
@@ -231,7 +221,7 @@ func processAndCommitMessage(
 }
 
 func (
-	processor *CloudMessageProcessor,
+processor *CloudMessageProcessor,
 ) Process(
 	message kafka.Message,
 ) error {
@@ -256,7 +246,7 @@ func (
 }
 
 func (
-	processor *CloudMessageProcessor,
+processor *CloudMessageProcessor,
 ) processEdgeAggregate(
 	message kafka.Message,
 ) error {
@@ -300,7 +290,7 @@ func (
 }
 
 func (
-	processor *CloudMessageProcessor,
+processor *CloudMessageProcessor,
 ) processEndOfReplay(
 	message kafka.Message,
 ) error {
@@ -351,7 +341,7 @@ func (
 }
 
 func (
-	processor *CloudMessageProcessor,
+processor *CloudMessageProcessor,
 ) publishCloudAggregate(
 	aggregate model.CloudEdgeAggregate,
 	partial bool,
@@ -384,7 +374,7 @@ func (
 }
 
 func (
-	processor *CloudMessageProcessor,
+processor *CloudMessageProcessor,
 ) publishEndOfReplay(
 	record model.EndOfReplay,
 ) error {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/csv"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -9,11 +10,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"continuum/internal/experiment"
 )
 
 const (
-	topologyPath = "dataset/output/kmeans_topology.csv"
-	outputPath   = "deploy/compose/continuum.generated.yml"
+	defaultTopologyPath   = "dataset/output/kmeans_topology.csv"
+	defaultOutputPath     = "deploy/compose/continuum.generated.yml"
+	defaultExperimentPath = "experiments/baseline.yaml"
+	defaultArtifactsRoot  = "artifacts/experiments"
+	deploymentReplayEpoch = "2025-01-01T00:00:00Z"
 
 	mqttBasePort = 18830
 )
@@ -25,42 +32,86 @@ type EdgeDeployment struct {
 	MQTTPort    int
 }
 
+type deploygenOptions struct {
+	TopologyPath  string
+	OutputPath    string
+	ArtifactsRoot string
+	Now           func() time.Time
+	Stdout        io.Writer
+}
+
 func main() {
-	edges, err := loadEdges(topologyPath)
-	if err != nil {
+	if err := runDeploygen(os.Args[1:], deploygenOptions{
+		TopologyPath:  defaultTopologyPath,
+		OutputPath:    defaultOutputPath,
+		ArtifactsRoot: defaultArtifactsRoot,
+		Now:           time.Now,
+		Stdout:        os.Stdout,
+	}); err != nil {
 		panic(err)
 	}
+}
 
+func runDeploygen(args []string, options deploygenOptions) error {
+	flags := flag.NewFlagSet("deploygen", flag.ContinueOnError)
+	flags.SetOutput(options.Stdout)
+	experimentPath := flags.String(
+		"experiment",
+		defaultExperimentPath,
+		"percorso della configurazione YAML dell'esperimento",
+	)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("argomenti posizionali non supportati: %s", strings.Join(flags.Args(), " "))
+	}
+
+	config, err := experiment.Load(*experimentPath)
+	if err != nil {
+		return err
+	}
+	edges, err := loadEdges(options.TopologyPath)
+	if err != nil {
+		return err
+	}
 	if len(edges) == 0 {
-		panic("nessun Edge trovato nella topologia")
+		return fmt.Errorf("nessun Edge trovato nella topologia")
 	}
 
-	compose := buildCompose(edges)
-
-	err = os.MkdirAll(
-		filepath.Dir(outputPath),
-		0755,
+	replayStartAt := options.Now().UTC().Add(
+		config.Workload.StartLeadTime.Duration(),
 	)
-	if err != nil {
-		panic(err)
+	effective := experiment.BuildEffective(config, replayStartAt)
+	compose := buildCompose(edges, effective)
+
+	if err := os.MkdirAll(filepath.Dir(options.OutputPath), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(options.OutputPath, []byte(compose), 0644); err != nil {
+		return err
 	}
 
-	err = os.WriteFile(
-		outputPath,
-		[]byte(compose),
-		0644,
+	effectivePath := filepath.Join(
+		options.ArtifactsRoot,
+		config.Experiment.Name,
+		"effective-config.yaml",
 	)
-	if err != nil {
-		panic(err)
+	if err := experiment.WriteEffective(effectivePath, effective); err != nil {
+		return err
 	}
 
-	fmt.Printf(
+	printExperimentSummary(options.Stdout, effective, effectivePath)
+
+	fmt.Fprintf(
+		options.Stdout,
 		"Topologia letta: %d Edge\n\n",
 		len(edges),
 	)
 
 	for _, edge := range edges {
-		fmt.Printf(
+		fmt.Fprintf(
+			options.Stdout,
 			"%s -> sensors=%d mqtt=tcp://mqtt-%s:1883 host_port=%d simulator=simulator-%s\n",
 			edge.EdgeID,
 			edge.SensorCount,
@@ -70,10 +121,39 @@ func main() {
 		)
 	}
 
-	fmt.Printf(
+	fmt.Fprintf(
+		options.Stdout,
 		"\nGenerato: %s\n",
-		outputPath,
+		options.OutputPath,
 	)
+
+	return nil
+}
+
+func printExperimentSummary(
+	output io.Writer,
+	config experiment.EffectiveConfig,
+	effectivePath string,
+) {
+	fmt.Fprintf(output, "Experiment: %s\n\n", config.Experiment.Name)
+	fmt.Fprintln(output, "Workload:")
+	fmt.Fprintf(output, "  acceleration factor: %s\n", formatFloat(config.Workload.AccelerationFactor))
+	fmt.Fprintf(output, "  max events: %d\n", config.Workload.MaxEvents)
+	fmt.Fprintf(output, "  replay start lead time: %s\n", config.Workload.StartLeadTime)
+	fmt.Fprintf(output, "  replay start at: %s\n\n", config.Workload.ReplayStartAt)
+	fmt.Fprintln(output, "Simulator:")
+	fmt.Fprintf(output, "  telemetry queue capacity: %d\n\n", config.Simulator.TelemetryQueueCapacity)
+	fmt.Fprintln(output, "Edge:")
+	fmt.Fprintf(output, "  ingress queue capacity: %d\n", config.Edge.IngressQueueCapacity)
+	fmt.Fprintf(output, "  window: %s\n\n", config.Edge.WindowSize)
+	fmt.Fprintln(output, "Cloud:")
+	fmt.Fprintf(output, "  workers: %d\n", config.Cloud.Workers)
+	fmt.Fprintf(output, "  window: %s\n\n", config.Cloud.WindowSize)
+	fmt.Fprintf(output, "Effective config: %s\n\n", effectivePath)
+}
+
+func formatFloat(value float64) string {
+	return strconv.FormatFloat(value, 'g', -1, 64)
 }
 
 func loadEdges(
@@ -245,6 +325,7 @@ func requiredColumn(
 
 func buildCompose(
 	edges []EdgeDeployment,
+	config experiment.EffectiveConfig,
 ) string {
 	var builder strings.Builder
 
@@ -253,7 +334,13 @@ func buildCompose(
 	)
 
 	builder.WriteString(
-		"# Source: dataset/output/kmeans_topology.csv\n\n",
+		"# Source: dataset/output/kmeans_topology.csv\n",
+	)
+
+	fmt.Fprintf(
+		&builder,
+		"# Experiment: %s\n\n",
+		config.Experiment.Name,
 	)
 
 	builder.WriteString(
@@ -334,16 +421,21 @@ func buildCompose(
 
 `,
 	)
-	builder.WriteString(
-		`  cloud-worker:
+	for workerNumber := 0; workerNumber < config.Cloud.Workers; workerNumber++ {
+		workerID := fmt.Sprintf("cloud-worker-%d", workerNumber)
+		fmt.Fprintf(
+			&builder,
+			`  %s:
     image: continuum-cloud-worker:local
+    container_name: %s
 
     environment:
       KAFKA_BROKER: "kafka:29092"
       KAFKA_INPUT_TOPIC: "edge-aggregates"
       KAFKA_OUTPUT_TOPIC: "cloud-edge-aggregates"
-      KAFKA_GROUP_ID: "${CLOUD_GROUP_ID:-cloud-workers}"
-      CLOUD_WINDOW_SIZE: "${CLOUD_WINDOW_SIZE:-15m}"
+      KAFKA_GROUP_ID: "cloud-workers"
+      CLOUD_WINDOW_SIZE: "%s"
+      WORKER_ID: "%s"
 
     depends_on:
       kafka-init:
@@ -355,7 +447,12 @@ func buildCompose(
       - continuum-backbone
 
 `,
-	)
+			workerID,
+			workerID,
+			config.Cloud.WindowSize,
+			workerID,
+		)
+	}
 
 	// Zone Edge
 	for _, edge := range edges {
@@ -472,12 +569,16 @@ func buildCompose(
 			mqttService,
 		)
 
-		builder.WriteString(
-			"      WINDOW_SIZE: \"${EDGE_WINDOW_SIZE:-5m}\"\n",
+		fmt.Fprintf(
+			&builder,
+			"      WINDOW_SIZE: \"%s\"\n",
+			config.Edge.WindowSize,
 		)
 
-		builder.WriteString(
-			"      EDGE_INGRESS_QUEUE_CAPACITY: \"${EDGE_INGRESS_QUEUE_CAPACITY:-1000}\"\n",
+		fmt.Fprintf(
+			&builder,
+			"      EDGE_INGRESS_QUEUE_CAPACITY: \"%d\"\n",
+			config.Edge.IngressQueueCapacity,
 		)
 
 		builder.WriteString(
@@ -592,24 +693,34 @@ func buildCompose(
 			edge.EdgeID,
 		)
 
-		builder.WriteString(
-			"      MAX_EVENTS: \"${MAX_EVENTS:-0}\"\n",
+		fmt.Fprintf(
+			&builder,
+			"      MAX_EVENTS: \"%d\"\n",
+			config.Workload.MaxEvents,
 		)
 
-		builder.WriteString(
-			"      REPLAY_EPOCH: \"${REPLAY_EPOCH:-2025-01-01T00:00:00Z}\"\n",
+		fmt.Fprintf(
+			&builder,
+			"      REPLAY_EPOCH: \"%s\"\n",
+			deploymentReplayEpoch,
 		)
 
-		builder.WriteString(
-			"      REPLAY_START_AT: \"${REPLAY_START_AT:-}\"\n",
+		fmt.Fprintf(
+			&builder,
+			"      REPLAY_START_AT: \"%s\"\n",
+			config.Workload.ReplayStartAt,
 		)
 
-		builder.WriteString(
-			"      ACCELERATION_FACTOR: \"${ACCELERATION_FACTOR:-1000}\"\n",
+		fmt.Fprintf(
+			&builder,
+			"      ACCELERATION_FACTOR: \"%s\"\n",
+			formatFloat(config.Workload.AccelerationFactor),
 		)
 
-		builder.WriteString(
-			"      TELEMETRY_QUEUE_CAPACITY: \"${TELEMETRY_QUEUE_CAPACITY:-1000}\"\n",
+		fmt.Fprintf(
+			&builder,
+			"      TELEMETRY_QUEUE_CAPACITY: \"%d\"\n",
+			config.Simulator.TelemetryQueueCapacity,
 		)
 
 		builder.WriteString(
