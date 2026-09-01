@@ -66,6 +66,92 @@ func TestEdgeIngressQueueKeepsAcceptedDataBeforeReservedEndOfReplay(t *testing.T
 	}
 }
 
+func TestEdgeIngressQueueWakesBlockedNext(t *testing.T) {
+	tests := []struct {
+		name        string
+		trigger     func(*testing.T, *EdgeIngressQueue)
+		wantOK      bool
+		wantKind    EdgeIngressKind
+		wantPayload string
+	}{
+		{
+			name: "telemetry",
+			trigger: func(t *testing.T, queue *EdgeIngressQueue) {
+				t.Helper()
+				if result := queue.TryEnqueueTelemetry([]byte("A")); result != TelemetryEnqueued {
+					t.Fatalf("enqueue result=%d", result)
+				}
+			},
+			wantOK:      true,
+			wantKind:    EdgeIngressTelemetry,
+			wantPayload: "A",
+		},
+		{
+			name: "end_of_replay",
+			trigger: func(t *testing.T, queue *EdgeIngressQueue) {
+				t.Helper()
+				if !queue.RegisterEndOfReplay([]byte("EOS")) {
+					t.Fatal("EOS non registrato")
+				}
+			},
+			wantOK:      true,
+			wantKind:    EdgeIngressEndOfReplay,
+			wantPayload: "EOS",
+		},
+		{
+			name: "close",
+			trigger: func(_ *testing.T, queue *EdgeIngressQueue) {
+				queue.Close()
+			},
+			wantOK: false,
+		},
+	}
+
+	type nextResult struct {
+		record EdgeIngressRecord
+		ok     bool
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			queue, err := newEdgeIngressQueue(1)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result := make(chan nextResult, 1)
+			go func() {
+				record, ok := queue.Next()
+				result <- nextResult{record: record, ok: ok}
+			}()
+
+			select {
+			case got := <-result:
+				t.Fatalf("Next è terminata prima del trigger: %#v", got)
+			case <-time.After(50 * time.Millisecond):
+			}
+
+			test.trigger(t, queue)
+
+			select {
+			case got := <-result:
+				if got.ok != test.wantOK {
+					t.Fatalf("ok=%t, atteso %t", got.ok, test.wantOK)
+				}
+				if got.ok &&
+					(got.record.Kind != test.wantKind ||
+						string(got.record.Payload) != test.wantPayload) {
+					t.Fatalf("record=%#v", got.record)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Next non è stata risvegliata")
+			}
+
+			queue.Close()
+		})
+	}
+}
+
 func TestEdgeMQTTCallbackOnlyEnqueuesAndCountsDrops(t *testing.T) {
 	queue, err := newEdgeIngressQueue(1)
 	if err != nil {

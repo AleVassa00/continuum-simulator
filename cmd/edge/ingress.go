@@ -33,7 +33,8 @@ const (
 )
 
 type EdgeIngressQueue struct {
-	mu sync.Mutex
+	mu   sync.Mutex
+	cond *sync.Cond
 
 	data     []EdgeIngressRecord
 	head     int
@@ -43,7 +44,6 @@ type EdgeIngressQueue struct {
 	terminal      *EdgeIngressRecord
 	eosRegistered bool
 	closed        bool
-	wake          chan struct{}
 }
 
 type EdgeStats struct {
@@ -94,10 +94,12 @@ func newEdgeIngressQueue(capacity int) (*EdgeIngressQueue, error) {
 		)
 	}
 
-	return &EdgeIngressQueue{
+	queue := &EdgeIngressQueue{
 		data: make([]EdgeIngressRecord, capacity),
-		wake: make(chan struct{}, 1),
-	}, nil
+	}
+	queue.cond = sync.NewCond(&queue.mu)
+
+	return queue, nil
 }
 
 func (
@@ -123,7 +125,7 @@ func (
 	}
 	queue.size++
 	queue.maxDepth = max(queue.maxDepth, queue.size)
-	queue.signal()
+	queue.cond.Signal()
 
 	return TelemetryEnqueued
 }
@@ -155,7 +157,7 @@ func (
 	}
 	queue.terminal = &record
 	queue.eosRegistered = true
-	queue.signal()
+	queue.cond.Signal()
 
 	return true
 }
@@ -163,33 +165,32 @@ func (
 func (
 	queue *EdgeIngressQueue,
 ) Next() (EdgeIngressRecord, bool) {
-	for {
-		queue.mu.Lock()
-		if queue.size > 0 {
-			record := queue.data[queue.head]
-			queue.data[queue.head] = EdgeIngressRecord{}
-			queue.head = (queue.head + 1) % len(queue.data)
-			queue.size--
-			if queue.size == 0 {
-				queue.head = 0
-			}
-			queue.mu.Unlock()
-			return record, true
-		}
-		if queue.terminal != nil {
-			record := *queue.terminal
-			queue.terminal = nil
-			queue.mu.Unlock()
-			return record, true
-		}
-		if queue.closed {
-			queue.mu.Unlock()
-			return EdgeIngressRecord{}, false
-		}
-		queue.mu.Unlock()
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
 
-		<-queue.wake
+	for queue.size == 0 &&
+		queue.terminal == nil &&
+		!queue.closed {
+		queue.cond.Wait()
 	}
+
+	if queue.size > 0 {
+		record := queue.data[queue.head]
+		queue.data[queue.head] = EdgeIngressRecord{}
+		queue.head = (queue.head + 1) % len(queue.data)
+		queue.size--
+		if queue.size == 0 {
+			queue.head = 0
+		}
+		return record, true
+	}
+	if queue.terminal != nil {
+		record := *queue.terminal
+		queue.terminal = nil
+		return record, true
+	}
+
+	return EdgeIngressRecord{}, false
 }
 
 func (
@@ -197,17 +198,8 @@ func (
 ) Close() {
 	queue.mu.Lock()
 	queue.closed = true
-	queue.signal()
+	queue.cond.Broadcast()
 	queue.mu.Unlock()
-}
-
-func (
-	queue *EdgeIngressQueue,
-) signal() {
-	select {
-	case queue.wake <- struct{}{}:
-	default:
-	}
 }
 
 func (
