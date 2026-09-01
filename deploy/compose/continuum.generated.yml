@@ -95,6 +95,26 @@ services:
     networks:
       - continuum-backbone
 
+  global-aggregator:
+    image: continuum-global-aggregator:local
+    container_name: global-aggregator
+
+    environment:
+      KAFKA_BROKER: "kafka:29092"
+      KAFKA_INPUT_TOPIC: "cloud-edge-aggregates"
+      KAFKA_GROUP_ID: "global-aggregator"
+      GLOBAL_WINDOW_SIZE: "15m0s"
+      EXPECTED_EDGE_IDS: "edge-0,edge-1,edge-2,edge-3,edge-4,edge-5,edge-6,edge-7,edge-8,edge-9,edge-10,edge-11,edge-12"
+
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+    restart: "no"
+
+    networks:
+      - continuum-backbone
+
   # edge-0: 11 sensors
   mqtt-edge-0:
     image: eclipse-mosquitto:2
@@ -147,8 +167,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-0.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -213,8 +233,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-1.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -279,8 +299,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-2.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -345,8 +365,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-3.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -411,8 +431,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-4.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -477,8 +497,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-5.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -543,8 +563,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-6.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -609,8 +629,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-7.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -675,8 +695,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-8.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -741,8 +761,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-9.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -807,8 +827,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-10.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -873,8 +893,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-11.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -939,8 +959,8 @@ services:
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-12.csv"
       MAX_EVENTS: "0"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-08-31T14:33:15.7441421Z"
-      ACCELERATION_FACTOR: "1000"
+      REPLAY_START_AT: "2026-09-01T13:51:47.3922686Z"
+      ACCELERATION_FACTOR: "10000"
       TELEMETRY_QUEUE_CAPACITY: "1000"
     volumes:
       - ../../dataset:/app/dataset:ro

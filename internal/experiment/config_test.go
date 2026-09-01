@@ -16,9 +16,9 @@ func TestLoadBaseline(t *testing.T) {
 	}
 
 	if config.Experiment.Name != "baseline" ||
-		config.Workload.AccelerationFactor != 1000 ||
+		config.Workload.AccelerationFactor != 10000 ||
 		config.Workload.MaxEvents != 0 ||
-		config.Workload.StartLeadTime.Duration() != 10*time.Second ||
+		config.Workload.StartLeadTime.Duration() != 90*time.Second ||
 		config.Simulator.TelemetryQueueCapacity != 1000 ||
 		config.Edge.WindowSize.Duration() != 5*time.Minute ||
 		config.Edge.IngressQueueCapacity != 1000 ||

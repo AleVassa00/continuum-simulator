@@ -5,6 +5,7 @@ import "time"
 const (
 	EdgeAggregateSchemaVersion      = 3
 	CloudEdgeAggregateSchemaVersion = 2
+	GlobalAggregateSchemaVersion    = 1
 )
 
 type MetricAggregate struct {
@@ -45,6 +46,25 @@ type CloudEdgeAggregate struct {
 	WindowEnd   time.Time `json:"window_end"`
 
 	InputAggregates uint64 `json:"input_aggregates"`
+
+	Events uint64 `json:"events"`
+
+	Temperature MetricAggregate `json:"temperature"`
+	Humidity    MetricAggregate `json:"humidity"`
+	Pressure    MetricAggregate `json:"pressure"`
+
+	EmittedAt time.Time `json:"emitted_at"`
+}
+
+type GlobalAggregate struct {
+	SchemaVersion int    `json:"schema_version"`
+	AggregateID   string `json:"aggregate_id"`
+
+	WindowStart time.Time `json:"window_start"`
+	WindowEnd   time.Time `json:"window_end"`
+
+	ExpectedEdges     uint64 `json:"expected_edges"`
+	ContributingEdges uint64 `json:"contributing_edges"`
 
 	Events uint64 `json:"events"`
 

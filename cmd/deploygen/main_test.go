@@ -29,6 +29,9 @@ func TestBuildComposeUsesEffectiveExperimentConfig(t *testing.T) {
 	if count := strings.Count(compose, "    image: continuum-cloud-worker:local\n"); count != 2 {
 		t.Fatalf("istanze Cloud Worker=%d, attese 2", count)
 	}
+	if count := strings.Count(compose, "    image: continuum-global-aggregator:local\n"); count != 1 {
+		t.Fatalf("istanze Global Aggregator=%d, attesa 1", count)
+	}
 
 	globalSimulatorEnvironment := []string{
 		"REPLAY_EPOCH: \"2025-01-01T00:00:00Z\"",
@@ -80,6 +83,19 @@ func TestBuildComposeUsesEffectiveExperimentConfig(t *testing.T) {
 			if !strings.Contains(worker, expected) {
 				t.Errorf("Cloud Worker %s senza %q", workerID, expected)
 			}
+		}
+	}
+
+	global := composeServiceBlock(t, compose, "global-aggregator")
+	for _, expected := range []string{
+		"KAFKA_INPUT_TOPIC: \"cloud-edge-aggregates\"",
+		"KAFKA_GROUP_ID: \"global-aggregator\"",
+		"GLOBAL_WINDOW_SIZE: \"15m0s\"",
+		"EXPECTED_EDGE_IDS: \"edge-0,edge-1,edge-2,edge-3,edge-4,edge-5,edge-6,edge-7,edge-8,edge-9,edge-10,edge-11,edge-12\"",
+		"restart: \"no\"",
+	} {
+		if !strings.Contains(global, expected) {
+			t.Errorf("Global Aggregator senza %q", expected)
 		}
 	}
 
@@ -152,6 +168,8 @@ cloud:
 		"EDGE_INGRESS_QUEUE_CAPACITY: \"222\"",
 		"WINDOW_SIZE: \"5m0s\"",
 		"CLOUD_WINDOW_SIZE: \"20m0s\"",
+		"GLOBAL_WINDOW_SIZE: \"20m0s\"",
+		"EXPECTED_EDGE_IDS: \"edge-0,edge-1,edge-2,edge-3,edge-4,edge-5,edge-6,edge-7,edge-8,edge-9,edge-10,edge-11,edge-12\"",
 	} {
 		if !strings.Contains(compose, expected) {
 			t.Errorf("Compose senza %q", expected)
@@ -162,6 +180,9 @@ cloud:
 	}
 	if count := strings.Count(compose, "    image: continuum-cloud-worker:local\n"); count != 2 {
 		t.Fatalf("Cloud Worker=%d, attesi 2", count)
+	}
+	if count := strings.Count(compose, "    image: continuum-global-aggregator:local\n"); count != 1 {
+		t.Fatalf("Global Aggregator=%d, atteso 1", count)
 	}
 
 	effectivePath := filepath.Join(artifactsRoot, "custom", "effective-config.yaml")

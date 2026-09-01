@@ -4,3 +4,4 @@
 dataset
 notebooks
 *.log
+*.pem

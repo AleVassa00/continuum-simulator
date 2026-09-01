@@ -454,6 +454,37 @@ func buildCompose(
 		)
 	}
 
+	expectedEdgeIDs := make([]string, len(edges))
+	for index, edge := range edges {
+		expectedEdgeIDs[index] = edge.EdgeID
+	}
+	fmt.Fprintf(
+		&builder,
+		`  global-aggregator:
+    image: continuum-global-aggregator:local
+    container_name: global-aggregator
+
+    environment:
+      KAFKA_BROKER: "kafka:29092"
+      KAFKA_INPUT_TOPIC: "cloud-edge-aggregates"
+      KAFKA_GROUP_ID: "global-aggregator"
+      GLOBAL_WINDOW_SIZE: "%s"
+      EXPECTED_EDGE_IDS: "%s"
+
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+    restart: "no"
+
+    networks:
+      - continuum-backbone
+
+`,
+		config.Cloud.WindowSize,
+		strings.Join(expectedEdgeIDs, ","),
+	)
+
 	// Zone Edge
 	for _, edge := range edges {
 		mqttService := "mqtt-" + edge.EdgeID

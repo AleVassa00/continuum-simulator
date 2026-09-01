@@ -13,12 +13,16 @@ func TestAggregateSchemaVersionsAfterDeduplicationRemoval(t *testing.T) {
 	if CloudEdgeAggregateSchemaVersion != 2 {
 		t.Fatalf("CloudEdgeAggregateSchemaVersion=%d, attesa 2", CloudEdgeAggregateSchemaVersion)
 	}
+	if GlobalAggregateSchemaVersion != 1 {
+		t.Fatalf("GlobalAggregateSchemaVersion=%d, attesa 1", GlobalAggregateSchemaVersion)
+	}
 }
 
 func TestAggregateWireSchemasKeepIDsAndOmitRemovedField(t *testing.T) {
 	for name, aggregate := range map[string]interface{}{
-		"edge":  EdgeAggregate{AggregateID: "edge-0:window"},
-		"cloud": CloudEdgeAggregate{AggregateID: "cloud:edge-0:window"},
+		"edge":   EdgeAggregate{AggregateID: "edge-0:window"},
+		"cloud":  CloudEdgeAggregate{AggregateID: "cloud:edge-0:window"},
+		"global": GlobalAggregate{AggregateID: "global:window"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			payload, err := json.Marshal(aggregate)

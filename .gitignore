@@ -34,3 +34,4 @@ dataset/output/*
 !dataset/output/replay_load_scenarios.csv
 !dataset/output/replay_shards_summary.csv
 continuum-key.pem
+docs/discussione-professoressa-architettura.md
