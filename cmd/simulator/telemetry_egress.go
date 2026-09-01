@@ -41,12 +41,10 @@ type TelemetryEgressStats struct {
 type TelemetryEgress struct {
 	mu sync.Mutex
 
-	queue    []queuedTelemetry
-	head     int
+	queue    chan queuedTelemetry
 	size     int
 	maxDepth int
 	closed   bool
-	wake     chan struct{}
 
 	publish   TelemetryPublisher
 	now       func() time.Time
@@ -75,8 +73,7 @@ func newTelemetryEgress(
 	}
 
 	egress := &TelemetryEgress{
-		queue:   make([]queuedTelemetry, capacity),
-		wake:    make(chan struct{}, 1),
+		queue:   make(chan queuedTelemetry, capacity),
 		publish: publish,
 		now:     now,
 		done:    make(chan struct{}),
@@ -96,20 +93,23 @@ func (
 	egress.mu.Lock()
 	defer egress.mu.Unlock()
 
-	if egress.closed || egress.size == len(egress.queue) {
+	if egress.closed || egress.size == cap(egress.queue) {
 		return false
 	}
 
-	tail := (egress.head + egress.size) % len(egress.queue)
-	egress.queue[tail] = queuedTelemetry{
+	telemetry := queuedTelemetry{
 		measurement: measurement,
 		sequence:    sequence,
 	}
-	egress.size++
-	egress.maxDepth = max(egress.maxDepth, egress.size)
-	egress.signal()
 
-	return true
+	select {
+	case egress.queue <- telemetry:
+		egress.size++
+		egress.maxDepth = max(egress.maxDepth, egress.size)
+		return true
+	default:
+		return false
+	}
 }
 
 func (
@@ -118,7 +118,7 @@ func (
 	egress.closeOnce.Do(func() {
 		egress.mu.Lock()
 		egress.closed = true
-		egress.signal()
+		close(egress.queue)
 		egress.mu.Unlock()
 	})
 	<-egress.done
@@ -131,42 +131,11 @@ func (egress *TelemetryEgress) Stats() TelemetryEgressStats {
 	defer egress.mu.Unlock()
 
 	return TelemetryEgressStats{
-		QueueCapacity:         len(egress.queue),
+		QueueCapacity:         cap(egress.queue),
 		CurrentQueueDepth:     egress.size,
 		MaxQueueDepthObserved: egress.maxDepth,
 		PublishAttempts:       egress.publishAttempts.Load(),
 		PublishErrors:         egress.publishErrors.Load(),
-	}
-}
-
-func (egress *TelemetryEgress) next() (queuedTelemetry, bool) {
-	for {
-		egress.mu.Lock()
-		if egress.size > 0 {
-			telemetry := egress.queue[egress.head]
-			egress.queue[egress.head] = queuedTelemetry{}
-			egress.head = (egress.head + 1) % len(egress.queue)
-			egress.size--
-			if egress.size == 0 {
-				egress.head = 0
-			}
-			egress.mu.Unlock()
-			return telemetry, true
-		}
-		if egress.closed {
-			egress.mu.Unlock()
-			return queuedTelemetry{}, false
-		}
-		egress.mu.Unlock()
-
-		<-egress.wake
-	}
-}
-
-func (egress *TelemetryEgress) signal() {
-	select {
-	case egress.wake <- struct{}{}:
-	default:
 	}
 }
 
@@ -175,11 +144,10 @@ func (
 ) run() {
 	defer close(egress.done)
 
-	for {
-		telemetry, ok := egress.next()
-		if !ok {
-			return
-		}
+	for telemetry := range egress.queue {
+		egress.mu.Lock()
+		egress.size--
+		egress.mu.Unlock()
 
 		egress.publishAttempts.Add(1)
 

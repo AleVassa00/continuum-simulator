@@ -292,6 +292,27 @@ func TestReplayStatsClampNegativeSchedulingLag(t *testing.T) {
 	}
 }
 
+func TestNewTelemetryEgressRejectsNonPositiveCapacity(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		capacity int
+	}{
+		{name: "zero", capacity: 0},
+		{name: "negative", capacity: -1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := newTelemetryEgress(
+				test.capacity,
+				func(string, model.SensorEvent) error { return nil },
+				time.Now,
+			)
+			if err == nil || !strings.Contains(err.Error(), "TELEMETRY_QUEUE_CAPACITY") {
+				t.Fatalf("errore inatteso: %v", err)
+			}
+		})
+	}
+}
+
 func TestTelemetryEgressDropsWithoutBlockingWhenQueueIsFull(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -316,8 +337,19 @@ func TestTelemetryEgressDropsWithoutBlockingWhenQueueIsFull(t *testing.T) {
 	if !egress.TryEnqueue(testMeasurement("1", 1), 2) {
 		t.Fatal("seconda telemetry non accettata nella coda libera")
 	}
-	if egress.TryEnqueue(testMeasurement("1", 2), 3) {
-		t.Fatal("telemetry accettata nonostante la coda piena")
+
+	enqueueResult := make(chan bool, 1)
+	go func() {
+		enqueueResult <- egress.TryEnqueue(testMeasurement("1", 2), 3)
+	}()
+	select {
+	case accepted := <-enqueueResult:
+		if accepted {
+			t.Fatal("telemetry accettata nonostante la coda piena")
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("TryEnqueue bloccata sulla coda piena")
 	}
 
 	close(release)
@@ -383,6 +415,75 @@ func TestTelemetryEgressTracksCurrentAndMaximumQueueDepth(t *testing.T) {
 		final.MaxQueueDepthObserved != 2 ||
 		final.PublishAttempts != 3 {
 		t.Fatalf("stats finali=%#v", final)
+	}
+}
+
+func TestTelemetryEgressDrainsAndTracksPublishErrors(t *testing.T) {
+	published := make([]model.SensorEvent, 0, 2)
+	egress, err := newTelemetryEgress(
+		2,
+		func(_ string, event model.SensorEvent) error {
+			published = append(published, event)
+			if event.Sequence == 2 {
+				return errors.New("publish fallito")
+			}
+			return nil
+		},
+		func() time.Time { return testPublishTime },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !egress.TryEnqueue(testMeasurement("1", 0), 1) ||
+		!egress.TryEnqueue(testMeasurement("1", 1), 2) {
+		t.Fatal("telemetry non accettata con spazio disponibile")
+	}
+
+	stats := egress.CloseAndWait()
+	if len(published) != 2 ||
+		published[0].Sequence != 1 ||
+		published[1].Sequence != 2 ||
+		stats.CurrentQueueDepth != 0 ||
+		stats.PublishAttempts != 2 ||
+		stats.PublishErrors != 1 {
+		t.Fatalf("eventi=%#v stats=%#v", published, stats)
+	}
+}
+
+func TestTelemetryEgressConcurrentCloseIsSafeAndRejectsNewEvents(t *testing.T) {
+	egress, err := newTelemetryEgress(
+		1,
+		func(string, model.SensorEvent) error { return nil },
+		time.Now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !egress.TryEnqueue(testMeasurement("1", 0), 1) {
+		t.Fatal("telemetry non accettata con spazio disponibile")
+	}
+
+	results := make(chan TelemetryEgressStats, 2)
+	for range 2 {
+		go func() {
+			results <- egress.CloseAndWait()
+		}()
+	}
+
+	for range 2 {
+		select {
+		case stats := <-results:
+			if stats.CurrentQueueDepth != 0 || stats.PublishAttempts != 1 {
+				t.Fatalf("stats dopo close=%#v", stats)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("CloseAndWait concorrente non terminata")
+		}
+	}
+
+	if egress.TryEnqueue(testMeasurement("1", 1), 2) {
+		t.Fatal("telemetry accettata dopo CloseAndWait")
 	}
 }
 
@@ -710,29 +811,43 @@ func TestTelemetryEgressUsesOneSenderGoroutine(t *testing.T) {
 }
 
 func TestSimulatorCreatesExactlyOneMQTTClientAndHasNoPendingQueue(t *testing.T) {
-	file := parseGoSource(t, "main.go")
+	productiveFiles := []string{
+		"main.go",
+		"config.go",
+		"replay.go",
+		"mqtt.go",
+		"telemetry_egress.go",
+	}
+
 	newClientCalls := 0
-	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
+	var source strings.Builder
+	for _, path := range productiveFiles {
+		file := parseGoSource(t, path)
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if ok && selector.Sel.Name == "NewClient" {
+				newClientCalls++
+			}
 			return true
+		})
+
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
 		}
-		selector, ok := call.Fun.(*ast.SelectorExpr)
-		if ok && selector.Sel.Name == "NewClient" {
-			newClientCalls++
-		}
-		return true
-	})
+		source.Write(contents)
+	}
+
 	if newClientCalls != 1 {
 		t.Fatalf("chiamate mqtt.NewClient=%d, attesa 1", newClientCalls)
 	}
 
-	source, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(source), "Pending"+"Publishes") ||
-		strings.Contains(string(source), "MQTT_MAX"+"_IN_FLIGHT") {
+	if strings.Contains(source.String(), "Pending"+"Publishes") ||
+		strings.Contains(source.String(), "MQTT_MAX"+"_IN_FLIGHT") {
 		t.Fatal("rimasta logica QoS1 in-flight per raw telemetry")
 	}
 }

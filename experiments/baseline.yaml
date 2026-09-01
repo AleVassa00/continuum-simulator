@@ -3,7 +3,7 @@ experiment:
 
 workload:
   acceleration_factor: 10000
-  max_events: 0
+  max_events: 0 #se = 0 processo tutto il dataset
   start_lead_time: 90s
 
 simulator:
