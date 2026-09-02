@@ -44,48 +44,27 @@ func runSimulator() error {
 	reader := csv.NewReader(file)
 	reader.Comma = ';'
 
-	stats, replayErr := replaySite(
-		reader,
-		config,
-		ReplayRuntime{
-			Now:   time.Now,
-			Sleep: time.Sleep,
-			PublishTelemetry: func(
-				topic string,
-				event model.SensorEvent,
-			) error {
-				return publishSensorEvent(
-					client.Publish,
-					topic,
-					event,
-				)
-			},
-			PublishEndOfReplay: func(
-				topic string,
-				record model.EndOfReplay,
-			) (PublishResult, error) {
-				return publishEndOfReplay(
-					client.Publish,
-					topic,
-					record,
-					time.Now,
-				)
-			},
-		},
-	)
+	publishTelemetry := func(topic string, event model.SensorEvent) error {
+		return publishSensorEvent(client.Publish, topic, event)
+	}
 
-	printReplaySummary(
-		config.SiteID,
-		stats,
-		replayErr,
-	)
+	publishEndOfReplayRecord := func(topic string, record model.EndOfReplay) (PublishResult, error) {
+		return publishEndOfReplay(client.Publish, topic, record, time.Now)
+	}
+
+	replayRuntime := ReplayRuntime{
+		Now:                time.Now,
+		Sleep:              time.Sleep,
+		PublishTelemetry:   publishTelemetry,
+		PublishEndOfReplay: publishEndOfReplayRecord,
+	}
+
+	stats, replayErr := replaySite(reader, config, replayRuntime)
+
+	printReplaySummary(config.SiteID, stats, replayErr)
 
 	if replayErr != nil {
-		return fmt.Errorf(
-			"replay %s fallito: %w",
-			config.SiteID,
-			replayErr,
-		)
+		return fmt.Errorf("replay %s fallito: %w", config.SiteID, replayErr)
 	}
 
 	return nil
