@@ -309,18 +309,28 @@ func main() {
 		)
 	}
 
-	processorErr := waitForShutdown(processorDone)
+	shutdownContext, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	processorErr, processorFinished := waitForShutdown(
+		shutdownContext,
+		processorDone,
+	)
 
 	fmt.Printf(
 		"\nArresto %s...\n",
 		edgeID,
 	)
 
-	subscriptions.Invalidate()
 	readiness.MarkNotReady()
+	subscriptions.Invalidate()
 	client.Disconnect(250)
 	ingress.Close()
-	if processorErr == nil {
+	if !processorFinished {
 		processorErr = <-processorDone
 	}
 
@@ -1268,24 +1278,14 @@ func buildEdgeAggregate(
 }
 
 func waitForShutdown(
+	ctx context.Context,
 	processorDone <-chan error,
-) error {
-	signals := make(
-		chan os.Signal,
-		1,
-	)
-
-	signal.Notify(
-		signals,
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-
+) (processorErr error, processorFinished bool) {
 	select {
-	case <-signals:
-		return nil
+	case <-ctx.Done():
+		return nil, false
 	case err := <-processorDone:
-		return err
+		return err, true
 	}
 }
 

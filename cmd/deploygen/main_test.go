@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,39 @@ import (
 
 	"continuum/internal/experiment"
 )
+
+func TestBuildComposeMatchesPreRefactorOutput(t *testing.T) {
+	compose := buildCompose(testEdges(2), testEffectiveConfig(2))
+	checksum := fmt.Sprintf("%x", sha256.Sum256([]byte(compose)))
+	const expectedChecksum = "520efbc0ccdeee2e01ec06614775841a6733f456db0cd2467b1716ed9a3ca30f"
+
+	if checksum != expectedChecksum {
+		t.Fatalf(
+			"Compose diverso dalla baseline byte-for-byte: checksum=%s",
+			checksum,
+		)
+	}
+
+	for _, expected := range []string{
+		"  kafka:\n",
+		"  kafka-init:\n",
+		"  cloud-worker-0:\n",
+		"  global-aggregator:\n",
+		"  mqtt-edge-0:\n",
+		"  edge-0:\n",
+		"  simulator-edge-0:\n",
+		"networks:\n",
+		"volumes:\n  kafka-data:\n",
+		"REPLAY_START_AT: \"2026-08-31T12:00:10Z\"",
+		"ACCELERATION_FACTOR: \"2500\"",
+		"TELEMETRY_QUEUE_CAPACITY: \"321\"",
+		"EDGE_INGRESS_QUEUE_CAPACITY: \"654\"",
+	} {
+		if !strings.Contains(compose, expected) {
+			t.Errorf("Compose senza %q", expected)
+		}
+	}
+}
 
 func TestBuildComposeUsesEffectiveExperimentConfig(t *testing.T) {
 	edges := testEdges(13)

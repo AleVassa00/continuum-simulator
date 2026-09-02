@@ -591,6 +591,62 @@ func TestRetrySubscriptionStopsWhenConnectionGenerationIsInvalidated(t *testing.
 	}
 }
 
+func TestWaitForShutdownReturnsProcessorCompletion(t *testing.T) {
+	tests := []struct {
+		name         string
+		processorErr error
+	}{
+		{name: "success"},
+		{name: "error", processorErr: errors.New("processor fallito")},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			processorDone := make(chan error, 1)
+			processorDone <- test.processorErr
+
+			processorErr, processorFinished := waitForShutdown(ctx, processorDone)
+			if !processorFinished || !errors.Is(processorErr, test.processorErr) {
+				t.Fatalf(
+					"processorErr=%v processorFinished=%t",
+					processorErr,
+					processorFinished,
+				)
+			}
+
+			select {
+			case <-processorDone:
+				t.Fatal("risultato del processor non consumato una sola volta")
+			default:
+			}
+		})
+	}
+}
+
+func TestWaitForShutdownReturnsWhileProcessorIsStillRunning(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	processorDone := make(chan error, 1)
+	cancel()
+
+	processorErr, processorFinished := waitForShutdown(ctx, processorDone)
+	if processorErr != nil || processorFinished {
+		t.Fatalf(
+			"processorErr=%v processorFinished=%t",
+			processorErr,
+			processorFinished,
+		)
+	}
+
+	want := errors.New("processor terminato durante cleanup")
+	processorDone <- want
+	if got := <-processorDone; !errors.Is(got, want) {
+		t.Fatalf("risultato processor inatteso: %v", got)
+	}
+}
+
 func TestReadinessStateTransitions(t *testing.T) {
 	state := &ReadinessState{}
 
