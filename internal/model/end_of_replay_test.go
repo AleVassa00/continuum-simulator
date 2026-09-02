@@ -8,9 +8,9 @@ import (
 
 func TestValidateEndOfReplay(t *testing.T) {
 	valid := EndOfReplay{
-		EdgeID:         "edge-3",
-		LastObservedAt: time.Date(2025, time.January, 1, 10, 0, 0, 0, time.UTC),
-		EmittedAt:      time.Date(2026, time.August, 28, 20, 0, 0, 0, time.UTC),
+		EdgeID:        "edge-3",
+		LastEventTime: time.Date(2025, time.January, 1, 10, 0, 0, 0, time.UTC),
+		EmittedAt:     time.Date(2026, time.August, 28, 20, 0, 0, 0, time.UTC),
 	}
 
 	if err := ValidateEndOfReplay(valid); err != nil {
@@ -23,7 +23,7 @@ func TestValidateEndOfReplay(t *testing.T) {
 		field  string
 	}{
 		{"edge", func(record *EndOfReplay) { record.EdgeID = " " }, "edge_id"},
-		{"last observed", func(record *EndOfReplay) { record.LastObservedAt = time.Time{} }, "last_observed_at"},
+		{"last event time", func(record *EndOfReplay) { record.LastEventTime = time.Time{} }, "last_event_time"},
 		{"emitted", func(record *EndOfReplay) { record.EmittedAt = time.Time{} }, "emitted_at"},
 	}
 

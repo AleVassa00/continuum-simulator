@@ -260,7 +260,7 @@ func TestEdgeProcessorProcessesAcceptedTelemetryBeforeEndOfReplay(t *testing.T) 
 	if err := json.Unmarshal(messages[1].Value, &forwarded); err != nil {
 		t.Fatal(err)
 	}
-	if !forwarded.LastObservedAt.Equal(edgeTestTime(10, 3)) ||
+	if !forwarded.LastEventTime.Equal(edgeTestTime(10, 3)) ||
 		!forwarded.EmittedAt.Equal(edgeTestTime(12, 0)) {
 		t.Fatalf("EndOfReplay Kafka inatteso: %#v", forwarded)
 	}
@@ -314,7 +314,7 @@ func TestEdgeProcessorEndOfReplayWithoutTelemetryUsesReceptionTime(t *testing.T)
 		t.Fatal(err)
 	}
 	if forwarded.EdgeID != "edge-0" ||
-		!forwarded.LastObservedAt.Equal(receivedAt) ||
+		!forwarded.LastEventTime.Equal(receivedAt) ||
 		!forwarded.EmittedAt.Equal(receivedAt) {
 		t.Fatalf("EndOfReplay Kafka inatteso: %#v", forwarded)
 	}
@@ -432,7 +432,7 @@ var _ mqtt.Message = testMQTTMessage{}
 func sensorEventPayload(
 	t *testing.T,
 	eventID string,
-	observedAt time.Time,
+	eventTime time.Time,
 ) []byte {
 	t.Helper()
 	payload, err := json.Marshal(model.SensorEvent{
@@ -442,7 +442,7 @@ func sensorEventPayload(
 		SensorType:    "BME280",
 		LocationID:    "location-1",
 		Sequence:      1,
-		ObservedAt:    observedAt,
+		EventTime:     eventTime,
 		EmittedAt:     edgeTestTime(11, 0),
 		Measurements: map[string]string{
 			"temperature": "20",

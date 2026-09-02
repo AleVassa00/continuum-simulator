@@ -67,7 +67,7 @@ func TestReplayPacerPreservesFactorOneAndSupportsFractionalFactor(t *testing.T) 
 	}
 }
 
-func TestReplayPacerRejectsObservedAtBeforeEpoch(t *testing.T) {
+func TestReplayPacerRejectsEventTimeBeforeEpoch(t *testing.T) {
 	pacer := ReplayPacer{
 		Epoch:              mustTime("2025-01-01T00:00:00Z"),
 		StartAt:            mustTime("2026-08-28T20:00:00Z"),
@@ -86,14 +86,14 @@ func TestReplayPacerDoesNotUseFirstShardEventAsEpoch(t *testing.T) {
 		StartAt:            mustTime("2026-08-28T20:00:00Z"),
 		AccelerationFactor: 100,
 	}
-	observedAt := pacer.Epoch.Add(10 * time.Minute)
+	eventTime := pacer.Epoch.Add(10 * time.Minute)
 
-	first, err := pacer.ScheduledTime(observedAt)
+	first, err := pacer.ScheduledTime(eventTime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _ = pacer.ScheduledTime(pacer.Epoch.Add(2 * time.Hour))
-	second, err := pacer.ScheduledTime(observedAt)
+	second, err := pacer.ScheduledTime(eventTime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestMaxEventsTruncatesWithoutEndOfReplay(t *testing.T) {
 	}
 }
 
-func TestReplayRejectsDecreasingTimestamp(t *testing.T) {
+func TestReplayRejectsDecreasingEventTime(t *testing.T) {
 	config := validSimulatorConfig()
 	clock := newFakeClock(config.ReplayStartAt)
 
@@ -357,14 +357,13 @@ func TestTelemetryEgressDropsWithoutBlockingWhenQueueIsFull(t *testing.T) {
 	stats := egress.CloseAndWait()
 	if stats.QueueCapacity != 1 ||
 		stats.CurrentQueueDepth != 0 ||
-		stats.MaxQueueDepthObserved != 1 ||
 		stats.PublishAttempts != 2 ||
 		stats.PublishErrors != 0 {
 		t.Fatalf("egress stats=%#v", stats)
 	}
 }
 
-func TestTelemetryEgressTracksCurrentAndMaximumQueueDepth(t *testing.T) {
+func TestTelemetryEgressTracksCurrentQueueDepth(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
@@ -383,8 +382,7 @@ func TestTelemetryEgressTracksCurrentAndMaximumQueueDepth(t *testing.T) {
 
 	initial := egress.Stats()
 	if initial.QueueCapacity != 2 ||
-		initial.CurrentQueueDepth != 0 ||
-		initial.MaxQueueDepthObserved != 0 {
+		initial.CurrentQueueDepth != 0 {
 		t.Fatalf("stats iniziali=%#v", initial)
 	}
 
@@ -404,16 +402,13 @@ func TestTelemetryEgressTracksCurrentAndMaximumQueueDepth(t *testing.T) {
 	}
 
 	full := egress.Stats()
-	if full.CurrentQueueDepth != 2 ||
-		full.MaxQueueDepthObserved != 2 ||
-		full.MaxQueueDepthObserved > full.QueueCapacity {
+	if full.CurrentQueueDepth != 2 {
 		t.Fatalf("stats queue piena=%#v", full)
 	}
 
 	close(release)
 	final := egress.CloseAndWait()
 	if final.CurrentQueueDepth != 0 ||
-		final.MaxQueueDepthObserved != 2 ||
 		final.PublishAttempts != 3 {
 		t.Fatalf("stats finali=%#v", final)
 	}
@@ -452,7 +447,7 @@ func TestTelemetryEgressDrainsAndTracksPublishErrors(t *testing.T) {
 	}
 }
 
-func TestTelemetryEgressConcurrentCloseIsSafeAndRejectsNewEvents(t *testing.T) {
+func TestTelemetryEgressConcurrentCloseIsSafe(t *testing.T) {
 	egress, err := newTelemetryEgress(
 		1,
 		func(string, model.SensorEvent) error { return nil },
@@ -482,13 +477,9 @@ func TestTelemetryEgressConcurrentCloseIsSafeAndRejectsNewEvents(t *testing.T) {
 			t.Fatal("CloseAndWait concorrente non terminata")
 		}
 	}
-
-	if egress.TryEnqueue(testMeasurement("1", 1), 2) {
-		t.Fatal("telemetry accettata dopo CloseAndWait")
-	}
 }
 
-func TestReplayCountsOffersAndKeepsLastObservedAtWhenLastEventDrops(t *testing.T) {
+func TestReplayCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *testing.T) {
 	config := validSimulatorConfig()
 	clock := newFakeClock(config.ReplayStartAt)
 	queue := &scriptedTelemetryQueue{
@@ -533,7 +524,7 @@ func TestReplayCountsOffersAndKeepsLastObservedAtWhenLastEventDrops(t *testing.T
 		stats.TelemetryEnqueued != 1 ||
 		stats.TelemetryLocallyDropped != 2 ||
 		stats.MQTTPublishAttempts != 1 ||
-		!stats.LastObservedAt.Equal(last) ||
+		!stats.LastEventTime.Equal(last) ||
 		endTopic != mqtttopic.ReplayEnd(config.SiteID) ||
 		queue.closeCalls != 1 {
 		t.Fatalf("stats=%#v eos_topic=%q queue=%#v", stats, endTopic, queue)
@@ -662,7 +653,7 @@ func TestPublishSensorEventUsesQoSZeroWithoutWaiting(t *testing.T) {
 		SchemaVersion: 1,
 		EventID:       "101-1",
 		SensorID:      "101",
-		ObservedAt:    mustTime("2025-01-01T00:00:00Z"),
+		EventTime:     mustTime("2025-01-01T00:00:00Z"),
 		EmittedAt:     testPublishTime,
 	}
 
@@ -1053,7 +1044,7 @@ func testMeasurement(sensorID string, second int) SensorMeasurement {
 		SensorID:    sensorID,
 		SensorType:  "BME280",
 		LocationID:  "1",
-		Timestamp:   mustTime("2025-01-01T00:00:00Z").Add(time.Duration(second) * time.Second),
+		EventTime:   mustTime("2025-01-01T00:00:00Z").Add(time.Duration(second) * time.Second),
 		Pressure:    "100000",
 		Temperature: "20",
 		Humidity:    "50",

@@ -316,9 +316,9 @@ func commandTestMetric() model.MetricAggregate {
 
 func globalTestEOS(edgeID string) model.EndOfReplay {
 	return model.EndOfReplay{
-		EdgeID:         edgeID,
-		LastObservedAt: commandTestTime(10, 14),
-		EmittedAt:      commandTestTime(10, 17),
+		EdgeID:        edgeID,
+		LastEventTime: commandTestTime(10, 14),
+		EmittedAt:     commandTestTime(10, 17),
 	}
 }
 

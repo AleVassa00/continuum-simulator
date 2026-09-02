@@ -10,10 +10,7 @@ import (
 	"continuum/internal/mqtttopic"
 )
 
-type TelemetryPublisher func(
-	topic string,
-	event model.SensorEvent,
-) error
+type TelemetryPublisher func(topic string, event model.SensorEvent) error
 
 type TelemetryQueue interface {
 	TryEnqueue(SensorMeasurement, uint64) bool
@@ -32,20 +29,16 @@ type queuedTelemetry struct {
 }
 
 type TelemetryEgressStats struct {
-	QueueCapacity         int
-	CurrentQueueDepth     int
-	MaxQueueDepthObserved int
-	PublishAttempts       uint64
-	PublishErrors         uint64
+	QueueCapacity     int
+	CurrentQueueDepth int
+	PublishAttempts   uint64
+	PublishErrors     uint64
 }
 
+// TelemetryEgress ha un solo producer. CloseAndWait deve essere chiamata
+// soltanto dopo l'ultima TryEnqueue; dopo la chiusura non sono ammesse enqueue.
 type TelemetryEgress struct {
-	mu sync.Mutex
-
-	queue    chan queuedTelemetry
-	size     int
-	maxDepth int
-	closed   bool
+	queue chan queuedTelemetry
 
 	publish   TelemetryPublisher
 	now       func() time.Time
@@ -56,15 +49,9 @@ type TelemetryEgress struct {
 	publishErrors   atomic.Uint64
 }
 
-func newTelemetryEgress(
-	capacity int,
-	publish TelemetryPublisher,
-	now func() time.Time,
-) (*TelemetryEgress, error) {
+func newTelemetryEgress(capacity int, publish TelemetryPublisher, now func() time.Time) (*TelemetryEgress, error) {
 	if capacity <= 0 {
-		return nil, fmt.Errorf(
-			"TELEMETRY_QUEUE_CAPACITY deve essere maggiore di zero",
-		)
+		return nil, fmt.Errorf("TELEMETRY_QUEUE_CAPACITY deve essere maggiore di zero")
 	}
 	if publish == nil {
 		return nil, fmt.Errorf("publisher MQTT telemetry non configurato")
@@ -91,13 +78,6 @@ func (
 	measurement SensorMeasurement,
 	sequence uint64,
 ) bool {
-	egress.mu.Lock()
-	defer egress.mu.Unlock()
-
-	if egress.closed || egress.size == cap(egress.queue) {
-		return false
-	}
-
 	telemetry := queuedTelemetry{
 		measurement: measurement,
 		sequence:    sequence,
@@ -105,8 +85,6 @@ func (
 
 	select {
 	case egress.queue <- telemetry:
-		egress.size++
-		egress.maxDepth = max(egress.maxDepth, egress.size)
 		return true
 	default:
 		return false
@@ -117,10 +95,7 @@ func (
 	egress *TelemetryEgress,
 ) CloseAndWait() TelemetryEgressStats {
 	egress.closeOnce.Do(func() {
-		egress.mu.Lock()
-		egress.closed = true
 		close(egress.queue)
-		egress.mu.Unlock()
 	})
 	<-egress.done
 
@@ -128,39 +103,22 @@ func (
 }
 
 func (egress *TelemetryEgress) Stats() TelemetryEgressStats {
-	egress.mu.Lock()
-	defer egress.mu.Unlock()
-
 	return TelemetryEgressStats{
-		QueueCapacity:         cap(egress.queue),
-		CurrentQueueDepth:     egress.size,
-		MaxQueueDepthObserved: egress.maxDepth,
-		PublishAttempts:       egress.publishAttempts.Load(),
-		PublishErrors:         egress.publishErrors.Load(),
+		QueueCapacity:     cap(egress.queue),
+		CurrentQueueDepth: len(egress.queue),
+		PublishAttempts:   egress.publishAttempts.Load(),
+		PublishErrors:     egress.publishErrors.Load(),
 	}
 }
 
-func (
-	egress *TelemetryEgress,
-) run() {
+func (egress *TelemetryEgress) run() {
 	defer close(egress.done)
 
 	for telemetry := range egress.queue {
-		egress.mu.Lock()
-		egress.size--
-		egress.mu.Unlock()
-
 		egress.publishAttempts.Add(1)
 
-		event := buildSensorEvent(
-			telemetry.measurement,
-			telemetry.sequence,
-			egress.now().UTC(),
-		)
-		if err := egress.publish(
-			mqtttopic.Telemetry(telemetry.measurement.SensorID),
-			event,
-		); err != nil {
+		event := buildSensorEvent(telemetry.measurement, telemetry.sequence, egress.now().UTC())
+		if err := egress.publish(mqtttopic.Telemetry(telemetry.measurement.SensorID), event); err != nil {
 			egress.publishErrors.Add(1)
 		}
 	}

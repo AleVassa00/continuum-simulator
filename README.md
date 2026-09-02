@@ -32,7 +32,7 @@ Lo stato dei requisiti della traccia e mantenuto in
 - Ogni **Simulator** legge soltanto il proprio `REPLAY_FILE` e pubblica su un
   unico `MQTT_ENDPOINT`. `SITE_ID` identifica l'istanza, ma non viene usato per
   filtrare il dataset o derivare l'indirizzo del broker. Il pacing deriva da
-  `ObservedAt` rispetto a una `REPLAY_EPOCH` globale; tutti i Simulator ricevono
+  `EventTime` rispetto a una `REPLAY_EPOCH` globale; tutti i Simulator ricevono
   lo stesso `REPLAY_START_AT` e comprimono la timeline tramite
   `ACCELERATION_FACTOR`.
 - Ogni **Edge** valida le misure e calcola media, somma, minimo, massimo e conteggi
@@ -133,7 +133,7 @@ limite globale coordinato.
 Ogni Simulator applica indipendentemente la stessa formula:
 
 ```text
-eventOffset       = ObservedAt - REPLAY_EPOCH
+eventOffset       = EventTime - REPLAY_EPOCH
 acceleratedOffset = eventOffset / ACCELERATION_FACTOR
 scheduledTime     = REPLAY_START_AT + acceleratedOffset
 ```
@@ -151,7 +151,7 @@ particolare, nessun Simulator usa il primo evento del proprio shard come epoch.
 
 Il loop rimane sequenziale e conserva l'ordine del CSV. Non vengono introdotti
 holdback, watermark, allowed lateness o eventi out-of-order artificiali. Dopo la
-deadline, l'evento viene costruito con `ObservedAt` originale ed `EmittedAt`
+deadline, l'evento viene costruito con `EventTime` originale ed `EmittedAt`
 reale, quindi pubblicato QoS 1 senza attendere immediatamente il relativo PUBACK.
 
 `MQTT_MAX_IN_FLIGHT` limita i token pendenti e applica backpressure FIFO. A fine

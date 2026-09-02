@@ -361,17 +361,17 @@ func TestWindowAggregatorFlushPropagatesPublishFailure(t *testing.T) {
 
 func TestEndOfReplayFlushesFinalWindowBeforeKafkaControl(t *testing.T) {
 	aggregator, messages := newTestEdgeAggregator()
-	lastObservedAt := edgeTestTime(10, 3)
+	lastEventTime := edgeTestTime(10, 3)
 	if err := aggregator.Add(
 		"event-1",
-		lastObservedAt,
+		lastEventTime,
 		validMeasurement(20, 50, 100000),
 	); err != nil {
 		t.Fatal(err)
 	}
 
 	record := validEndOfReplay("edge-0")
-	record.LastObservedAt = lastObservedAt
+	record.LastEventTime = lastEventTime
 	edgeEmittedAt := edgeTestTime(12, 5)
 	if err := aggregator.EndReplay(record, edgeEmittedAt); err != nil {
 		t.Fatal(err)
@@ -406,7 +406,7 @@ func TestEndOfReplayFlushesFinalWindowBeforeKafkaControl(t *testing.T) {
 	if err := json.Unmarshal((*messages)[1].Value, &forwarded); err != nil {
 		t.Fatal(err)
 	}
-	if !forwarded.LastObservedAt.Equal(lastObservedAt) ||
+	if !forwarded.LastEventTime.Equal(lastEventTime) ||
 		!forwarded.EmittedAt.Equal(edgeEmittedAt) {
 		t.Fatalf("EndOfReplay inoltrato inatteso: %#v", forwarded)
 	}
@@ -740,9 +740,9 @@ func validEndOfReplay(
 	edgeID string,
 ) model.EndOfReplay {
 	return model.EndOfReplay{
-		EdgeID:         edgeID,
-		LastObservedAt: edgeTestTime(10, 3),
-		EmittedAt:      edgeTestTime(11, 0),
+		EdgeID:        edgeID,
+		LastEventTime: edgeTestTime(10, 3),
+		EmittedAt:     edgeTestTime(11, 0),
 	}
 }
 

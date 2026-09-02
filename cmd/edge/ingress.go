@@ -80,12 +80,12 @@ type EdgeIngressQueueStats struct {
 }
 
 type EdgeProcessor struct {
-	edgeID         string
-	ingress        *EdgeIngressQueue
-	aggregator     *WindowAggregator
-	stats          *EdgeStats
-	now            func() time.Time
-	lastObservedAt time.Time
+	edgeID        string
+	ingress       *EdgeIngressQueue
+	aggregator    *WindowAggregator
+	stats         *EdgeStats
+	now           func() time.Time
+	lastEventTime time.Time
 }
 
 func newEdgeIngressQueue(capacity int) (*EdgeIngressQueue, error) {
@@ -262,16 +262,16 @@ func (
 		return processor.processTelemetry(record.Payload)
 	case EdgeIngressEndOfReplay:
 		emittedAt := processor.now().UTC()
-		lastObservedAt := processor.lastObservedAt
-		if lastObservedAt.IsZero() {
-			lastObservedAt = emittedAt
+		lastEventTime := processor.lastEventTime
+		if lastEventTime.IsZero() {
+			lastEventTime = emittedAt
 		}
 
 		if err := processor.aggregator.EndReplay(
 			model.EndOfReplay{
-				EdgeID:         processor.edgeID,
-				LastObservedAt: lastObservedAt,
-				EmittedAt:      emittedAt,
+				EdgeID:        processor.edgeID,
+				LastEventTime: lastEventTime,
+				EmittedAt:     emittedAt,
 			},
 			emittedAt,
 		); err != nil {
@@ -299,7 +299,7 @@ func (
 
 	err := processor.aggregator.Add(
 		event.EventID,
-		event.ObservedAt,
+		event.EventTime,
 		parseMeasurements(event),
 	)
 	if errors.Is(err, errEdgeWindowClosed) {
@@ -314,7 +314,7 @@ func (
 		return err
 	}
 
-	processor.lastObservedAt = event.ObservedAt
+	processor.lastEventTime = event.EventTime
 	processor.stats.processed.Add(1)
 	return nil
 }

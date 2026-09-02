@@ -7,9 +7,9 @@ import (
 )
 
 type EndOfReplay struct {
-	EdgeID         string    `json:"edge_id"`
-	LastObservedAt time.Time `json:"last_observed_at"`
-	EmittedAt      time.Time `json:"emitted_at"`
+	EdgeID        string    `json:"edge_id"`
+	LastEventTime time.Time `json:"last_event_time"`
+	EmittedAt     time.Time `json:"emitted_at"`
 }
 
 func ValidateEndOfReplay(record EndOfReplay) error {
@@ -17,8 +17,8 @@ func ValidateEndOfReplay(record EndOfReplay) error {
 		return fmt.Errorf("edge_id EndOfReplay mancante")
 	}
 
-	if record.LastObservedAt.IsZero() {
-		return fmt.Errorf("last_observed_at EndOfReplay mancante")
+	if record.LastEventTime.IsZero() {
+		return fmt.Errorf("last_event_time EndOfReplay mancante")
 	}
 
 	if record.EmittedAt.IsZero() {

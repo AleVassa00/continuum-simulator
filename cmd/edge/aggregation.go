@@ -102,9 +102,9 @@ func validateSensorEvent(
 		)
 	}
 
-	if event.ObservedAt.IsZero() {
+	if event.EventTime.IsZero() {
 		return fmt.Errorf(
-			"observed_at mancante",
+			"event_time mancante",
 		)
 	}
 
@@ -217,7 +217,7 @@ func (
 	aggregator *WindowAggregator,
 ) Add(
 	eventID string,
-	observedAt time.Time,
+	eventTime time.Time,
 	measurement EdgeMeasurement,
 ) error {
 	aggregator.mu.Lock()
@@ -232,7 +232,7 @@ func (
 		)
 	}
 
-	windowStart := observedAt.Truncate(
+	windowStart := eventTime.Truncate(
 		aggregator.windowSize,
 	)
 
@@ -251,10 +251,10 @@ func (
 		aggregator.current.Start,
 	) {
 		return fmt.Errorf(
-			"%w: event_id=%s observed_at=%s current_window=%s",
+			"%w: event_id=%s event_time=%s current_window=%s",
 			errEdgeWindowClosed,
 			eventID,
-			observedAt.Format(time.RFC3339),
+			eventTime.Format(time.RFC3339),
 			aggregator.current.Start.Format(time.RFC3339),
 		)
 	}

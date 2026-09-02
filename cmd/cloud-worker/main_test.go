@@ -152,11 +152,11 @@ func TestCloudEndOfReplayFlushesOnlyItsEdgeBeforeControlAndCommit(t *testing.T) 
 	}
 
 	forwarded := decodeCloudEndOfReplay(t, published[1])
-	if !forwarded.LastObservedAt.Equal(input.LastObservedAt) {
+	if !forwarded.LastEventTime.Equal(input.LastEventTime) {
 		t.Fatalf(
-			"LastObservedAt=%s, atteso %s",
-			forwarded.LastObservedAt,
-			input.LastObservedAt,
+			"LastEventTime=%s, atteso %s",
+			forwarded.LastEventTime,
+			input.LastEventTime,
 		)
 	}
 	if !forwarded.EmittedAt.Equal(cloudTestTime(12, 0)) {
@@ -420,9 +420,9 @@ func cloudTestEdgeAggregate(
 
 func cloudTestEndOfReplay(edgeID string) model.EndOfReplay {
 	return model.EndOfReplay{
-		EdgeID:         edgeID,
-		LastObservedAt: cloudTestTime(10, 14),
-		EmittedAt:      cloudTestTime(10, 15),
+		EdgeID:        edgeID,
+		LastEventTime: cloudTestTime(10, 14),
+		EmittedAt:     cloudTestTime(10, 15),
 	}
 }
 

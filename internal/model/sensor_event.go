@@ -9,7 +9,7 @@ type SensorEvent struct {
 	SensorType    string            `json:"sensor_type"`
 	LocationID    string            `json:"location_id"`
 	Sequence      uint64            `json:"sequence"`
-	ObservedAt    time.Time         `json:"observed_at"`
+	EventTime     time.Time         `json:"event_time"`
 	EmittedAt     time.Time         `json:"emitted_at"`
 	Measurements  map[string]string `json:"measurements"`
 }

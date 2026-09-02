@@ -22,7 +22,7 @@ type SensorMeasurement struct {
 
 	Latitude  float64
 	Longitude float64
-	Timestamp time.Time
+	EventTime time.Time
 
 	Pressure    string
 	Temperature string
@@ -44,22 +44,27 @@ type ReplayRuntime struct {
 }
 
 type ReplayStats struct {
-	OfferedEvents           int
-	TelemetryEnqueued       int
-	TelemetryLocallyDropped int
-	QueueCapacity           int
-	MaxQueueDepthObserved   int
-	MQTTPublishAttempts     uint64
-	MQTTPublishErrors       uint64
-	SchedulingLagTotal      time.Duration
-	SchedulingLagMax        time.Duration
-	FirstOfferedAt          time.Time
-	LastOfferedAt           time.Time
-	CompletedAt             time.Time
-	ReachedEOF              bool
-	LastObservedAt          time.Time
-	EOSSuccesses            int
-	EOSFailures             int
+	OfferedEvents           int // Numero totale di eventi offerti dal replay alla telemetry egress
+	TelemetryEnqueued       int // Numero di eventi accettati nella coda locale di telemetria
+	TelemetryLocallyDropped int // Numero di eventi scartati localmente perché non accettati dalla coda
+
+	QueueCapacity int // Capacità massima configurata della telemetry queue
+
+	MQTTPublishAttempts uint64 // Numero totale di tentativi di publish MQTT QoS0 effettuati dalla egress
+	MQTTPublishErrors   uint64 // Numero di errori rilevati durante i tentativi di publish MQTT QoS0
+
+	SchedulingLagTotal time.Duration // Somma dei ritardi tra scheduled time e momento effettivo di offerta degli eventi
+	SchedulingLagMax   time.Duration // Massimo scheduling lag osservato durante il replay
+
+	FirstOfferedAt time.Time // Istante reale in cui è stato offerto il primo evento.
+	LastOfferedAt  time.Time // Istante reale in cui è stato offerto l'ultimo evento.
+	CompletedAt    time.Time // Istante reale in cui il replay ha completato anche il drain della egress.
+
+	ReachedEOF    bool      // True se il replay ha raggiunto realmente la fine del file CSV.
+	LastEventTime time.Time // Event time dell'ultimo evento offerto dal replay.
+
+	EOSSuccesses int // Numero di EndOfReplay pubblicati con PUBACK ricevuto correttamente.
+	EOSFailures  int // Numero di fallimenti durante publish o attesa del PUBACK dell'EndOfReplay.
 }
 
 const replayStartLateTolerance = 1 * time.Second
@@ -67,7 +72,7 @@ const replayStartLateTolerance = 1 * time.Second
 func (
 pacer ReplayPacer,
 ) ScheduledTime(
-	observedAt time.Time,
+	eventTime time.Time,
 ) (time.Time, error) {
 	if pacer.Epoch.IsZero() {
 		return time.Time{}, fmt.Errorf("REPLAY_EPOCH non impostata")
@@ -86,16 +91,16 @@ pacer ReplayPacer,
 			)
 	}
 
-	if observedAt.Before(pacer.Epoch) {
+	if eventTime.Before(pacer.Epoch) {
 		return time.Time{},
 			fmt.Errorf(
-				"observed_at %s precedente a REPLAY_EPOCH %s",
-				observedAt.UTC().Format(time.RFC3339Nano),
+				"event_time %s precedente a REPLAY_EPOCH %s",
+				eventTime.UTC().Format(time.RFC3339Nano),
 				pacer.Epoch.UTC().Format(time.RFC3339Nano),
 			)
 	}
 
-	eventOffset := observedAt.Sub(pacer.Epoch)
+	eventOffset := eventTime.Sub(pacer.Epoch)
 	acceleratedNanoseconds := float64(eventOffset) /
 		pacer.AccelerationFactor
 
@@ -111,11 +116,8 @@ pacer ReplayPacer,
 	return pacer.StartAt.Add(acceleratedOffset), nil
 }
 
-func localReplayStart(
-	now time.Time,
-	configuredStart time.Time,
-) time.Time {
-	// Add conserva il riferimento monotonic di now sull'istante UTC configurato.
+// Imposta l'istante di avvio del replay applicando a now l'offset fino a configuredStart
+func localReplayStart(now time.Time, configuredStart time.Time) time.Time {
 	return now.Add(configuredStart.Sub(now))
 }
 
@@ -195,15 +197,6 @@ stats ReplayStats,
 		duration.Seconds()
 }
 
-func (stats ReplayStats) MaxQueueUtilization() float64 {
-	if stats.QueueCapacity <= 0 {
-		return 0
-	}
-
-	return float64(stats.MaxQueueDepthObserved) /
-		float64(stats.QueueCapacity) * 100
-}
-
 func (
 stats *ReplayStats,
 ) RecordOffer(
@@ -231,24 +224,15 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 	stats.QueueCapacity = config.TelemetryQueueCapacity
 
 	anchorNow := runtime.Now()
+
+	//costruzione del ReplayPacer
 	pacer := ReplayPacer{
 		Epoch:              config.ReplayEpoch,
 		StartAt:            localReplayStart(anchorNow, config.ReplayStartAt),
 		AccelerationFactor: config.AccelerationFactor,
 	}
 
-	egressFactory := runtime.NewTelemetryEgress
-	if egressFactory == nil {
-		egressFactory = func(
-			capacity int,
-			publish TelemetryPublisher,
-			now func() time.Time,
-		) (TelemetryQueue, error) {
-			return newTelemetryEgress(capacity, publish, now)
-		}
-	}
-
-	egress, err := egressFactory(config.TelemetryQueueCapacity, runtime.PublishTelemetry, runtime.Now)
+	egress, err := createTelemetryEgress(config, runtime)
 	if err != nil {
 		return stats, err
 	}
@@ -257,13 +241,7 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 		if egressClosed {
 			return
 		}
-		egressStats := egress.CloseAndWait()
-		if egressStats.QueueCapacity > 0 {
-			stats.QueueCapacity = egressStats.QueueCapacity
-		}
-		stats.MaxQueueDepthObserved = egressStats.MaxQueueDepthObserved
-		stats.MQTTPublishAttempts = egressStats.PublishAttempts
-		stats.MQTTPublishErrors = egressStats.PublishErrors
+		recordTelemetryEgressStats(&stats, egress.CloseAndWait())
 		egressClosed = true
 	}
 
@@ -272,19 +250,56 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 		stats.CompletedAt = runtime.Now()
 	}()
 
+	if err := runReplayLoop(reader, config, runtime, pacer, egress, &stats); err != nil {
+		return stats, err
+	}
+
+	closeEgress()
+
+	if !stats.ReachedEOF {
+		return stats, nil
+	}
+
+	if err := publishReplayEnd(config, runtime, &stats); err != nil {
+		return stats, err
+	}
+
+	return stats, nil
+}
+
+func createTelemetryEgress(config SimulatorConfig, runtime ReplayRuntime) (TelemetryQueue, error) {
+	egressFactory := runtime.NewTelemetryEgress
+	if egressFactory == nil {
+		egressFactory =
+			func(capacity int, publish TelemetryPublisher, now func() time.Time) (TelemetryQueue, error) {
+				return newTelemetryEgress(capacity, publish, now)
+			}
+	}
+
+	return egressFactory(config.TelemetryQueueCapacity, runtime.PublishTelemetry, runtime.Now)
+}
+
+func recordTelemetryEgressStats(stats *ReplayStats, egressStats TelemetryEgressStats) {
+	if egressStats.QueueCapacity > 0 {
+		stats.QueueCapacity = egressStats.QueueCapacity
+	}
+	stats.MQTTPublishAttempts = egressStats.PublishAttempts
+	stats.MQTTPublishErrors = egressStats.PublishErrors
+}
+
+func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntime, pacer ReplayPacer, egress TelemetryQueue, stats *ReplayStats) error {
 	header, err := reader.Read()
 	if err != nil {
-		return stats, err
+		return err
 	}
 
 	columns := buildColumnIndex(header)
 	sequences := make(map[string]uint64)
 
-	var previousObservedAt time.Time
+	var previousEventTime time.Time
 
 	for {
-		if config.MaxEvents > 0 &&
-			stats.OfferedEvents >= config.MaxEvents {
+		if config.MaxEvents > 0 && stats.OfferedEvents >= config.MaxEvents {
 			break
 		}
 
@@ -294,69 +309,52 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 			break
 		}
 		if err != nil {
-			return stats, err
+			return err
 		}
 
-		measurement, err := parseMeasurement(
-			row,
-			columns,
-		)
+		measurement, err := parseMeasurement(row, columns)
 		if err != nil {
-			return stats, err
+			return err
 		}
 
 		// Ogni shard deve conservare l'ordine temporale del replay globale.
-		if !previousObservedAt.IsZero() &&
-			measurement.Timestamp.Before(previousObservedAt) {
-			return stats,
-				fmt.Errorf(
-					"replay non ordinato temporalmente: %s arriva dopo %s",
-					measurement.Timestamp.Format(time.RFC3339),
-					previousObservedAt.Format(time.RFC3339),
-				)
+		if !previousEventTime.IsZero() && measurement.EventTime.Before(previousEventTime) {
+			return fmt.Errorf("replay non ordinato temporalmente: %s arriva dopo %s",
+				measurement.EventTime.Format(time.RFC3339),
+				previousEventTime.Format(time.RFC3339),
+			)
 		}
 
-		previousObservedAt = measurement.Timestamp
-		scheduledTime, err := pacer.ScheduledTime(
-			measurement.Timestamp,
-		)
+		previousEventTime = measurement.EventTime
+		scheduledTime, err := pacer.ScheduledTime(measurement.EventTime)
 		if err != nil {
-			return stats, err
+			return err
 		}
 
 		if stats.OfferedEvents == 0 {
 			actualTime := runtime.Now()
 			lateness := actualTime.Sub(scheduledTime)
 			if lateness > replayStartLateTolerance {
-				return stats,
-					fmt.Errorf(
-						"replay %s avviato troppo tardi: primo evento scheduled_at=%s actual_at=%s lateness=%s tolleranza=%s",
-						config.SiteID,
-						scheduledTime.UTC().Format(time.RFC3339Nano),
-						actualTime.UTC().Format(time.RFC3339Nano),
-						lateness,
-						replayStartLateTolerance,
-					)
+				return fmt.Errorf("replay %s avviato troppo tardi: primo evento scheduled_at=%s actual_at=%s lateness=%s tolleranza=%s",
+					config.SiteID,
+					scheduledTime.UTC().Format(time.RFC3339Nano),
+					actualTime.UTC().Format(time.RFC3339Nano),
+					lateness,
+					replayStartLateTolerance,
+				)
 			}
 		}
 
-		if err := waitUntil(
-			scheduledTime,
-			runtime.Now,
-			runtime.Sleep,
-		); err != nil {
-			return stats, err
+		if err := waitUntil(scheduledTime, runtime.Now, runtime.Sleep); err != nil {
+			return err
 		}
 
 		sequence := sequences[measurement.SensorID] + 1
 		offeredAt := runtime.Now()
 		schedulingLag := offeredAt.Sub(scheduledTime)
 		sequences[measurement.SensorID] = sequence
-		stats.RecordOffer(
-			offeredAt,
-			schedulingLag,
-		)
-		stats.LastObservedAt = measurement.Timestamp
+		stats.RecordOffer(offeredAt, schedulingLag)
+		stats.LastEventTime = measurement.EventTime
 
 		if egress.TryEnqueue(measurement, sequence) {
 			stats.TelemetryEnqueued++
@@ -365,8 +363,7 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 		}
 
 		if stats.OfferedEvents%1000 == 0 {
-			fmt.Printf(
-				"%s: offered=%d enqueued=%d locally_dropped=%d lag_medio=%s lag_massimo=%s\n",
+			fmt.Printf("%s: offered=%d enqueued=%d locally_dropped=%d lag_medio=%s lag_massimo=%s\n",
 				config.SiteID,
 				stats.OfferedEvents,
 				stats.TelemetryEnqueued,
@@ -377,27 +374,22 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 		}
 	}
 
-	closeEgress()
+	return nil
+}
 
-	if !stats.ReachedEOF {
-		return stats, nil
-	}
-
-	if stats.LastObservedAt.IsZero() {
-		return stats,
-			fmt.Errorf(
-				"replay %s ha raggiunto EOF senza eventi offerti",
-				config.SiteID,
-			)
+func publishReplayEnd(config SimulatorConfig, runtime ReplayRuntime, stats *ReplayStats) error {
+	if stats.LastEventTime.IsZero() {
+		return fmt.Errorf("replay %s ha raggiunto EOF senza eventi offerti",
+			config.SiteID,
+		)
 	}
 
 	if runtime.PublishEndOfReplay == nil {
 		stats.EOSFailures++
-		return stats,
-			fmt.Errorf(
-				"publisher EndOfReplay non configurato per %s",
-				config.SiteID,
-			)
+		return fmt.Errorf(
+			"publisher EndOfReplay non configurato per %s",
+			config.SiteID,
+		)
 	}
 
 	endTopic := mqtttopic.ReplayEnd(config.SiteID)
@@ -406,12 +398,11 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 	)
 	if err != nil {
 		stats.EOSFailures++
-		return stats,
-			fmt.Errorf(
-				"pubblicazione EndOfReplay MQTT edge=%s fallita: %w",
-				config.SiteID,
-				err,
-			)
+		return fmt.Errorf(
+			"pubblicazione EndOfReplay MQTT edge=%s fallita: %w",
+			config.SiteID,
+			err,
+		)
 	}
 
 	if err := waitForPublishCompletion(
@@ -420,16 +411,15 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 		runtime.Now,
 	); err != nil {
 		stats.EOSFailures++
-		return stats,
-			fmt.Errorf(
-				"PUBACK EndOfReplay MQTT edge=%s fallito: %w",
-				config.SiteID,
-				err,
-			)
+		return fmt.Errorf(
+			"PUBACK EndOfReplay MQTT edge=%s fallito: %w",
+			config.SiteID,
+			err,
+		)
 	}
 	stats.EOSSuccesses++
 
-	return stats, nil
+	return nil
 }
 
 func printReplaySummary(
@@ -451,8 +441,6 @@ func printReplaySummary(
 	fmt.Printf("Telemetry accettata in coda: %d\n", stats.TelemetryEnqueued)
 	fmt.Printf("Telemetry scartata localmente: %d\n", stats.TelemetryLocallyDropped)
 	fmt.Printf("Telemetry queue capacity: %d\n", stats.QueueCapacity)
-	fmt.Printf("Max telemetry queue depth: %d\n", stats.MaxQueueDepthObserved)
-	fmt.Printf("Max telemetry queue utilization: %.1f%%\n", stats.MaxQueueUtilization())
 	fmt.Printf("Tentativi publish MQTT QoS0: %d\n", stats.MQTTPublishAttempts)
 	fmt.Printf("Errori publish MQTT QoS0: %d\n", stats.MQTTPublishErrors)
 	fmt.Printf("Scheduling lag medio: %s\n", stats.AverageSchedulingLag())
@@ -541,7 +529,7 @@ func parseMeasurement(
 		return SensorMeasurement{}, err
 	}
 
-	timestampIndex, err := requiredColumn(
+	eventTimeIndex, err := requiredColumn(
 		columns,
 		"timestamp",
 	)
@@ -603,9 +591,9 @@ func parseMeasurement(
 			)
 	}
 
-	timestamp, err := parseTimestamp(
+	eventTime, err := parseEventTime(
 		strings.TrimSpace(
-			row[timestampIndex],
+			row[eventTimeIndex],
 		),
 	)
 	if err != nil {
@@ -627,7 +615,7 @@ func parseMeasurement(
 
 		Latitude:  latitude,
 		Longitude: longitude,
-		Timestamp: timestamp,
+		EventTime: eventTime,
 
 		Pressure: strings.TrimSpace(
 			row[pressureIndex],
@@ -645,19 +633,19 @@ func parseMeasurement(
 	return measurement, nil
 }
 
-func parseTimestamp(
+func parseEventTime(
 	value string,
 ) (time.Time, error) {
-	timestamp, err := time.Parse(
+	eventTime, err := time.Parse(
 		time.RFC3339,
 		value,
 	)
 
 	if err == nil {
-		return timestamp, nil
+		return eventTime, nil
 	}
 
-	timestamp, err = time.ParseInLocation(
+	eventTime, err = time.ParseInLocation(
 		"2006-01-02T15:04:05",
 		value,
 		time.UTC,
@@ -666,13 +654,13 @@ func parseTimestamp(
 	if err != nil {
 		return time.Time{},
 			fmt.Errorf(
-				"timestamp non valido %q: %w",
+				"event_time non valido %q: %w",
 				value,
 				err,
 			)
 	}
 
-	return timestamp, nil
+	return eventTime, nil
 }
 
 func buildSensorEvent(
@@ -694,7 +682,7 @@ func buildSensorEvent(
 		LocationID: measurement.LocationID,
 		Sequence:   sequence,
 
-		ObservedAt: measurement.Timestamp,
+		EventTime: measurement.EventTime,
 
 		EmittedAt: emittedAt.UTC(),
 
