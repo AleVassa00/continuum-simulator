@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -79,13 +78,6 @@ func newWindowState(
 func validateSensorEvent(
 	event model.SensorEvent,
 ) error {
-	if event.SchemaVersion != 1 {
-		return fmt.Errorf(
-			"schema_version non supportata: %d",
-			event.SchemaVersion,
-		)
-	}
-
 	if strings.TrimSpace(
 		event.EventID,
 	) == "" {
@@ -139,12 +131,12 @@ func parseMeasurements(
 }
 
 func parseMetric(
-	measurements map[string]string,
+	measurements map[string]model.NullableFloat64,
 	name string,
 	minValue float64,
 	maxValue float64,
 ) MetricValue {
-	rawValue, found := measurements[name]
+	measurement, found := measurements[name]
 
 	if !found {
 		return MetricValue{
@@ -153,32 +145,14 @@ func parseMetric(
 		}
 	}
 
-	rawValue = strings.TrimSpace(
-		rawValue,
-	)
-
-	if rawValue == "" {
+	if !measurement.Valid {
 		return MetricValue{
 			Valid:  false,
-			Reason: "misura vuota",
+			Reason: "misura non disponibile",
 		}
 	}
 
-	value, err := strconv.ParseFloat(
-		rawValue,
-		64,
-	)
-
-	if err != nil {
-		return MetricValue{
-			Valid: false,
-
-			Reason: fmt.Sprintf(
-				"valore %q non numerico",
-				rawValue,
-			),
-		}
-	}
+	value := measurement.Value
 
 	if math.IsNaN(value) ||
 		math.IsInf(value, 0) {
@@ -186,8 +160,8 @@ func parseMetric(
 			Valid: false,
 
 			Reason: fmt.Sprintf(
-				"valore numerico non finito %q",
-				rawValue,
+				"valore numerico non finito %.2f",
+				value,
 			),
 		}
 	}

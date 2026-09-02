@@ -65,6 +65,60 @@ func TestBuildMetricAggregateWithoutValidValues(t *testing.T) {
 	}
 }
 
+func TestParseMetricValidatesNullableMeasurements(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		measurements map[string]model.NullableFloat64
+		wantValue    float64
+		wantValid    bool
+		wantReason   string
+	}{
+		{
+			name:         "missing",
+			measurements: map[string]model.NullableFloat64{},
+			wantReason:   "misura mancante",
+		},
+		{
+			name: "null",
+			measurements: map[string]model.NullableFloat64{
+				"temperature": {},
+			},
+			wantReason: "misura non disponibile",
+		},
+		{
+			name: "valid",
+			measurements: map[string]model.NullableFloat64{
+				"temperature": {Value: 20.5, Valid: true},
+			},
+			wantValue: 20.5,
+			wantValid: true,
+		},
+		{
+			name: "out_of_range",
+			measurements: map[string]model.NullableFloat64{
+				"temperature": {Value: 100, Valid: true},
+			},
+			wantValue: 100,
+		},
+		{
+			name: "non_finite",
+			measurements: map[string]model.NullableFloat64{
+				"temperature": {Value: math.NaN(), Valid: true},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := parseMetric(test.measurements, "temperature", -40, 85)
+			if got.Valid != test.wantValid || got.Value != test.wantValue {
+				t.Fatalf("metrica=%#v", got)
+			}
+			if test.wantReason != "" && got.Reason != test.wantReason {
+				t.Fatalf("reason=%q, attesa %q", got.Reason, test.wantReason)
+			}
+		})
+	}
+}
+
 func TestBuildEdgeAggregateUsesCurrentSchema(t *testing.T) {
 	start := time.Date(
 		2026,

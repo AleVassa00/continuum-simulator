@@ -237,13 +237,14 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 		return stats, err
 	}
 	egressClosed := false
-	closeEgress := func() {
-		if egressClosed {
-			return
+	closeEgress :=
+		func() {
+			if egressClosed {
+				return
+			}
+			recordTelemetryEgressStats(&stats, egress.CloseAndWait())
+			egressClosed = true
 		}
-		recordTelemetryEgressStats(&stats, egress.CloseAndWait())
-		egressClosed = true
-	}
 
 	defer func() {
 		closeEgress()
@@ -326,6 +327,16 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRun
 		}
 
 		previousEventTime = measurement.EventTime
+		sequence := sequences[measurement.SensorID] + 1
+		event, err := buildSensorEvent(measurement, sequence)
+		if err != nil {
+			return fmt.Errorf(
+				"costruzione SensorEvent sensor_id=%s fallita: %w",
+				measurement.SensorID,
+				err,
+			)
+		}
+
 		scheduledTime, err := pacer.ScheduledTime(measurement.EventTime)
 		if err != nil {
 			return err
@@ -349,14 +360,13 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRun
 			return err
 		}
 
-		sequence := sequences[measurement.SensorID] + 1
 		offeredAt := runtime.Now()
 		schedulingLag := offeredAt.Sub(scheduledTime)
 		sequences[measurement.SensorID] = sequence
 		stats.RecordOffer(offeredAt, schedulingLag)
 		stats.LastEventTime = measurement.EventTime
 
-		if egress.TryEnqueue(measurement, sequence) {
+		if egress.TryEnqueue(event) {
 			stats.TelemetryEnqueued++
 		} else {
 			stats.TelemetryLocallyDropped++
@@ -485,171 +495,93 @@ func requiredColumn(
 	return index, nil
 }
 
-func parseMeasurement(
-	row []string,
-	columns map[string]int,
-) (SensorMeasurement, error) {
-	sensorIDIndex, err := requiredColumn(
-		columns,
-		"sensor_id",
-	)
+func parseMeasurement(row []string, columns map[string]int) (SensorMeasurement, error) {
+	sensorIDIndex, err := requiredColumn(columns, "sensor_id")
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
-	sensorTypeIndex, err := requiredColumn(
-		columns,
-		"sensor_type",
-	)
+	sensorTypeIndex, err := requiredColumn(columns, "sensor_type")
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
-	locationIndex, err := requiredColumn(
-		columns,
-		"location",
-	)
+	locationIndex, err := requiredColumn(columns, "location")
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
-	latitudeIndex, err := requiredColumn(
-		columns,
-		"lat",
-	)
+	latitudeIndex, err := requiredColumn(columns, "lat")
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
-	longitudeIndex, err := requiredColumn(
-		columns,
-		"lon",
-	)
+	longitudeIndex, err := requiredColumn(columns, "lon")
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
-	eventTimeIndex, err := requiredColumn(
-		columns,
-		"timestamp",
-	)
+	eventTimeIndex, err := requiredColumn(columns, "timestamp")
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
-	pressureIndex, err := requiredColumn(
-		columns,
-		"pressure",
-	)
+	pressureIndex, err := requiredColumn(columns, "pressure")
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
-	temperatureIndex, err := requiredColumn(
-		columns,
-		"temperature",
-	)
+	temperatureIndex, err := requiredColumn(columns, "temperature")
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
-	humidityIndex, err := requiredColumn(
-		columns,
-		"humidity",
-	)
+	humidityIndex, err := requiredColumn(columns, "humidity")
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
-	latitude, err := strconv.ParseFloat(
-		strings.TrimSpace(
+	latitude, err := strconv.ParseFloat(strings.TrimSpace(row[latitudeIndex]), 64)
+	if err != nil {
+		return SensorMeasurement{}, fmt.Errorf("latitudine non valida %q: %w",
 			row[latitudeIndex],
-		),
-		64,
-	)
-	if err != nil {
-		return SensorMeasurement{},
-			fmt.Errorf(
-				"latitudine non valida %q: %w",
-				row[latitudeIndex],
-				err,
-			)
+			err)
 	}
 
-	longitude, err := strconv.ParseFloat(
-		strings.TrimSpace(
-			row[longitudeIndex],
-		),
-		64,
-	)
+	longitude, err := strconv.ParseFloat(strings.TrimSpace(row[longitudeIndex]), 64)
 	if err != nil {
 		return SensorMeasurement{},
-			fmt.Errorf(
-				"longitudine non valida %q: %w",
-				row[longitudeIndex],
-				err,
-			)
+			fmt.Errorf("longitudine non valida %q: %w", row[longitudeIndex], err)
 	}
 
-	eventTime, err := parseEventTime(
-		strings.TrimSpace(
-			row[eventTimeIndex],
-		),
-	)
+	eventTime, err := parseEventTime(strings.TrimSpace(row[eventTimeIndex]))
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
 	measurement := SensorMeasurement{
-		SensorID: strings.TrimSpace(
-			row[sensorIDIndex],
-		),
-
-		SensorType: strings.TrimSpace(
-			row[sensorTypeIndex],
-		),
-
-		LocationID: strings.TrimSpace(
-			row[locationIndex],
-		),
-
-		Latitude:  latitude,
-		Longitude: longitude,
-		EventTime: eventTime,
-
-		Pressure: strings.TrimSpace(
-			row[pressureIndex],
-		),
-
-		Temperature: strings.TrimSpace(
-			row[temperatureIndex],
-		),
-
-		Humidity: strings.TrimSpace(
-			row[humidityIndex],
-		),
+		SensorID:    strings.TrimSpace(row[sensorIDIndex]),
+		SensorType:  strings.TrimSpace(row[sensorTypeIndex]),
+		LocationID:  strings.TrimSpace(row[locationIndex]),
+		Latitude:    latitude,
+		Longitude:   longitude,
+		EventTime:   eventTime,
+		Pressure:    strings.TrimSpace(row[pressureIndex]),
+		Temperature: strings.TrimSpace(row[temperatureIndex]),
+		Humidity:    strings.TrimSpace(row[humidityIndex]),
 	}
 
 	return measurement, nil
 }
 
-func parseEventTime(
-	value string,
-) (time.Time, error) {
-	eventTime, err := time.Parse(
-		time.RFC3339,
-		value,
-	)
+func parseEventTime(value string) (time.Time, error) {
+	eventTime, err := time.Parse(time.RFC3339, value)
 
 	if err == nil {
 		return eventTime, nil
 	}
 
-	eventTime, err = time.ParseInLocation(
-		"2006-01-02T15:04:05",
-		value,
-		time.UTC,
-	)
+	eventTime, err = time.ParseInLocation("2006-01-02T15:04:05", value, time.UTC)
 
 	if err != nil {
 		return time.Time{},
@@ -663,20 +595,44 @@ func parseEventTime(
 	return eventTime, nil
 }
 
-func buildSensorEvent(
-	measurement SensorMeasurement,
-	sequence uint64,
-	emittedAt time.Time,
-) model.SensorEvent {
+func parseNullableMeasurement(value string) (model.NullableFloat64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "null") {
+		return model.NullableFloat64{}, nil
+	}
+
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return model.NullableFloat64{}, fmt.Errorf("misura %q non numerica: %w", value, err)
+	}
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return model.NullableFloat64{}, fmt.Errorf("misura %q non finita", value)
+	}
+
+	return model.NullableFloat64{
+		Value: parsed,
+		Valid: true,
+	}, nil
+}
+
+func buildSensorEvent(measurement SensorMeasurement, sequence uint64) (model.SensorEvent, error) {
+	pressure, err := parseNullableMeasurement(measurement.Pressure)
+	if err != nil {
+		return model.SensorEvent{}, fmt.Errorf("pressure non valida: %w", err)
+	}
+
+	temperature, err := parseNullableMeasurement(measurement.Temperature)
+	if err != nil {
+		return model.SensorEvent{}, fmt.Errorf("temperature non valida: %w", err)
+	}
+
+	humidity, err := parseNullableMeasurement(measurement.Humidity)
+	if err != nil {
+		return model.SensorEvent{}, fmt.Errorf("humidity non valida: %w", err)
+	}
+
 	return model.SensorEvent{
-		SchemaVersion: 1,
-
-		EventID: fmt.Sprintf(
-			"%s-%d",
-			measurement.SensorID,
-			sequence,
-		),
-
+		EventID:    fmt.Sprintf("%s-%d", measurement.SensorID, sequence),
 		SensorID:   measurement.SensorID,
 		SensorType: measurement.SensorType,
 		LocationID: measurement.LocationID,
@@ -684,14 +640,12 @@ func buildSensorEvent(
 
 		EventTime: measurement.EventTime,
 
-		EmittedAt: emittedAt.UTC(),
-
-		Measurements: map[string]string{
-			"pressure":    measurement.Pressure,
-			"temperature": measurement.Temperature,
-			"humidity":    measurement.Humidity,
+		Measurements: map[string]model.NullableFloat64{
+			"pressure":    pressure,
+			"temperature": temperature,
+			"humidity":    humidity,
 		},
-	}
+	}, nil
 }
 
 func openReplayFile(path string) (*os.File, error) {

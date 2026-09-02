@@ -10,35 +10,9 @@ import (
 	"continuum/internal/mqtttopic"
 )
 
-type TelemetryPublisher func(topic string, event model.SensorEvent) error
-
-type TelemetryQueue interface {
-	TryEnqueue(SensorMeasurement, uint64) bool
-	CloseAndWait() TelemetryEgressStats
-}
-
-type TelemetryEgressFactory func(
-	capacity int,
-	publish TelemetryPublisher,
-	now func() time.Time,
-) (TelemetryQueue, error)
-
-type queuedTelemetry struct {
-	measurement SensorMeasurement
-	sequence    uint64
-}
-
-type TelemetryEgressStats struct {
-	QueueCapacity     int
-	CurrentQueueDepth int
-	PublishAttempts   uint64
-	PublishErrors     uint64
-}
-
-// TelemetryEgress ha un solo producer. CloseAndWait deve essere chiamata
-// soltanto dopo l'ultima TryEnqueue; dopo la chiusura non sono ammesse enqueue.
+// struct che gestisce la queue
 type TelemetryEgress struct {
-	queue chan queuedTelemetry
+	queue chan model.SensorEvent
 
 	publish   TelemetryPublisher
 	now       func() time.Time
@@ -49,6 +23,27 @@ type TelemetryEgress struct {
 	publishErrors   atomic.Uint64
 }
 
+type TelemetryEgressStats struct {
+	QueueCapacity     int
+	CurrentQueueDepth int
+	PublishAttempts   uint64
+	PublishErrors     uint64
+}
+
+type TelemetryPublisher func(topic string, event model.SensorEvent) error
+
+type TelemetryQueue interface {
+	TryEnqueue(model.SensorEvent) bool
+	CloseAndWait() TelemetryEgressStats
+}
+
+type TelemetryEgressFactory func(
+	capacity int,
+	publish TelemetryPublisher,
+	now func() time.Time,
+) (TelemetryQueue, error)
+
+// costruisce un gestore della coda e lancia la goroutine che si occupa di pubblicare su MQTT
 func newTelemetryEgress(capacity int, publish TelemetryPublisher, now func() time.Time) (*TelemetryEgress, error) {
 	if capacity <= 0 {
 		return nil, fmt.Errorf("TELEMETRY_QUEUE_CAPACITY deve essere maggiore di zero")
@@ -61,7 +56,7 @@ func newTelemetryEgress(capacity int, publish TelemetryPublisher, now func() tim
 	}
 
 	egress := &TelemetryEgress{
-		queue:   make(chan queuedTelemetry, capacity),
+		queue:   make(chan model.SensorEvent, capacity),
 		publish: publish,
 		now:     now,
 		done:    make(chan struct{}),
@@ -72,19 +67,10 @@ func newTelemetryEgress(capacity int, publish TelemetryPublisher, now func() tim
 	return egress, nil
 }
 
-func (
-	egress *TelemetryEgress,
-) TryEnqueue(
-	measurement SensorMeasurement,
-	sequence uint64,
-) bool {
-	telemetry := queuedTelemetry{
-		measurement: measurement,
-		sequence:    sequence,
-	}
-
+// Se c'è spazio nella coda, inserisce il SensorEvent senza bloccare il replay.
+func (egress *TelemetryEgress) TryEnqueue(event model.SensorEvent) bool {
 	select {
-	case egress.queue <- telemetry:
+	case egress.queue <- event:
 		return true
 	default:
 		return false
@@ -111,14 +97,15 @@ func (egress *TelemetryEgress) Stats() TelemetryEgressStats {
 	}
 }
 
+// metodo di una TelemetryEgress che si preoccupa di consumare gli elementi nella coda e pu
 func (egress *TelemetryEgress) run() {
 	defer close(egress.done)
 
-	for telemetry := range egress.queue {
+	for event := range egress.queue {
 		egress.publishAttempts.Add(1)
 
-		event := buildSensorEvent(telemetry.measurement, telemetry.sequence, egress.now().UTC())
-		if err := egress.publish(mqtttopic.Telemetry(telemetry.measurement.SensorID), event); err != nil {
+		event.EmittedAt = egress.now().UTC()
+		if err := egress.publish(mqtttopic.Telemetry(event.SensorID), event); err != nil {
 			egress.publishErrors.Add(1)
 		}
 	}

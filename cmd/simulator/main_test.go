@@ -112,6 +112,72 @@ func TestLocalReplayStartTranslatesConfiguredStart(t *testing.T) {
 	}
 }
 
+func TestParseNullableMeasurement(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		input     string
+		wantValue float64
+		wantValid bool
+		wantError bool
+	}{
+		{name: "number", input: "20.5", wantValue: 20.5, wantValid: true},
+		{name: "empty", input: "", wantValid: false},
+		{name: "spaces", input: "   ", wantValid: false},
+		{name: "null", input: "null", wantValid: false},
+		{name: "uppercase_null", input: "NULL", wantValid: false},
+		{name: "malformed", input: "abc", wantError: true},
+		{name: "nan", input: "NaN", wantError: true},
+		{name: "inf", input: "Inf", wantError: true},
+		{name: "positive_inf", input: "+Inf", wantError: true},
+		{name: "negative_inf", input: "-Inf", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseNullableMeasurement(test.input)
+			if test.wantError {
+				if err == nil {
+					t.Fatalf("input %q accettato: %#v", test.input, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Valid != test.wantValid || got.Value != test.wantValue {
+				t.Fatalf("input=%q valore=%#v", test.input, got)
+			}
+		})
+	}
+}
+
+func TestBuildSensorEventSerializesNullableNumericMeasurements(t *testing.T) {
+	measurement := testMeasurement("101", 0)
+	measurement.Pressure = "101200.0"
+	measurement.Temperature = ""
+	measurement.Humidity = "65.0"
+
+	event, err := buildSensorEvent(measurement, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded struct {
+		Measurements map[string]any `json:"measurements"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Measurements) != 3 ||
+		decoded.Measurements["pressure"] != float64(101200) ||
+		decoded.Measurements["temperature"] != nil ||
+		decoded.Measurements["humidity"] != float64(65) {
+		t.Fatalf("measurements JSON inattese: %s", payload)
+	}
+}
+
 func TestReplayPreservesEventSemanticsAndOrder(t *testing.T) {
 	config := validSimulatorConfig()
 	clock := newFakeClock(config.ReplayStartAt)
@@ -163,10 +229,33 @@ func TestReplayPreservesEventSemanticsAndOrder(t *testing.T) {
 			t.Fatalf("evento %d inatteso: topic=%q event=%#v", index, topics[index], got)
 		}
 	}
-	if events[0].Measurements["temperature"] != "20" ||
-		events[0].Measurements["humidity"] != "50" ||
-		events[0].Measurements["pressure"] != "100000" {
+	if temperature := events[0].Measurements["temperature"]; !temperature.Valid || temperature.Value != 20 {
+		t.Fatalf("temperatura modificata: %#v", temperature)
+	}
+	if humidity := events[0].Measurements["humidity"]; !humidity.Valid || humidity.Value != 50 {
+		t.Fatalf("umidita modificata: %#v", humidity)
+	}
+	if pressure := events[0].Measurements["pressure"]; !pressure.Valid || pressure.Value != 100000 {
 		t.Fatalf("misure modificate: %#v", events[0].Measurements)
+	}
+}
+
+func TestReplayRejectsMalformedMeasurement(t *testing.T) {
+	config := validSimulatorConfig()
+	clock := newFakeClock(config.ReplayStartAt)
+
+	stats, err := replaySite(
+		replayReader(
+			"101;BME280;1;45.0;9.0;2025-01-01T00:00:00Z;100000;abc;50",
+		),
+		config,
+		testReplayRuntime(clock, func(string, model.SensorEvent) error { return nil }),
+	)
+	if err == nil || !strings.Contains(err.Error(), "temperature") {
+		t.Fatalf("errore inatteso: %v", err)
+	}
+	if stats.OfferedEvents != 0 || stats.MQTTPublishAttempts != 0 || stats.EOSSuccesses != 0 {
+		t.Fatalf("statistiche inattese: %#v", stats)
 	}
 }
 
@@ -331,17 +420,17 @@ func TestTelemetryEgressDropsWithoutBlockingWhenQueueIsFull(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !egress.TryEnqueue(testMeasurement("1", 0), 1) {
+	if !egress.TryEnqueue(testSensorEvent("1", 0, 1)) {
 		t.Fatal("prima telemetry non accettata")
 	}
 	<-started
-	if !egress.TryEnqueue(testMeasurement("1", 1), 2) {
+	if !egress.TryEnqueue(testSensorEvent("1", 1, 2)) {
 		t.Fatal("seconda telemetry non accettata nella coda libera")
 	}
 
 	enqueueResult := make(chan bool, 1)
 	go func() {
-		enqueueResult <- egress.TryEnqueue(testMeasurement("1", 2), 3)
+		enqueueResult <- egress.TryEnqueue(testSensorEvent("1", 2, 3))
 	}()
 	select {
 	case accepted := <-enqueueResult:
@@ -386,18 +475,18 @@ func TestTelemetryEgressTracksCurrentQueueDepth(t *testing.T) {
 		t.Fatalf("stats iniziali=%#v", initial)
 	}
 
-	if !egress.TryEnqueue(testMeasurement("1", 0), 1) {
+	if !egress.TryEnqueue(testSensorEvent("1", 0, 1)) {
 		t.Fatal("prima telemetry non accettata")
 	}
 	<-started
 	if current := egress.Stats().CurrentQueueDepth; current != 0 {
 		t.Fatalf("depth dopo dequeue=%d, attesa 0", current)
 	}
-	if !egress.TryEnqueue(testMeasurement("1", 1), 2) ||
-		!egress.TryEnqueue(testMeasurement("1", 2), 3) {
+	if !egress.TryEnqueue(testSensorEvent("1", 1, 2)) ||
+		!egress.TryEnqueue(testSensorEvent("1", 2, 3)) {
 		t.Fatal("queue non riempita fino alla capacity")
 	}
-	if egress.TryEnqueue(testMeasurement("1", 3), 4) {
+	if egress.TryEnqueue(testSensorEvent("1", 3, 4)) {
 		t.Fatal("enqueue su queue piena non scartata")
 	}
 
@@ -431,8 +520,8 @@ func TestTelemetryEgressDrainsAndTracksPublishErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !egress.TryEnqueue(testMeasurement("1", 0), 1) ||
-		!egress.TryEnqueue(testMeasurement("1", 1), 2) {
+	if !egress.TryEnqueue(testSensorEvent("1", 0, 1)) ||
+		!egress.TryEnqueue(testSensorEvent("1", 1, 2)) {
 		t.Fatal("telemetry non accettata con spazio disponibile")
 	}
 
@@ -456,7 +545,7 @@ func TestTelemetryEgressConcurrentCloseIsSafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !egress.TryEnqueue(testMeasurement("1", 0), 1) {
+	if !egress.TryEnqueue(testSensorEvent("1", 0, 1)) {
 		t.Fatal("telemetry non accettata con spazio disponibile")
 	}
 
@@ -650,11 +739,10 @@ func TestPublishSensorEventUsesQoSZeroWithoutWaiting(t *testing.T) {
 	var capturedRetained bool
 	var capturedPayload []byte
 	event := model.SensorEvent{
-		SchemaVersion: 1,
-		EventID:       "101-1",
-		SensorID:      "101",
-		EventTime:     mustTime("2025-01-01T00:00:00Z"),
-		EmittedAt:     testPublishTime,
+		EventID:   "101-1",
+		SensorID:  "101",
+		EventTime: mustTime("2025-01-01T00:00:00Z"),
+		EmittedAt: testPublishTime,
 	}
 
 	err := publishSensorEvent(
@@ -677,6 +765,9 @@ func TestPublishSensorEventUsesQoSZeroWithoutWaiting(t *testing.T) {
 	}
 	if capturedQoS != 0 || capturedRetained || token.waitCalls != 0 {
 		t.Fatalf("qos=%d retained=%t waits=%d", capturedQoS, capturedRetained, token.waitCalls)
+	}
+	if strings.Contains(string(capturedPayload), `"schema_version"`) {
+		t.Fatalf("payload contiene schema_version: %s", capturedPayload)
 	}
 
 	var decoded model.SensorEvent
@@ -957,8 +1048,7 @@ type scriptedTelemetryQueue struct {
 func (
 	queue *scriptedTelemetryQueue,
 ) TryEnqueue(
-	_ SensorMeasurement,
-	_ uint64,
+	_ model.SensorEvent,
 ) bool {
 	accepted := queue.accept[queue.calls]
 	queue.calls++
@@ -1049,6 +1139,14 @@ func testMeasurement(sensorID string, second int) SensorMeasurement {
 		Temperature: "20",
 		Humidity:    "50",
 	}
+}
+
+func testSensorEvent(sensorID string, second int, sequence uint64) model.SensorEvent {
+	event, err := buildSensorEvent(testMeasurement(sensorID, second), sequence)
+	if err != nil {
+		panic(err)
+	}
+	return event
 }
 
 func parseGoSource(t *testing.T, path string) *ast.File {

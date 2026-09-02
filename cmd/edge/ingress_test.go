@@ -276,6 +276,66 @@ func TestEdgeProcessorProcessesAcceptedTelemetryBeforeEndOfReplay(t *testing.T) 
 	}
 }
 
+func TestEdgeProcessorAggregatesValidMeasurementsWhenOneIsNull(t *testing.T) {
+	stats := &EdgeStats{}
+	aggregator, messages := newTestEdgeAggregator()
+	aggregator.stats = stats
+	processor := &EdgeProcessor{
+		edgeID:     "edge-0",
+		aggregator: aggregator,
+		stats:      stats,
+		now:        func() time.Time { return edgeTestTime(12, 0) },
+	}
+
+	payload, err := json.Marshal(model.SensorEvent{
+		EventID:    "event-with-null-temperature",
+		SensorID:   "sensor-1",
+		SensorType: "BME280",
+		LocationID: "location-1",
+		Sequence:   1,
+		EventTime:  edgeTestTime(10, 1),
+		EmittedAt:  edgeTestTime(11, 0),
+		Measurements: map[string]model.NullableFloat64{
+			"temperature": {},
+			"humidity":    {Value: 65, Valid: true},
+			"pressure":    {Value: 101200, Valid: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := processor.Process(EdgeIngressRecord{
+		Kind:    EdgeIngressTelemetry,
+		Payload: payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := aggregator.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(*messages) != 1 {
+		t.Fatalf("aggregati emessi=%d, atteso 1", len(*messages))
+	}
+	aggregate := decodeEdgeAggregate(t, (*messages)[0])
+	if aggregate.Temperature.Valid != 0 ||
+		aggregate.Temperature.Invalid != 1 ||
+		aggregate.Temperature.Sum != 0 ||
+		aggregate.Temperature.Average != nil ||
+		aggregate.Temperature.Min != nil ||
+		aggregate.Temperature.Max != nil {
+		t.Fatalf("temperatura nulla aggregata in modo inatteso: %#v", aggregate.Temperature)
+	}
+	assertEdgeMetric(t, aggregate.Humidity, 1, 0, 65, 65, 65, 65)
+	assertEdgeMetric(t, aggregate.Pressure, 1, 0, 101200, 101200, 101200, 101200)
+
+	snapshot := stats.Snapshot()
+	if snapshot.Processed != 1 || snapshot.InvalidTelemetry != 0 {
+		t.Fatalf("processor stats=%#v", snapshot)
+	}
+}
+
 func TestEdgeProcessorEndOfReplayWithoutTelemetryUsesReceptionTime(t *testing.T) {
 	queue, err := newEdgeIngressQueue(1)
 	if err != nil {
@@ -436,18 +496,17 @@ func sensorEventPayload(
 ) []byte {
 	t.Helper()
 	payload, err := json.Marshal(model.SensorEvent{
-		SchemaVersion: 1,
-		EventID:       eventID,
-		SensorID:      "sensor-1",
-		SensorType:    "BME280",
-		LocationID:    "location-1",
-		Sequence:      1,
-		EventTime:     eventTime,
-		EmittedAt:     edgeTestTime(11, 0),
-		Measurements: map[string]string{
-			"temperature": "20",
-			"humidity":    "50",
-			"pressure":    "100000",
+		EventID:    eventID,
+		SensorID:   "sensor-1",
+		SensorType: "BME280",
+		LocationID: "location-1",
+		Sequence:   1,
+		EventTime:  eventTime,
+		EmittedAt:  edgeTestTime(11, 0),
+		Measurements: map[string]model.NullableFloat64{
+			"temperature": {Value: 20, Valid: true},
+			"humidity":    {Value: 50, Valid: true},
+			"pressure":    {Value: 100000, Valid: true},
 		},
 	})
 	if err != nil {
