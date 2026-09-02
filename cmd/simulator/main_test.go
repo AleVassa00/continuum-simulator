@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"continuum/internal/model"
+	"continuum/internal/mqtttopic"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -533,7 +534,7 @@ func TestReplayCountsOffersAndKeepsLastObservedAtWhenLastEventDrops(t *testing.T
 		stats.TelemetryLocallyDropped != 2 ||
 		stats.MQTTPublishAttempts != 1 ||
 		!stats.LastObservedAt.Equal(last) ||
-		endTopic != replayEndTopic(config.SiteID) ||
+		endTopic != mqtttopic.ReplayEnd(config.SiteID) ||
 		queue.closeCalls != 1 {
 		t.Fatalf("stats=%#v eos_topic=%q queue=%#v", stats, endTopic, queue)
 	}
@@ -790,11 +791,11 @@ func TestLoadSimulatorConfigValidatesReplayInputs(t *testing.T) {
 	}
 }
 
-func TestTelemetryTopicAndReplayEndTopic(t *testing.T) {
-	if got := telemetryTopic("87575"); got != "sensors/87575/telemetry" {
+func TestSharedMQTTTopics(t *testing.T) {
+	if got := mqtttopic.Telemetry("87575"); got != "sensors/87575/telemetry" {
 		t.Fatalf("topic telemetry=%q", got)
 	}
-	if got := replayEndTopic("edge-3"); got != "replay/edge-3/end" {
+	if got := mqtttopic.ReplayEnd("edge-3"); got != "replay/edge-3/end" {
 		t.Fatalf("topic end=%q", got)
 	}
 }

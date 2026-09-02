@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"continuum/internal/model"
+	"continuum/internal/mqtttopic"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -130,10 +131,10 @@ func TestEdgeKafkaWriterUsesSingleSynchronousAttempt(t *testing.T) {
 func TestTelemetrySubscriptionUsesSensorScopedTopic(t *testing.T) {
 	const expected = "sensors/+/telemetry"
 
-	if telemetrySubscriptionTopic != expected {
+	if mqtttopic.TelemetrySubscription != expected {
 		t.Fatalf(
 			"topic sottoscrizione=%q, atteso %q",
-			telemetrySubscriptionTopic,
+			mqtttopic.TelemetrySubscription,
 			expected,
 		)
 	}
@@ -143,12 +144,12 @@ func TestEdgeSubscriptionsIncludeTelemetryAndOwnReplayEnd(t *testing.T) {
 	topics := edgeSubscriptionTopics("edge-3")
 
 	if len(topics) != 2 ||
-		topics[telemetrySubscriptionTopic] != 0 ||
-		topics["replay/edge-3/end"] != 1 {
+		topics[mqtttopic.TelemetrySubscription] != 0 ||
+		topics[mqtttopic.ReplayEnd("edge-3")] != 1 {
 		t.Fatalf("subscription inattese: %#v", topics)
 	}
 
-	if _, found := topics["replay/edge-4/end"]; found {
+	if _, found := topics[mqtttopic.ReplayEnd("edge-4")]; found {
 		t.Fatal("Edge sottoscritto al control topic di un altro sito")
 	}
 }

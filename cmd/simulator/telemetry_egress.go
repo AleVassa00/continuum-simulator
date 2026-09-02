@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"continuum/internal/model"
+	"continuum/internal/mqtttopic"
 )
 
 type TelemetryPublisher func(
@@ -157,7 +158,7 @@ func (
 			egress.now().UTC(),
 		)
 		if err := egress.publish(
-			telemetryTopic(telemetry.measurement.SensorID),
+			mqtttopic.Telemetry(telemetry.measurement.SensorID),
 			event,
 		); err != nil {
 			egress.publishErrors.Add(1)

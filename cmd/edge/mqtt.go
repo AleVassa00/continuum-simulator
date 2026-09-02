@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"continuum/internal/mqtttopic"
+
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
@@ -20,10 +22,9 @@ type SubscriptionRetryPolicy struct {
 }
 
 const (
-	telemetrySubscriptionTopic = "sensors/+/telemetry"
-	mqttSubscriptionAttempts   = 3
-	mqttSubscriptionTimeout    = 5 * time.Second
-	mqttSubscriptionBackoff    = 250 * time.Millisecond
+	mqttSubscriptionAttempts = 3
+	mqttSubscriptionTimeout  = 5 * time.Second
+	mqttSubscriptionBackoff  = 250 * time.Millisecond
 )
 
 var errSubscriptionInactive = errors.New("tentativo di sottoscrizione MQTT non piu attivo")
@@ -206,8 +207,8 @@ func subscribeToEdgeTopics(
 	fmt.Printf(
 		"%s sottoscritto a %s e %s\n\n",
 		edgeID,
-		telemetrySubscriptionTopic,
-		replayEndTopic(edgeID),
+		mqtttopic.TelemetrySubscription,
+		mqtttopic.ReplayEnd(edgeID),
 	)
 }
 
@@ -215,18 +216,9 @@ func edgeSubscriptionTopics(
 	edgeID string,
 ) map[string]byte {
 	return map[string]byte{
-		telemetrySubscriptionTopic: 0,
-		replayEndTopic(edgeID):     1,
+		mqtttopic.TelemetrySubscription: 0,
+		mqtttopic.ReplayEnd(edgeID):     1,
 	}
-}
-
-func replayEndTopic(
-	edgeID string,
-) string {
-	return fmt.Sprintf(
-		"replay/%s/end",
-		edgeID,
-	)
 }
 
 func retrySubscription(
@@ -280,7 +272,7 @@ func makeEdgeMessageHandler(
 	ingress *EdgeIngressQueue,
 	stats *EdgeStats,
 ) mqtt.MessageHandler {
-	endTopic := replayEndTopic(edgeID)
+	endTopic := mqtttopic.ReplayEnd(edgeID)
 
 	return func(
 		_ mqtt.Client,

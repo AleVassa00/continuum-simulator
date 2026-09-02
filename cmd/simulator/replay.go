@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"continuum/internal/model"
+	"continuum/internal/mqtttopic"
 )
 
 /* Riga del dataset */
@@ -399,7 +400,7 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 			)
 	}
 
-	endTopic := replayEndTopic(config.SiteID)
+	endTopic := mqtttopic.ReplayEnd(config.SiteID)
 	endResult, err := runtime.PublishEndOfReplay(
 		endTopic,
 	)

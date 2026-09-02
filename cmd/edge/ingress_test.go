@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"continuum/internal/model"
+	"continuum/internal/mqtttopic"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/segmentio/kafka-go"
@@ -168,19 +169,19 @@ func TestEdgeMQTTCallbackOnlyEnqueuesAndCountsDrops(t *testing.T) {
 	handler := makeEdgeMessageHandler("edge-3", queue, stats)
 
 	handler(nil, testMQTTMessage{
-		topic:   telemetrySubscriptionTopic,
+		topic:   mqtttopic.TelemetrySubscription,
 		payload: []byte("telemetry-a"),
 	})
 	handler(nil, testMQTTMessage{
-		topic:   telemetrySubscriptionTopic,
+		topic:   mqtttopic.TelemetrySubscription,
 		payload: []byte("telemetry-b"),
 	})
 	handler(nil, testMQTTMessage{
-		topic:   replayEndTopic("edge-3"),
+		topic:   mqtttopic.ReplayEnd("edge-3"),
 		payload: []byte("payload-ignored"),
 	})
 	handler(nil, testMQTTMessage{
-		topic:   telemetrySubscriptionTopic,
+		topic:   mqtttopic.TelemetrySubscription,
 		payload: []byte("telemetry-post"),
 	})
 

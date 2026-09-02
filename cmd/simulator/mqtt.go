@@ -64,14 +64,6 @@ func waitForPublishCompletion(result PublishResult, topic string, now func() tim
 	return nil
 }
 
-func telemetryTopic(sensorID string) string {
-	return fmt.Sprintf("sensors/%s/telemetry", sensorID)
-}
-
-func replayEndTopic(edgeID string) string {
-	return fmt.Sprintf("replay/%s/end", edgeID)
-}
-
 func connectMQTTClient(siteID string, endpoint string) (mqtt.Client, error) {
 
 	options := mqtt.NewClientOptions()
