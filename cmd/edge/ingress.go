@@ -309,3 +309,22 @@ func (
 	processor.stats.processed.Add(1)
 	return nil
 }
+
+func printEdgeSummary(
+	edgeID string,
+	stats EdgeStatsSnapshot,
+) {
+	fmt.Printf("\nEdge %s summary\n", edgeID)
+	fmt.Printf("MQTT telemetry ricevuta: %d\n", stats.TelemetryReceived)
+	fmt.Printf("Ingress queue capacity: %d\n", stats.IngressQueueCapacity)
+	fmt.Printf("Max ingress queue depth: %d\n", stats.MaxIngressQueueDepthObserved)
+	fmt.Printf("Max ingress queue utilization: %.1f%%\n", stats.MaxIngressQueueUtilization())
+	fmt.Printf("Ingress accettata: %d\n", stats.IngressAccepted)
+	fmt.Printf("Ingress queue drop: %d\n", stats.IngressQueueDropped)
+	fmt.Printf("Telemetry invalida scartata: %d\n", stats.InvalidTelemetry)
+	fmt.Printf("Finestre chiuse/out-of-order scartati: %d\n", stats.OutOfOrderDropped)
+	fmt.Printf("Telemetry post-EOS scartata: %d\n", stats.PostEOSDropped)
+	fmt.Printf("Telemetry processata: %d\n", stats.Processed)
+	fmt.Printf("Aggregate Kafka emessi: %d\n", stats.AggregatesEmitted)
+	fmt.Printf("EndOfReplay processati: %d\n", stats.EndOfReplayProcessed)
+}
