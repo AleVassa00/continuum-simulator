@@ -76,32 +76,6 @@ func newWindowState(
 	}
 }
 
-func handleEndOfReplayPayload(
-	edgeID string,
-	payload []byte,
-	aggregator *WindowAggregator,
-	emittedAt time.Time,
-) error {
-	var record model.EndOfReplay
-	if err := json.Unmarshal(payload, &record); err != nil {
-		return fmt.Errorf("EndOfReplay JSON non valido: %w", err)
-	}
-
-	if err := model.ValidateEndOfReplay(record); err != nil {
-		return err
-	}
-
-	if record.EdgeID != edgeID {
-		return fmt.Errorf(
-			"EndOfReplay edge_id=%s ricevuto da %s",
-			record.EdgeID,
-			edgeID,
-		)
-	}
-
-	return aggregator.EndReplay(record, emittedAt)
-}
-
 func validateSensorEvent(
 	event model.SensorEvent,
 ) error {

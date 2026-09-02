@@ -177,7 +177,7 @@ func TestMaxEventsTruncatesWithoutEndOfReplay(t *testing.T) {
 	runtime := testReplayRuntime(clock, func(string, model.SensorEvent) error {
 		return nil
 	})
-	runtime.PublishEndOfReplay = func(string, model.EndOfReplay) (PublishResult, error) {
+	runtime.PublishEndOfReplay = func(string) (PublishResult, error) {
 		eosCalls++
 		return PublishResult{}, nil
 	}
@@ -496,7 +496,7 @@ func TestReplayCountsOffersAndKeepsLastObservedAtWhenLastEventDrops(t *testing.T
 			PublishAttempts: 1,
 		},
 	}
-	var endRecord model.EndOfReplay
+	var endTopic string
 	runtime := testReplayRuntime(clock, func(string, model.SensorEvent) error { return nil })
 	runtime.NewTelemetryEgress = func(
 		int,
@@ -506,10 +506,9 @@ func TestReplayCountsOffersAndKeepsLastObservedAtWhenLastEventDrops(t *testing.T
 		return queue, nil
 	}
 	runtime.PublishEndOfReplay = func(
-		_ string,
-		record model.EndOfReplay,
+		topic string,
 	) (PublishResult, error) {
-		endRecord = record
+		endTopic = topic
 		return PublishResult{
 			Token:       newCompletedToken(nil),
 			PublishedAt: clock.Now(),
@@ -534,9 +533,9 @@ func TestReplayCountsOffersAndKeepsLastObservedAtWhenLastEventDrops(t *testing.T
 		stats.TelemetryLocallyDropped != 2 ||
 		stats.MQTTPublishAttempts != 1 ||
 		!stats.LastObservedAt.Equal(last) ||
-		!endRecord.LastObservedAt.Equal(last) ||
+		endTopic != replayEndTopic(config.SiteID) ||
 		queue.closeCalls != 1 {
-		t.Fatalf("stats=%#v eos=%#v queue=%#v", stats, endRecord, queue)
+		t.Fatalf("stats=%#v eos_topic=%q queue=%#v", stats, endTopic, queue)
 	}
 }
 
@@ -554,7 +553,6 @@ func TestReplayDrainsLocalQueueBeforeEndOfReplay(t *testing.T) {
 	})
 	runtime.PublishEndOfReplay = func(
 		_ string,
-		_ model.EndOfReplay,
 	) (PublishResult, error) {
 		mu.Lock()
 		order = append(order, "publish-end")
@@ -607,14 +605,14 @@ func TestReplayFailsOnEndOfReplayPublishErrorAndTimeout(t *testing.T) {
 	}{
 		{
 			name: "publish_error",
-			publisher: func(string, model.EndOfReplay) (PublishResult, error) {
+			publisher: func(string) (PublishResult, error) {
 				return PublishResult{}, errors.New("publish end fallito")
 			},
 			contains: "publish end fallito",
 		},
 		{
 			name: "ack_timeout",
-			publisher: func(string, model.EndOfReplay) (PublishResult, error) {
+			publisher: func(string) (PublishResult, error) {
 				return PublishResult{
 					Token:       newTimeoutToken(),
 					PublishedAt: testPublishTime,
@@ -624,7 +622,7 @@ func TestReplayFailsOnEndOfReplayPublishErrorAndTimeout(t *testing.T) {
 		},
 		{
 			name: "ack_error",
-			publisher: func(string, model.EndOfReplay) (PublishResult, error) {
+			publisher: func(string) (PublishResult, error) {
 				return PublishResult{
 					Token:       newAwaitableToken(errors.New("PUBACK fallito")),
 					PublishedAt: testPublishTime,
@@ -699,33 +697,38 @@ func TestPublishEndOfReplayUsesQoSOneWithoutRetain(t *testing.T) {
 	token := newAwaitableToken(nil)
 	var qos byte
 	var retained bool
-	record := model.EndOfReplay{
-		SchemaVersion:  model.EndOfReplaySchemaVersion,
-		EdgeID:         "edge-3",
-		LastObservedAt: mustTime("2025-01-01T00:00:00Z"),
-		EmittedAt:      testPublishTime,
-	}
+	var payload []byte
+	var payloadIsBytes bool
 
 	result, err := publishEndOfReplay(
 		func(
 			_ string,
 			gotQoS byte,
 			gotRetained bool,
-			_ interface{},
+			gotPayload interface{},
 		) mqtt.Token {
 			qos = gotQoS
 			retained = gotRetained
+			payload, payloadIsBytes = gotPayload.([]byte)
 			return token
 		},
 		"replay/edge-3/end",
-		record,
 		func() time.Time { return testPublishTime },
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if qos != 1 || retained || result.Token != token || token.waitCalls != 0 {
-		t.Fatalf("qos=%d retained=%t result=%#v waits=%d", qos, retained, result, token.waitCalls)
+	if qos != 1 || retained || !payloadIsBytes || len(payload) != 0 ||
+		result.Token != token || token.waitCalls != 0 {
+		t.Fatalf(
+			"qos=%d retained=%t payload=%#v payload_is_bytes=%t result=%#v waits=%d",
+			qos,
+			retained,
+			payload,
+			payloadIsBytes,
+			result,
+			token.waitCalls,
+		)
 	}
 }
 
@@ -992,7 +995,6 @@ func testReplayRuntime(
 func completedEndPublisher(clock *fakeClock) EndOfReplayPublisher {
 	return func(
 		_ string,
-		_ model.EndOfReplay,
 	) (PublishResult, error) {
 		return PublishResult{
 			Token:       newCompletedToken(nil),

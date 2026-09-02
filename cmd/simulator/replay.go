@@ -64,7 +64,7 @@ type ReplayStats struct {
 const replayStartLateTolerance = 1 * time.Second
 
 func (
-	pacer ReplayPacer,
+pacer ReplayPacer,
 ) ScheduledTime(
 	observedAt time.Time,
 ) (time.Time, error) {
@@ -139,7 +139,7 @@ func waitUntil(
 }
 
 func (
-	stats ReplayStats,
+stats ReplayStats,
 ) AverageSchedulingLag() time.Duration {
 	if stats.OfferedEvents == 0 {
 		return 0
@@ -150,7 +150,7 @@ func (
 }
 
 func (
-	stats ReplayStats,
+stats ReplayStats,
 ) OfferDuration() time.Duration {
 	if stats.OfferedEvents <= 1 ||
 		stats.FirstOfferedAt.IsZero() ||
@@ -167,7 +167,7 @@ func (
 }
 
 func (
-	stats ReplayStats,
+stats ReplayStats,
 ) DrainDuration() time.Duration {
 	if stats.LastOfferedAt.IsZero() || stats.CompletedAt.IsZero() {
 		return 0
@@ -182,7 +182,7 @@ func (
 }
 
 func (
-	stats ReplayStats,
+stats ReplayStats,
 ) Throughput() float64 {
 	duration := stats.OfferDuration()
 	if stats.OfferedEvents <= 1 || duration <= 0 {
@@ -204,7 +204,7 @@ func (stats ReplayStats) MaxQueueUtilization() float64 {
 }
 
 func (
-	stats *ReplayStats,
+stats *ReplayStats,
 ) RecordOffer(
 	offeredAt time.Time,
 	schedulingLag time.Duration,
@@ -399,16 +399,9 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 			)
 	}
 
-	endRecord := model.EndOfReplay{
-		SchemaVersion:  model.EndOfReplaySchemaVersion,
-		EdgeID:         config.SiteID,
-		LastObservedAt: stats.LastObservedAt,
-		EmittedAt:      runtime.Now().UTC(),
-	}
 	endTopic := replayEndTopic(config.SiteID)
 	endResult, err := runtime.PublishEndOfReplay(
 		endTopic,
-		endRecord,
 	)
 	if err != nil {
 		stats.EOSFailures++
@@ -712,17 +705,10 @@ func buildSensorEvent(
 	}
 }
 
-func openReplayFile(
-	path string,
-) (*os.File, error) {
+func openReplayFile(path string) (*os.File, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil,
-			fmt.Errorf(
-				"apertura REPLAY_FILE %q fallita: %w",
-				path,
-				err,
-			)
+		return nil, fmt.Errorf("apertura REPLAY_FILE %q fallita: %w", path, err)
 	}
 
 	return file, nil

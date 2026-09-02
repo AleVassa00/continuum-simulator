@@ -358,29 +358,6 @@ func TestWindowAggregatorFlushPropagatesPublishFailure(t *testing.T) {
 	}
 }
 
-func TestHandleEndOfReplayRejectsEdgeMismatch(t *testing.T) {
-	aggregator, messages := newTestEdgeAggregator()
-	record := validEndOfReplay("edge-4")
-	payload, err := json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = handleEndOfReplayPayload(
-		"edge-0",
-		payload,
-		aggregator,
-		edgeTestTime(12, 0),
-	)
-	if err == nil || !strings.Contains(err.Error(), "edge-4") {
-		t.Fatalf("errore inatteso: %v", err)
-	}
-
-	if len(*messages) != 0 {
-		t.Fatalf("messaggi Kafka inattesi: %d", len(*messages))
-	}
-}
-
 func TestEndOfReplayFlushesFinalWindowBeforeKafkaControl(t *testing.T) {
 	aggregator, messages := newTestEdgeAggregator()
 	lastObservedAt := edgeTestTime(10, 3)
@@ -762,7 +739,6 @@ func validEndOfReplay(
 	edgeID string,
 ) model.EndOfReplay {
 	return model.EndOfReplay{
-		SchemaVersion:  model.EndOfReplaySchemaVersion,
 		EdgeID:         edgeID,
 		LastObservedAt: edgeTestTime(10, 3),
 		EmittedAt:      edgeTestTime(11, 0),

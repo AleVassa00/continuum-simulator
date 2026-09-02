@@ -420,7 +420,6 @@ func cloudTestEdgeAggregate(
 
 func cloudTestEndOfReplay(edgeID string) model.EndOfReplay {
 	return model.EndOfReplay{
-		SchemaVersion:  model.EndOfReplaySchemaVersion,
 		EdgeID:         edgeID,
 		LastObservedAt: cloudTestTime(10, 14),
 		EmittedAt:      cloudTestTime(10, 15),

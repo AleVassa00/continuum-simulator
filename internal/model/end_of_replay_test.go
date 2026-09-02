@@ -8,7 +8,6 @@ import (
 
 func TestValidateEndOfReplay(t *testing.T) {
 	valid := EndOfReplay{
-		SchemaVersion:  EndOfReplaySchemaVersion,
 		EdgeID:         "edge-3",
 		LastObservedAt: time.Date(2025, time.January, 1, 10, 0, 0, 0, time.UTC),
 		EmittedAt:      time.Date(2026, time.August, 28, 20, 0, 0, 0, time.UTC),
@@ -23,7 +22,6 @@ func TestValidateEndOfReplay(t *testing.T) {
 		mutate func(*EndOfReplay)
 		field  string
 	}{
-		{"schema", func(record *EndOfReplay) { record.SchemaVersion = 0 }, "schema_version"},
 		{"edge", func(record *EndOfReplay) { record.EdgeID = " " }, "edge_id"},
 		{"last observed", func(record *EndOfReplay) { record.LastObservedAt = time.Time{} }, "last_observed_at"},
 		{"emitted", func(record *EndOfReplay) { record.EmittedAt = time.Time{} }, "emitted_at"},

@@ -507,7 +507,6 @@ func testMetric(
 
 func testEndOfReplay(edgeID string) model.EndOfReplay {
 	return model.EndOfReplay{
-		SchemaVersion:  model.EndOfReplaySchemaVersion,
 		EdgeID:         edgeID,
 		LastObservedAt: globalTestTime(10, 14),
 		EmittedAt:      globalTestTime(11, 0),

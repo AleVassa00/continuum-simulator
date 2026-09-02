@@ -287,7 +287,7 @@ func makeEdgeMessageHandler(
 		message mqtt.Message,
 	) {
 		if message.Topic() == endTopic {
-			ingress.RegisterEndOfReplay(message.Payload())
+			ingress.RegisterEndOfReplay()
 			return
 		}
 

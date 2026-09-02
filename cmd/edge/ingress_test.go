@@ -33,10 +33,10 @@ func TestEdgeIngressQueueKeepsAcceptedDataBeforeReservedEndOfReplay(t *testing.T
 		full.MaxDepthObserved != 3 {
 		t.Fatalf("metriche queue piena=%#v", full)
 	}
-	if !queue.RegisterEndOfReplay([]byte("EOS")) {
+	if !queue.RegisterEndOfReplay() {
 		t.Fatal("EOS perso con data queue piena")
 	}
-	if queue.RegisterEndOfReplay([]byte("EOS-duplicate")) {
+	if queue.RegisterEndOfReplay() {
 		t.Fatal("EOS duplicato registrato")
 	}
 	if result := queue.TryEnqueueTelemetry([]byte("post")); result != TelemetryDroppedAfterEOS {
@@ -58,6 +58,13 @@ func TestEdgeIngressQueueKeepsAcceptedDataBeforeReservedEndOfReplay(t *testing.T
 		record, ok := queue.Next()
 		if !ok {
 			break
+		}
+		if record.Kind == EdgeIngressEndOfReplay {
+			if len(record.Payload) != 0 {
+				t.Fatalf("payload EOS inatteso: %q", record.Payload)
+			}
+			order = append(order, "EOS")
+			continue
 		}
 		order = append(order, string(record.Payload))
 	}
@@ -90,13 +97,13 @@ func TestEdgeIngressQueueWakesBlockedNext(t *testing.T) {
 			name: "end_of_replay",
 			trigger: func(t *testing.T, queue *EdgeIngressQueue) {
 				t.Helper()
-				if !queue.RegisterEndOfReplay([]byte("EOS")) {
+				if !queue.RegisterEndOfReplay() {
 					t.Fatal("EOS non registrato")
 				}
 			},
 			wantOK:      true,
 			wantKind:    EdgeIngressEndOfReplay,
-			wantPayload: "EOS",
+			wantPayload: "",
 		},
 		{
 			name: "close",
@@ -170,7 +177,7 @@ func TestEdgeMQTTCallbackOnlyEnqueuesAndCountsDrops(t *testing.T) {
 	})
 	handler(nil, testMQTTMessage{
 		topic:   replayEndTopic("edge-3"),
-		payload: []byte("eos"),
+		payload: []byte("payload-ignored"),
 	})
 	handler(nil, testMQTTMessage{
 		topic:   telemetrySubscriptionTopic,
@@ -196,7 +203,7 @@ func TestEdgeMQTTCallbackOnlyEnqueuesAndCountsDrops(t *testing.T) {
 		t.Fatalf("primo record=%#v ok=%t", first, ok)
 	}
 	second, ok := queue.Next()
-	if !ok || second.Kind != EdgeIngressEndOfReplay || string(second.Payload) != "eos" {
+	if !ok || second.Kind != EdgeIngressEndOfReplay || len(second.Payload) != 0 {
 		t.Fatalf("secondo record=%#v ok=%t", second, ok)
 	}
 }
@@ -235,7 +242,7 @@ func TestEdgeProcessorProcessesAcceptedTelemetryBeforeEndOfReplay(t *testing.T) 
 			t.Fatalf("enqueue %d result=%d", index, result)
 		}
 	}
-	if !queue.RegisterEndOfReplay(endOfReplayPayload(t, "edge-0")) {
+	if !queue.RegisterEndOfReplay() {
 		t.Fatal("EOS non registrato")
 	}
 	queue.Close()
@@ -248,6 +255,14 @@ func TestEdgeProcessorProcessesAcceptedTelemetryBeforeEndOfReplay(t *testing.T) 
 		recordType(t, messages[1]) != model.RecordTypeEndOfReplay {
 		t.Fatalf("messaggi Kafka inattesi: %#v", messages)
 	}
+	var forwarded model.EndOfReplay
+	if err := json.Unmarshal(messages[1].Value, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if !forwarded.LastObservedAt.Equal(edgeTestTime(10, 3)) ||
+		!forwarded.EmittedAt.Equal(edgeTestTime(12, 0)) {
+		t.Fatalf("EndOfReplay Kafka inatteso: %#v", forwarded)
+	}
 	aggregate := decodeEdgeAggregate(t, messages[0])
 	if aggregate.Events != 3 {
 		t.Fatalf("eventi aggregate=%d, attesi 3", aggregate.Events)
@@ -257,6 +272,50 @@ func TestEdgeProcessorProcessesAcceptedTelemetryBeforeEndOfReplay(t *testing.T) 
 		snapshot.AggregatesEmitted != 1 ||
 		snapshot.EndOfReplayProcessed != 1 {
 		t.Fatalf("processor stats=%#v", snapshot)
+	}
+}
+
+func TestEdgeProcessorEndOfReplayWithoutTelemetryUsesReceptionTime(t *testing.T) {
+	queue, err := newEdgeIngressQueue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := &EdgeStats{}
+	messages := make([]kafka.Message, 0, 1)
+	aggregator := &WindowAggregator{
+		edgeID:     "edge-0",
+		windowSize: 5 * time.Minute,
+		kafkaTopic: "edge-aggregates",
+		stats:      stats,
+		publishMessage: func(_ context.Context, message kafka.Message) error {
+			messages = append(messages, message)
+			return nil
+		},
+	}
+	receivedAt := edgeTestTime(12, 0)
+	processor := &EdgeProcessor{
+		edgeID:     "edge-0",
+		ingress:    queue,
+		aggregator: aggregator,
+		stats:      stats,
+		now:        func() time.Time { return receivedAt },
+	}
+
+	if err := processor.Process(EdgeIngressRecord{Kind: EdgeIngressEndOfReplay}); err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || recordType(t, messages[0]) != model.RecordTypeEndOfReplay {
+		t.Fatalf("messaggi Kafka inattesi: %#v", messages)
+	}
+
+	var forwarded model.EndOfReplay
+	if err := json.Unmarshal(messages[0].Value, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if forwarded.EdgeID != "edge-0" ||
+		!forwarded.LastObservedAt.Equal(receivedAt) ||
+		!forwarded.EmittedAt.Equal(receivedAt) {
+		t.Fatalf("EndOfReplay Kafka inatteso: %#v", forwarded)
 	}
 }
 
@@ -289,8 +348,7 @@ func TestEdgeProcessorDropsClosedWindowAndPostEOSWithoutReopening(t *testing.T) 
 		t.Fatal(err)
 	}
 	if err := processor.Process(EdgeIngressRecord{
-		Kind:    EdgeIngressEndOfReplay,
-		Payload: endOfReplayPayload(t, "edge-0"),
+		Kind: EdgeIngressEndOfReplay,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -391,15 +449,6 @@ func sensorEventPayload(
 			"pressure":    "100000",
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return payload
-}
-
-func endOfReplayPayload(t *testing.T, edgeID string) []byte {
-	t.Helper()
-	payload, err := json.Marshal(validEndOfReplay(edgeID))
 	if err != nil {
 		t.Fatal(err)
 	}

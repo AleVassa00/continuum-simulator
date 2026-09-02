@@ -44,19 +44,21 @@ func runSimulator() error {
 	reader := csv.NewReader(file)
 	reader.Comma = ';'
 
-	publishTelemetry := func(topic string, event model.SensorEvent) error {
-		return publishSensorEvent(client.Publish, topic, event)
-	}
+	publishTelemetry :=
+		func(topic string, event model.SensorEvent) error {
+			return publishSensorEvent(client.Publish, topic, event)
+		}
 
-	publishEndOfReplayRecord := func(topic string, record model.EndOfReplay) (PublishResult, error) {
-		return publishEndOfReplay(client.Publish, topic, record, time.Now)
-	}
+	publishEndOfReplaySignal :=
+		func(topic string) (PublishResult, error) {
+			return publishEndOfReplay(client.Publish, topic, time.Now)
+		}
 
 	replayRuntime := ReplayRuntime{
 		Now:                time.Now,
 		Sleep:              time.Sleep,
 		PublishTelemetry:   publishTelemetry,
-		PublishEndOfReplay: publishEndOfReplayRecord,
+		PublishEndOfReplay: publishEndOfReplaySignal,
 	}
 
 	stats, replayErr := replaySite(reader, config, replayRuntime)
