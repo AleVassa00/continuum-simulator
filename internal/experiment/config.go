@@ -184,7 +184,7 @@ func (config Config) Validate() error {
 	return nil
 }
 
-func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
+func ResolveDefaults(config Config) Config {
 	simulator := config.Simulator
 	if simulator.StartLateTolerance.Duration() <= 0 {
 		simulator.StartLateTolerance = Duration(10 * time.Second)
@@ -198,6 +198,15 @@ func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
 		global.EdgeIdleTimeout = Duration(5 * time.Second)
 	}
 
+	config.Simulator = simulator
+	config.Global = global
+
+	return config
+}
+
+func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
+	config = ResolveDefaults(config)
+
 	return EffectiveConfig{
 		Experiment: config.Experiment,
 		Workload: EffectiveWorkloadConfig{
@@ -206,10 +215,10 @@ func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
 			StartLeadTime:      config.Workload.StartLeadTime,
 			ReplayStartAt:      replayStartAt.UTC().Format(time.RFC3339Nano),
 		},
-		Simulator: simulator,
+		Simulator: config.Simulator,
 		Edge:      config.Edge,
 		Cloud:     config.Cloud,
-		Global:    global,
+		Global:    config.Global,
 	}
 }
 

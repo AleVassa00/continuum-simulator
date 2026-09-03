@@ -1,0 +1,250 @@
+services:
+
+  # edge-0: 11 sensors
+  simulator-edge-0:
+    image: continuum-simulator:local
+    container_name: simulator-edge-0
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-0"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18830"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-0.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-1: 12 sensors
+  simulator-edge-1:
+    image: continuum-simulator:local
+    container_name: simulator-edge-1
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-1"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18831"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-1.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-2: 12 sensors
+  simulator-edge-2:
+    image: continuum-simulator:local
+    container_name: simulator-edge-2
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-2"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18832"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-2.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-3: 12 sensors
+  simulator-edge-3:
+    image: continuum-simulator:local
+    container_name: simulator-edge-3
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-3"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18833"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-3.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-4: 11 sensors
+  simulator-edge-4:
+    image: continuum-simulator:local
+    container_name: simulator-edge-4
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-4"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18834"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-4.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-5: 12 sensors
+  simulator-edge-5:
+    image: continuum-simulator:local
+    container_name: simulator-edge-5
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-5"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18835"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-5.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-6: 11 sensors
+  simulator-edge-6:
+    image: continuum-simulator:local
+    container_name: simulator-edge-6
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-6"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18836"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-6.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-7: 12 sensors
+  simulator-edge-7:
+    image: continuum-simulator:local
+    container_name: simulator-edge-7
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-7"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18837"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-7.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-8: 12 sensors
+  simulator-edge-8:
+    image: continuum-simulator:local
+    container_name: simulator-edge-8
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-8"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18838"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-8.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-9: 12 sensors
+  simulator-edge-9:
+    image: continuum-simulator:local
+    container_name: simulator-edge-9
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-9"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18839"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-9.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-10: 11 sensors
+  simulator-edge-10:
+    image: continuum-simulator:local
+    container_name: simulator-edge-10
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-10"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18840"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-10.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-11: 11 sensors
+  simulator-edge-11:
+    image: continuum-simulator:local
+    container_name: simulator-edge-11
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-11"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18841"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-11.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+  # edge-12: 11 sensors
+  simulator-edge-12:
+    image: continuum-simulator:local
+    container_name: simulator-edge-12
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "edge-12"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:18842"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-12.csv"
+      MAX_EVENTS: "0"
+      REPLAY_EPOCH: "2025-01-01T00:00:00Z"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "10000"
+      TELEMETRY_QUEUE_CAPACITY: "1000"
+      START_LATE_TOLERANCE: "10s"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+

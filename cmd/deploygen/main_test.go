@@ -151,6 +151,231 @@ func TestBuildComposeUsesEffectiveExperimentConfig(t *testing.T) {
 	}
 }
 
+func TestBuildDistributedComposesSeparatesHostsAndUsesRuntimeAddresses(t *testing.T) {
+	composes := buildDistributedComposes(testEdges(13), testConfig(3))
+
+	if len(composes) != 4 {
+		t.Fatalf("Compose distributed=%d, attesi 4", len(composes))
+	}
+
+	cloudCore := distributedComposeContent(t, composes, cloudCoreComposeFilename)
+	workers := distributedComposeContent(t, composes, workersComposeFilename)
+	edge := distributedComposeContent(t, composes, edgeComposeFilename)
+	simulator := distributedComposeContent(t, composes, simulatorComposeFilename)
+
+	for _, expected := range []string{
+		"  kafka:\n",
+		"  kafka-init:\n",
+		"  global-aggregator:\n",
+		"INTERNAL://kafka:29092",
+		"EXTERNAL://${KAFKA_ADVERTISED_HOST:?KAFKA_ADVERTISED_HOST is required}:9092",
+		"--topic edge-aggregates",
+		"--partitions ${KAFKA_PARTITIONS:-6}",
+		"--topic cloud-edge-aggregates",
+		"--partitions 1",
+		"KAFKA_BROKER: \"kafka:29092\"",
+	} {
+		if !strings.Contains(cloudCore, expected) {
+			t.Errorf("cloud core senza %q", expected)
+		}
+	}
+	advertisedLine := composeLineContaining(t, cloudCore, "KAFKA_ADVERTISED_LISTENERS:")
+	if strings.Contains(advertisedLine, "localhost:9092") {
+		t.Errorf("Kafka distributed pubblicizza localhost: %s", advertisedLine)
+	}
+	for _, forbidden := range []string{
+		"continuum-cloud-worker:local",
+		"continuum-edge:local",
+		"continuum-simulator:local",
+		"eclipse-mosquitto:2",
+	} {
+		if strings.Contains(cloudCore, forbidden) {
+			t.Errorf("cloud core contiene servizio di un altro host: %s", forbidden)
+		}
+	}
+
+	if count := strings.Count(workers, "    image: continuum-cloud-worker:local\n"); count != 3 {
+		t.Fatalf("Cloud Worker distributed=%d, attesi 3", count)
+	}
+	for workerNumber := 0; workerNumber < 3; workerNumber++ {
+		workerID := fmt.Sprintf("cloud-worker-%d", workerNumber)
+		worker := composeServiceBlock(t, workers, workerID)
+		for _, expected := range []string{
+			"KAFKA_BROKER: \"${CLOUD_KAFKA_HOST}:9092\"",
+			"KAFKA_GROUP_ID: \"cloud-workers\"",
+			"WORKER_ID: \"" + workerID + "\"",
+		} {
+			if !strings.Contains(worker, expected) {
+				t.Errorf("Cloud Worker %s senza %q", workerID, expected)
+			}
+		}
+	}
+	if strings.Contains(workers, "depends_on:") {
+		t.Error("workers contiene depends_on cross-host")
+	}
+	for _, forbidden := range []string{
+		"  kafka:\n",
+		"  kafka-init:\n",
+		"global-aggregator",
+		"continuum-edge:local",
+		"continuum-simulator:local",
+	} {
+		if strings.Contains(workers, forbidden) {
+			t.Errorf("workers contiene servizio di un altro host: %q", forbidden)
+		}
+	}
+
+	if count := strings.Count(edge, "    image: continuum-edge:local\n"); count != 13 {
+		t.Fatalf("Edge distributed=%d, attesi 13", count)
+	}
+	if count := strings.Count(edge, "    image: eclipse-mosquitto:2\n"); count != 13 {
+		t.Fatalf("Mosquitto distributed=%d, attesi 13", count)
+	}
+	for _, edgeDeployment := range testEdges(13) {
+		edgeID := edgeDeployment.EdgeID
+		mqtt := composeServiceBlock(t, edge, "mqtt-"+edgeID)
+		if expected := fmt.Sprintf("- \"%d:1883\"", edgeDeployment.MQTTPort); !strings.Contains(mqtt, expected) {
+			t.Errorf("Mosquitto %s senza %q", edgeID, expected)
+		}
+
+		edgeService := composeServiceBlock(t, edge, edgeID)
+		for _, expected := range []string{
+			"MQTT_BROKER: \"tcp://mqtt-" + edgeID + ":1883\"",
+			"KAFKA_BROKER: \"${CLOUD_KAFKA_HOST}:9092\"",
+			"http://localhost:8080/readyz",
+		} {
+			if !strings.Contains(edgeService, expected) {
+				t.Errorf("Edge %s senza %q", edgeID, expected)
+			}
+		}
+		if strings.Contains(edgeService, "kafka-init") || strings.Contains(edgeService, "      kafka:") {
+			t.Errorf("Edge %s contiene depends_on verso Kafka remoto", edgeID)
+		}
+	}
+	for _, forbidden := range []string{
+		"  kafka:\n",
+		"  kafka-init:\n",
+		"continuum-cloud-worker:local",
+		"continuum-simulator:local",
+		"global-aggregator",
+	} {
+		if strings.Contains(edge, forbidden) {
+			t.Errorf("edge Compose contiene servizio di un altro host: %q", forbidden)
+		}
+	}
+
+	if count := strings.Count(simulator, "    image: continuum-simulator:local\n"); count != 13 {
+		t.Fatalf("Simulator distributed=%d, attesi 13", count)
+	}
+	for _, edgeDeployment := range testEdges(13) {
+		edgeID := edgeDeployment.EdgeID
+		simulatorService := composeServiceBlock(t, simulator, "simulator-"+edgeID)
+		for _, expected := range []string{
+			"SITE_ID: \"" + edgeID + "\"",
+			fmt.Sprintf("MQTT_ENDPOINT: \"tcp://${EDGE_HOST}:%d\"", edgeDeployment.MQTTPort),
+			"REPLAY_FILE: \"/app/dataset/derived/replay_by_edge/" + edgeID + ".csv\"",
+			"REPLAY_START_AT: \"${REPLAY_START_AT:?REPLAY_START_AT is required}\"",
+		} {
+			if !strings.Contains(simulatorService, expected) {
+				t.Errorf("Simulator %s senza %q", edgeID, expected)
+			}
+		}
+	}
+	for _, forbidden := range []string{
+		"depends_on:",
+		"2026-08-31T12:00:10Z",
+		"continuum-edge:local",
+		"eclipse-mosquitto:2",
+		"  kafka:\n",
+	} {
+		if strings.Contains(simulator, forbidden) {
+			t.Errorf("simulator Compose contiene valore o servizio vietato: %q", forbidden)
+		}
+	}
+}
+
+func TestRunDeploygenDistributedWritesFourFilesWithoutMaterializingReplayStart(t *testing.T) {
+	temp := t.TempDir()
+	experimentPath := filepath.Join(temp, "custom.yaml")
+	topologyPath := filepath.Join(temp, "topology.csv")
+	distributedOutputDir := filepath.Join(temp, "distributed")
+	localOutputPath := filepath.Join(temp, "local.yml")
+	artifactsRoot := filepath.Join(temp, "artifacts")
+
+	writeTestFile(t, experimentPath, `experiment:
+  name: distributed-test
+workload:
+  acceleration_factor: 1000
+  max_events: 10
+  start_lead_time: 90s
+simulator:
+  telemetry_queue_capacity: 1000
+edge:
+  window_size: 5m
+  ingress_queue_capacity: 1000
+cloud:
+  workers: 6
+  window_size: 15m
+global: {}
+`)
+	writeTestTopology(t, topologyPath, 13)
+
+	var output bytes.Buffer
+	err := runDeploygen(
+		[]string{"--mode", distributedMode, "--experiment", experimentPath},
+		deploygenOptions{
+			TopologyPath:         topologyPath,
+			OutputPath:           localOutputPath,
+			DistributedOutputDir: distributedOutputDir,
+			ArtifactsRoot:        artifactsRoot,
+			Now: func() time.Time {
+				t.Fatal("la modalita distributed non deve calcolare REPLAY_START_AT")
+				return time.Time{}
+			},
+			Stdout: &output,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(distributedOutputDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 4 {
+		t.Fatalf("file distributed=%d, attesi 4", len(entries))
+	}
+	for _, filename := range []string{
+		cloudCoreComposeFilename,
+		workersComposeFilename,
+		edgeComposeFilename,
+		simulatorComposeFilename,
+	} {
+		if _, err := os.Stat(filepath.Join(distributedOutputDir, filename)); err != nil {
+			t.Errorf("file %s non generato: %v", filename, err)
+		}
+	}
+	if _, err := os.Stat(localOutputPath); !os.IsNotExist(err) {
+		t.Errorf("output locale generato in modalita distributed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(artifactsRoot, "distributed-test", "effective-config.yaml")); !os.IsNotExist(err) {
+		t.Errorf("effective config materializzata senza vero REPLAY_START_AT: %v", err)
+	}
+
+	workers := readTestFile(t, filepath.Join(distributedOutputDir, workersComposeFilename))
+	if count := strings.Count(workers, "    image: continuum-cloud-worker:local\n"); count != 6 {
+		t.Fatalf("Cloud Worker=%d, attesi 6", count)
+	}
+	simulator := readTestFile(t, filepath.Join(distributedOutputDir, simulatorComposeFilename))
+	if !strings.Contains(simulator, "${REPLAY_START_AT:?REPLAY_START_AT is required}") {
+		t.Fatal("REPLAY_START_AT non e richiesto a runtime")
+	}
+	if strings.Contains(simulator, "0001-01-01") {
+		t.Fatal("trovato timestamp fittizio nel Compose distributed")
+	}
+}
+
 func TestRunDeploygenLoadsYAMLAndWritesEffectiveConfig(t *testing.T) {
 	temp := t.TempDir()
 	experimentPath := filepath.Join(temp, "custom.yaml")
@@ -282,6 +507,33 @@ func testEffectiveConfig(workers int) experiment.EffectiveConfig {
 	}
 }
 
+func testConfig(workers int) experiment.Config {
+	return experiment.Config{
+		Experiment: experiment.ExperimentConfig{Name: "test"},
+		Workload: experiment.WorkloadConfig{
+			AccelerationFactor: 2500,
+			MaxEvents:          42,
+			StartLeadTime:      experiment.Duration(10 * time.Second),
+		},
+		Simulator: experiment.SimulatorConfig{
+			TelemetryQueueCapacity: 321,
+			StartLateTolerance:     experiment.Duration(10 * time.Second),
+		},
+		Edge: experiment.EdgeConfig{
+			WindowSize:           experiment.Duration(5 * time.Minute),
+			IngressQueueCapacity: 654,
+		},
+		Cloud: experiment.CloudConfig{
+			Workers:    workers,
+			WindowSize: experiment.Duration(15 * time.Minute),
+		},
+		Global: experiment.GlobalConfig{
+			WatermarkDelay:  experiment.Duration(15 * time.Minute),
+			EdgeIdleTimeout: experiment.Duration(5 * time.Second),
+		},
+	}
+}
+
 func testEdges(count int) []EdgeDeployment {
 	edges := make([]EdgeDeployment, 0, count)
 	for edgeNumber := 0; edgeNumber < count; edgeNumber++ {
@@ -319,6 +571,32 @@ func readTestFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(payload)
+}
+
+func distributedComposeContent(
+	t *testing.T,
+	composes []generatedCompose,
+	filename string,
+) string {
+	t.Helper()
+	for _, compose := range composes {
+		if compose.Filename == filename {
+			return compose.Content
+		}
+	}
+	t.Fatalf("Compose %s non trovato", filename)
+	return ""
+}
+
+func composeLineContaining(t *testing.T, compose string, value string) string {
+	t.Helper()
+	for _, line := range strings.Split(compose, "\n") {
+		if strings.Contains(line, value) {
+			return line
+		}
+	}
+	t.Fatalf("riga contenente %q non trovata", value)
+	return ""
 }
 
 func composeServiceBlock(

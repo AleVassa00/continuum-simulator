@@ -1,0 +1,17 @@
+services:
+
+{{range .CloudWorkers}}  {{.WorkerID}}:
+    image: continuum-cloud-worker:local
+    container_name: {{.WorkerID}}
+
+    environment:
+      KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
+      KAFKA_INPUT_TOPIC: "edge-aggregates"
+      KAFKA_OUTPUT_TOPIC: "cloud-edge-aggregates"
+      KAFKA_GROUP_ID: "cloud-workers"
+      CLOUD_WINDOW_SIZE: "{{$.CloudWindowSize}}"
+      WORKER_ID: "{{.WorkerID}}"
+
+    restart: unless-stopped
+
+{{end}}

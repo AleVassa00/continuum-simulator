@@ -20,6 +20,12 @@ bin/
 # Generated deployment artifacts
 .build/
 
+# Terraform local state and working directories
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+
 # Dataset policy: ignore everything except the explicitly approved metadata.
 dataset/*
 !dataset/output/

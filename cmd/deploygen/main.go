@@ -18,11 +18,20 @@ import (
 )
 
 const (
-	defaultTopologyPath   = "dataset/output/kmeans_topology.csv"
-	defaultOutputPath     = "deploy/compose/continuum.generated.yml"
-	defaultExperimentPath = "experiments/baseline.yaml"
-	defaultArtifactsRoot  = "artifacts/experiments"
-	deploymentReplayEpoch = "2025-01-01T00:00:00Z"
+	defaultTopologyPath         = "dataset/output/kmeans_topology.csv"
+	defaultOutputPath           = "deploy/compose/continuum.generated.yml"
+	defaultDistributedOutputDir = "deploy/compose/distributed"
+	defaultExperimentPath       = "experiments/baseline.yaml"
+	defaultArtifactsRoot        = "artifacts/experiments"
+	deploymentReplayEpoch       = "2025-01-01T00:00:00Z"
+
+	localMode       = "local"
+	distributedMode = "distributed"
+
+	cloudCoreComposeFilename = "cloud-core.generated.yml"
+	workersComposeFilename   = "workers.generated.yml"
+	edgeComposeFilename      = "edge.generated.yml"
+	simulatorComposeFilename = "simulator.generated.yml"
 
 	mqttBasePort = 18830
 )
@@ -67,29 +76,72 @@ type composeTemplateData struct {
 }
 
 type deploygenOptions struct {
-	TopologyPath  string
-	OutputPath    string
-	ArtifactsRoot string
-	Now           func() time.Time
-	Stdout        io.Writer
+	TopologyPath         string
+	OutputPath           string
+	DistributedOutputDir string
+	ArtifactsRoot        string
+	Now                  func() time.Time
+	Stdout               io.Writer
 }
 
-//go:embed compose.tmpl
-var composeTemplateSource string
+type generatedCompose struct {
+	Filename string
+	Content  string
+}
+
+//go:embed local.compose.tmpl
+var localComposeTemplateSource string
+
+//go:embed distributed-cloud-core.compose.tmpl
+var distributedCloudCoreTemplateSource string
+
+//go:embed distributed-workers.compose.tmpl
+var distributedWorkersTemplateSource string
+
+//go:embed distributed-edge.compose.tmpl
+var distributedEdgeTemplateSource string
+
+//go:embed distributed-simulator.compose.tmpl
+var distributedSimulatorTemplateSource string
 
 var composeTemplate = template.Must(
-	template.New("compose").Parse(
-		strings.ReplaceAll(composeTemplateSource, "\r\n", "\n"),
+	template.New("local-compose").Parse(
+		strings.ReplaceAll(localComposeTemplateSource, "\r\n", "\n"),
+	),
+)
+
+var distributedCloudCoreTemplate = template.Must(
+	template.New("distributed-cloud-core-compose").Parse(
+		strings.ReplaceAll(distributedCloudCoreTemplateSource, "\r\n", "\n"),
+	),
+)
+
+var distributedWorkersTemplate = template.Must(
+	template.New("distributed-workers-compose").Parse(
+		strings.ReplaceAll(distributedWorkersTemplateSource, "\r\n", "\n"),
+	),
+)
+
+var distributedEdgeTemplate = template.Must(
+	template.New("distributed-edge-compose").Parse(
+		strings.ReplaceAll(distributedEdgeTemplateSource, "\r\n", "\n"),
+	),
+)
+
+var distributedSimulatorTemplate = template.Must(
+	template.New("distributed-simulator-compose").Parse(
+		strings.ReplaceAll(distributedSimulatorTemplateSource, "\r\n", "\n"),
 	),
 )
 
 func main() {
 	if err := runDeploygen(os.Args[1:], deploygenOptions{
-		TopologyPath:  defaultTopologyPath,
-		OutputPath:    defaultOutputPath,
-		ArtifactsRoot: defaultArtifactsRoot,
-		Now:           time.Now,
-		Stdout:        os.Stdout,
+		TopologyPath:         defaultTopologyPath,
+		OutputPath:           defaultOutputPath,
+		DistributedOutputDir: defaultDistributedOutputDir,
+		ArtifactsRoot:        defaultArtifactsRoot,
+		Now:                  time.Now,
+		Stdout:               os.Stdout,
 	}); err != nil {
 		panic(err)
 	}
@@ -98,6 +150,11 @@ func main() {
 func runDeploygen(args []string, options deploygenOptions) error {
 	flags := flag.NewFlagSet("deploygen", flag.ContinueOnError)
 	flags.SetOutput(options.Stdout)
+	mode := flags.String(
+		"mode",
+		localMode,
+		"modalita di deployment: local o distributed",
+	)
 	experimentPath := flags.String(
 		"experiment",
 		defaultExperimentPath,
@@ -121,6 +178,22 @@ func runDeploygen(args []string, options deploygenOptions) error {
 	if len(edges) == 0 {
 		return fmt.Errorf("nessun Edge trovato nella topologia")
 	}
+
+	switch *mode {
+	case localMode:
+		return generateLocalDeployment(config, edges, options)
+	case distributedMode:
+		return generateDistributedDeployment(config, edges, options)
+	default:
+		return fmt.Errorf("modalita di deployment non valida %q: usare local o distributed", *mode)
+	}
+}
+
+func generateLocalDeployment(
+	config experiment.Config,
+	edges []EdgeDeployment,
+	options deploygenOptions,
+) error {
 
 	replayStartAt := options.Now().UTC().Add(
 		config.Workload.StartLeadTime.Duration(),
@@ -169,6 +242,41 @@ func runDeploygen(args []string, options deploygenOptions) error {
 		"\nGenerato: %s\n",
 		options.OutputPath,
 	)
+
+	return nil
+}
+
+func generateDistributedDeployment(
+	config experiment.Config,
+	edges []EdgeDeployment,
+	options deploygenOptions,
+) error {
+	resolved := experiment.ResolveDefaults(config)
+	composes := buildDistributedComposes(edges, resolved)
+
+	if err := os.MkdirAll(options.DistributedOutputDir, 0755); err != nil {
+		return err
+	}
+	for _, compose := range composes {
+		path := filepath.Join(options.DistributedOutputDir, compose.Filename)
+		if err := os.WriteFile(path, []byte(compose.Content), 0644); err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintf(options.Stdout, "Experiment: %s\n\n", resolved.Experiment.Name)
+	fmt.Fprintln(options.Stdout, "Mode: distributed")
+	fmt.Fprintln(options.Stdout, "Replay start at: runtime REPLAY_START_AT (required)")
+	fmt.Fprintf(options.Stdout, "Topologia letta: %d Edge\n", len(edges))
+	fmt.Fprintf(options.Stdout, "Cloud workers: %d\n\n", resolved.Cloud.Workers)
+
+	for _, compose := range composes {
+		fmt.Fprintf(
+			options.Stdout,
+			"Generato: %s\n",
+			filepath.Join(options.DistributedOutputDir, compose.Filename),
+		)
+	}
 
 	return nil
 }
@@ -373,8 +481,91 @@ func buildCompose(
 	edges []EdgeDeployment,
 	config experiment.EffectiveConfig,
 ) string {
-	cloudWorkers := make([]composeCloudWorker, 0, config.Cloud.Workers)
-	for workerNumber := 0; workerNumber < config.Cloud.Workers; workerNumber++ {
+	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(
+		edges,
+		config.Cloud.Workers,
+	)
+
+	data := composeTemplateData{
+		ExperimentName: config.Experiment.Name,
+
+		CloudWorkers:          cloudWorkers,
+		CloudWindowSize:       config.Cloud.WindowSize.String(),
+		GlobalWatermarkDelay:  config.Global.WatermarkDelay.String(),
+		GlobalEdgeIdleTimeout: config.Global.EdgeIdleTimeout.String(),
+		ExpectedEdgeIDs:       expectedEdgeIDs,
+
+		Edges:                    composeEdges,
+		EdgeWindowSize:           config.Edge.WindowSize.String(),
+		EdgeIngressQueueCapacity: config.Edge.IngressQueueCapacity,
+
+		MaxEvents:              config.Workload.MaxEvents,
+		ReplayEpoch:            deploymentReplayEpoch,
+		ReplayStartAt:          config.Workload.ReplayStartAt,
+		AccelerationFactor:     formatFloat(config.Workload.AccelerationFactor),
+		TelemetryQueueCapacity: config.Simulator.TelemetryQueueCapacity,
+		StartLateTolerance:     config.Simulator.StartLateTolerance.String(),
+	}
+
+	return renderCompose(composeTemplate, data)
+}
+
+func buildDistributedComposes(
+	edges []EdgeDeployment,
+	config experiment.Config,
+) []generatedCompose {
+	config = experiment.ResolveDefaults(config)
+	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(
+		edges,
+		config.Cloud.Workers,
+	)
+
+	data := composeTemplateData{
+		ExperimentName: config.Experiment.Name,
+
+		CloudWorkers:          cloudWorkers,
+		CloudWindowSize:       config.Cloud.WindowSize.String(),
+		GlobalWatermarkDelay:  config.Global.WatermarkDelay.String(),
+		GlobalEdgeIdleTimeout: config.Global.EdgeIdleTimeout.String(),
+		ExpectedEdgeIDs:       expectedEdgeIDs,
+
+		Edges:                    composeEdges,
+		EdgeWindowSize:           config.Edge.WindowSize.String(),
+		EdgeIngressQueueCapacity: config.Edge.IngressQueueCapacity,
+
+		MaxEvents:              config.Workload.MaxEvents,
+		ReplayEpoch:            deploymentReplayEpoch,
+		AccelerationFactor:     formatFloat(config.Workload.AccelerationFactor),
+		TelemetryQueueCapacity: config.Simulator.TelemetryQueueCapacity,
+		StartLateTolerance:     config.Simulator.StartLateTolerance.String(),
+	}
+
+	return []generatedCompose{
+		{
+			Filename: cloudCoreComposeFilename,
+			Content:  renderCompose(distributedCloudCoreTemplate, data),
+		},
+		{
+			Filename: workersComposeFilename,
+			Content:  renderCompose(distributedWorkersTemplate, data),
+		},
+		{
+			Filename: edgeComposeFilename,
+			Content:  renderCompose(distributedEdgeTemplate, data),
+		},
+		{
+			Filename: simulatorComposeFilename,
+			Content:  renderCompose(distributedSimulatorTemplate, data),
+		},
+	}
+}
+
+func buildComposeTopology(
+	edges []EdgeDeployment,
+	workers int,
+) ([]composeCloudWorker, []composeEdge, string) {
+	cloudWorkers := make([]composeCloudWorker, 0, workers)
+	for workerNumber := 0; workerNumber < workers; workerNumber++ {
 		cloudWorkers = append(cloudWorkers, composeCloudWorker{
 			WorkerID: fmt.Sprintf("cloud-worker-%d", workerNumber),
 		})
@@ -392,27 +583,10 @@ func buildCompose(
 		expectedEdgeIDs = append(expectedEdgeIDs, edge.EdgeID)
 	}
 
-	data := composeTemplateData{
-		ExperimentName: config.Experiment.Name,
+	return cloudWorkers, composeEdges, strings.Join(expectedEdgeIDs, ",")
+}
 
-		CloudWorkers:          cloudWorkers,
-		CloudWindowSize:       config.Cloud.WindowSize.String(),
-		GlobalWatermarkDelay:  config.Global.WatermarkDelay.String(),
-		GlobalEdgeIdleTimeout: config.Global.EdgeIdleTimeout.String(),
-		ExpectedEdgeIDs:       strings.Join(expectedEdgeIDs, ","),
-
-		Edges:                    composeEdges,
-		EdgeWindowSize:           config.Edge.WindowSize.String(),
-		EdgeIngressQueueCapacity: config.Edge.IngressQueueCapacity,
-
-		MaxEvents:              config.Workload.MaxEvents,
-		ReplayEpoch:            deploymentReplayEpoch,
-		ReplayStartAt:          config.Workload.ReplayStartAt,
-		AccelerationFactor:     formatFloat(config.Workload.AccelerationFactor),
-		TelemetryQueueCapacity: config.Simulator.TelemetryQueueCapacity,
-		StartLateTolerance:     config.Simulator.StartLateTolerance.String(),
-	}
-
+func renderCompose(composeTemplate *template.Template, data composeTemplateData) string {
 	var builder strings.Builder
 	if err := composeTemplate.Execute(&builder, data); err != nil {
 		panic(fmt.Errorf("rendering Docker Compose fallito: %w", err))

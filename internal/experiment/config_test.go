@@ -117,6 +117,24 @@ func TestBuildEffectiveDefaultsGlobalWatermarkAndIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestResolveDefaultsDoesNotRequireReplayStart(t *testing.T) {
+	config := validConfig()
+	config.Simulator.StartLateTolerance = 0
+	config.Global = GlobalConfig{}
+
+	resolved := ResolveDefaults(config)
+
+	if resolved.Simulator.StartLateTolerance.Duration() != 10*time.Second {
+		t.Fatalf("start late tolerance inattesa: %s", resolved.Simulator.StartLateTolerance)
+	}
+	if resolved.Global.WatermarkDelay.Duration() != config.Cloud.WindowSize.Duration() {
+		t.Fatalf("watermark delay inatteso: %s", resolved.Global.WatermarkDelay)
+	}
+	if resolved.Global.EdgeIdleTimeout.Duration() != 5*time.Second {
+		t.Fatalf("edge idle timeout inatteso: %s", resolved.Global.EdgeIdleTimeout)
+	}
+}
+
 func validConfig() Config {
 	return Config{
 		Experiment: ExperimentConfig{Name: "baseline"},

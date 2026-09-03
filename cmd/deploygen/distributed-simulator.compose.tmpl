@@ -1,0 +1,22 @@
+services:
+
+{{range .Edges}}  # {{.EdgeID}}: {{.SensorCount}} sensors
+  {{.SimulatorService}}:
+    image: continuum-simulator:local
+    container_name: {{.SimulatorService}}
+    profiles: ["replay"]
+    environment:
+      SITE_ID: "{{.EdgeID}}"
+      MQTT_ENDPOINT: "tcp://${EDGE_HOST}:{{.MQTTPort}}"
+      REPLAY_FILE: "/app/dataset/derived/replay_by_edge/{{.EdgeID}}.csv"
+      MAX_EVENTS: "{{$.MaxEvents}}"
+      REPLAY_EPOCH: "{{$.ReplayEpoch}}"
+      REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
+      ACCELERATION_FACTOR: "{{$.AccelerationFactor}}"
+      TELEMETRY_QUEUE_CAPACITY: "{{$.TelemetryQueueCapacity}}"
+      START_LATE_TOLERANCE: "{{$.StartLateTolerance}}"
+    volumes:
+      - ../../../dataset:/app/dataset:ro
+    restart: "no"
+
+{{end}}

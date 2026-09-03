@@ -1,0 +1,45 @@
+services:
+
+{{range .Edges}}  # {{.EdgeID}}: {{.SensorCount}} sensors
+  {{.MQTTService}}:
+    image: eclipse-mosquitto:2
+    container_name: {{.MQTTService}}
+    ports:
+      - "{{.MQTTPort}}:1883"
+    volumes:
+      - ../../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-p", "1883", "-t", "healthcheck", "-m", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - {{.ZoneNetwork}}
+
+  {{.EdgeID}}:
+    image: continuum-edge:local
+    container_name: {{.EdgeID}}
+    environment:
+      EDGE_ID: "{{.EdgeID}}"
+      MQTT_BROKER: "tcp://{{.MQTTService}}:1883"
+      WINDOW_SIZE: "{{$.EdgeWindowSize}}"
+      EDGE_INGRESS_QUEUE_CAPACITY: "{{$.EdgeIngressQueueCapacity}}"
+      KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
+      KAFKA_TOPIC: "edge-aggregates"
+    depends_on:
+      {{.MQTTService}}:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/readyz >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+    restart: unless-stopped
+    networks:
+      - {{.ZoneNetwork}}
+
+{{end}}networks:
+{{range .Edges}}  zone-{{.EdgeID}}:
+    driver: bridge
+{{end}}
