@@ -48,9 +48,10 @@ type composeEdge struct {
 type composeTemplateData struct {
 	ExperimentName string
 
-	CloudWorkers    []composeCloudWorker
-	CloudWindowSize string
-	ExpectedEdgeIDs string
+	CloudWorkers         []composeCloudWorker
+	CloudWindowSize      string
+	GlobalWatermarkDelay string
+	ExpectedEdgeIDs      string
 
 	Edges                    []composeEdge
 	EdgeWindowSize           string
@@ -61,6 +62,7 @@ type composeTemplateData struct {
 	ReplayStartAt          string
 	AccelerationFactor     string
 	TelemetryQueueCapacity int
+	StartLateTolerance     string
 }
 
 type deploygenOptions struct {
@@ -389,9 +391,10 @@ func buildCompose(
 	data := composeTemplateData{
 		ExperimentName: config.Experiment.Name,
 
-		CloudWorkers:    cloudWorkers,
-		CloudWindowSize: config.Cloud.WindowSize.String(),
-		ExpectedEdgeIDs: strings.Join(expectedEdgeIDs, ","),
+		CloudWorkers:         cloudWorkers,
+		CloudWindowSize:      config.Cloud.WindowSize.String(),
+		GlobalWatermarkDelay: config.Global.WatermarkDelay.String(),
+		ExpectedEdgeIDs:      strings.Join(expectedEdgeIDs, ","),
 
 		Edges:                    composeEdges,
 		EdgeWindowSize:           config.Edge.WindowSize.String(),
@@ -402,6 +405,7 @@ func buildCompose(
 		ReplayStartAt:          config.Workload.ReplayStartAt,
 		AccelerationFactor:     formatFloat(config.Workload.AccelerationFactor),
 		TelemetryQueueCapacity: config.Simulator.TelemetryQueueCapacity,
+		StartLateTolerance:     config.Simulator.StartLateTolerance.String(),
 	}
 
 	var builder strings.Builder

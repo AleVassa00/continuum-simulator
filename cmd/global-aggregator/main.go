@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -42,6 +43,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	watermarkDelay, err := loadGlobalWatermarkDelay(os.Getenv, windowSize)
+	if err != nil {
+		panic(err)
+	}
 	expectedEdgeIDs, err := loadExpectedEdgeIDs(os.Getenv)
 	if err != nil {
 		panic(err)
@@ -50,6 +55,7 @@ func main() {
 	aggregator, err := globalaggregator.New(
 		expectedEdgeIDs,
 		windowSize,
+		watermarkDelay,
 		newJSONLogSink(os.Stdout),
 	)
 	if err != nil {
@@ -77,6 +83,7 @@ func main() {
 	fmt.Printf("Input topic: %s\n", inputTopic)
 	fmt.Printf("Consumer group: %s\n", groupID)
 	fmt.Printf("Global window: %s\n", windowSize)
+	fmt.Printf("Watermark delay: %s\n", watermarkDelay)
 	fmt.Printf("Expected Edge: %s\n\n", strings.Join(expectedEdgeIDs, ","))
 
 	ctx, stop := signal.NotifyContext(
@@ -172,6 +179,10 @@ func (processor *GlobalMessageProcessor) Process(
 			)
 		}
 		if err := processor.aggregator.Add(ctx, input); err != nil {
+			if errors.Is(err, globalaggregator.ErrClosedWindow) {
+				fmt.Printf("Global Aggregator: late aggregate scartato (%v)\n", err)
+				return false, nil
+			}
 			return false, err
 		}
 		return false, nil
@@ -301,6 +312,24 @@ func loadGlobalWindowSize(
 		)
 	}
 	return windowSize, nil
+}
+
+func loadGlobalWatermarkDelay(
+	getenv func(string) string,
+	defaultDelay time.Duration,
+) (time.Duration, error) {
+	value := strings.TrimSpace(getenv("GLOBAL_WATERMARK_DELAY"))
+	if value == "" {
+		return defaultDelay, nil
+	}
+	delay, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("GLOBAL_WATERMARK_DELAY non valida %q: %w", value, err)
+	}
+	if delay <= 0 {
+		return 0, fmt.Errorf("GLOBAL_WATERMARK_DELAY deve essere maggiore di zero")
+	}
+	return delay, nil
 }
 
 func loadExpectedEdgeIDs(

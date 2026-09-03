@@ -348,7 +348,7 @@ func TestNewValidatesExpectedEdges(t *testing.T) {
 		"duplicate":  {"edge-0", "edge-0"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := New(edgeIDs, 15*time.Minute, discardSink); err == nil {
+			if _, err := New(edgeIDs, 15*time.Minute, 15*time.Minute, discardSink); err == nil {
 				t.Fatal("configurazione attesa invalida")
 			}
 		})
@@ -425,7 +425,7 @@ func newTestAggregator(
 	sink GlobalAggregateSink,
 ) *Aggregator {
 	t.Helper()
-	aggregator, err := New(expected, 15*time.Minute, sink)
+	aggregator, err := New(expected, 15*time.Minute, 15*time.Minute, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,5 +546,58 @@ func assertGlobalMetric(
 	if actual.Min == nil || *actual.Min != minimum ||
 		actual.Max == nil || *actual.Max != maximum {
 		t.Fatalf("range=[%v,%v], atteso=[%f,%f]", actual.Min, actual.Max, minimum, maximum)
+	}
+}
+
+func TestWatermarkEmitsPartialWindowAndDropsLateData(t *testing.T) {
+	outputs := make([]model.GlobalAggregate, 0)
+	aggregator := newTestAggregator(t, testEdgeIDs(3), collectSink(&outputs))
+
+	firstWindow := globalTestTime(10, 0)
+	thirdWindow := globalTestTime(10, 30)
+
+	// Invia solo da 2 edge su 3 per la finestra delle 10:00
+	for _, edgeID := range []string{"edge-0", "edge-1"} {
+		if err := aggregator.Add(
+			context.Background(),
+			testCloudAggregate(edgeID, firstWindow, 1, 0, 10, 10, 10),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Nessuna emissione finora (watermark non ancora avanzato)
+	if len(outputs) != 0 {
+		t.Fatalf("emesso prematuramente: %#v", outputs)
+	}
+
+	// Ora arriva un aggregato della terza finestra (10:30-10:45)
+	// Watermark = 10:45 - (15m + 15m) = 10:15 >= prima finestra (10:15)
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", thirdWindow, 1, 0, 20, 20, 20),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// La prima finestra deve essere stata emessa con ContributingEdges = 2!
+	if len(outputs) != 1 {
+		t.Fatalf("attesa 1 finestra emessa dal watermark, trovate %d", len(outputs))
+	}
+	emitted := outputs[0]
+	if emitted.ContributingEdges != 2 || emitted.ExpectedEdges != 3 {
+		t.Fatalf("contributori inattesi: contributing=%d expected=%d", emitted.ContributingEdges, emitted.ExpectedEdges)
+	}
+
+	// Un aggregato tardivo per la prima finestra deve essere scartato come late data
+	err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-2", firstWindow, 1, 0, 30, 30, 30),
+	)
+	if !errors.Is(err, ErrClosedWindow) {
+		t.Fatalf("atteso ErrClosedWindow, ottenuto %v", err)
+	}
+	if aggregator.LateAggregatesDropped() != 1 {
+		t.Fatalf("atteso lateAggregatesDropped=1, ottenuto %d", aggregator.LateAggregatesDropped())
 	}
 }

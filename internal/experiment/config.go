@@ -20,6 +20,7 @@ type Config struct {
 	Simulator  SimulatorConfig  `yaml:"simulator"`
 	Edge       EdgeConfig       `yaml:"edge"`
 	Cloud      CloudConfig      `yaml:"cloud"`
+	Global     GlobalConfig     `yaml:"global,omitempty"`
 }
 
 type ExperimentConfig struct {
@@ -33,7 +34,8 @@ type WorkloadConfig struct {
 }
 
 type SimulatorConfig struct {
-	TelemetryQueueCapacity int `yaml:"telemetry_queue_capacity"`
+	TelemetryQueueCapacity int      `yaml:"telemetry_queue_capacity"`
+	StartLateTolerance     Duration `yaml:"start_late_tolerance,omitempty"`
 }
 
 type EdgeConfig struct {
@@ -46,12 +48,17 @@ type CloudConfig struct {
 	WindowSize Duration `yaml:"window_size"`
 }
 
+type GlobalConfig struct {
+	WatermarkDelay Duration `yaml:"watermark_delay,omitempty"`
+}
+
 type EffectiveConfig struct {
 	Experiment ExperimentConfig        `yaml:"experiment"`
 	Workload   EffectiveWorkloadConfig `yaml:"workload"`
 	Simulator  SimulatorConfig         `yaml:"simulator"`
 	Edge       EdgeConfig              `yaml:"edge"`
 	Cloud      CloudConfig             `yaml:"cloud"`
+	Global     GlobalConfig            `yaml:"global"`
 }
 
 type EffectiveWorkloadConfig struct {
@@ -144,6 +151,12 @@ func (config Config) Validate() error {
 	if config.Simulator.TelemetryQueueCapacity <= 0 {
 		return fmt.Errorf("simulator.telemetry_queue_capacity deve essere maggiore di zero")
 	}
+	if config.Simulator.StartLateTolerance.Duration() < 0 {
+		return fmt.Errorf("simulator.start_late_tolerance non puo essere negativo")
+	}
+	if config.Global.WatermarkDelay.Duration() < 0 {
+		return fmt.Errorf("global.watermark_delay non puo essere negativo")
+	}
 	if config.Edge.WindowSize.Duration() <= 0 {
 		return fmt.Errorf("edge.window_size deve essere maggiore di zero")
 	}
@@ -168,6 +181,16 @@ func (config Config) Validate() error {
 }
 
 func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
+	simulator := config.Simulator
+	if simulator.StartLateTolerance.Duration() <= 0 {
+		simulator.StartLateTolerance = Duration(10 * time.Second)
+	}
+
+	global := config.Global
+	if global.WatermarkDelay.Duration() <= 0 {
+		global.WatermarkDelay = config.Cloud.WindowSize
+	}
+
 	return EffectiveConfig{
 		Experiment: config.Experiment,
 		Workload: EffectiveWorkloadConfig{
@@ -176,9 +199,10 @@ func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
 			StartLeadTime:      config.Workload.StartLeadTime,
 			ReplayStartAt:      replayStartAt.UTC().Format(time.RFC3339Nano),
 		},
-		Simulator: config.Simulator,
+		Simulator: simulator,
 		Edge:      config.Edge,
 		Cloud:     config.Cloud,
+		Global:    global,
 	}
 }
 

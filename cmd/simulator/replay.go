@@ -67,8 +67,6 @@ type ReplayStats struct {
 	EOSFailures  int // Numero di fallimenti durante publish o attesa del PUBACK dell'EndOfReplay.
 }
 
-const replayStartLateTolerance = 1 * time.Second
-
 func (
 pacer ReplayPacer,
 ) ScheduledTime(
@@ -300,6 +298,7 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRun
 	var previousEventTime time.Time
 
 	for {
+		//teniamo il conto
 		if config.MaxEvents > 0 && stats.OfferedEvents >= config.MaxEvents {
 			break
 		}
@@ -317,6 +316,7 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRun
 		if err != nil {
 			return err
 		}
+		//TODO vedere bene questo
 
 		// Ogni shard deve conservare l'ordine temporale del replay globale.
 		if !previousEventTime.IsZero() && measurement.EventTime.Before(previousEventTime) {
@@ -345,13 +345,17 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRun
 		if stats.OfferedEvents == 0 {
 			actualTime := runtime.Now()
 			lateness := actualTime.Sub(scheduledTime)
-			if lateness > replayStartLateTolerance {
+			tolerance := config.StartLateTolerance
+			if tolerance <= 0 {
+				tolerance = defaultStartLateTolerance
+			}
+			if lateness > tolerance {
 				return fmt.Errorf("replay %s avviato troppo tardi: primo evento scheduled_at=%s actual_at=%s lateness=%s tolleranza=%s",
 					config.SiteID,
 					scheduledTime.UTC().Format(time.RFC3339Nano),
 					actualTime.UTC().Format(time.RFC3339Nano),
 					lateness,
-					replayStartLateTolerance,
+					tolerance,
 				)
 			}
 		}
@@ -462,34 +466,22 @@ func printReplaySummary(
 	fmt.Printf("EOS fallimenti: %d\n", stats.EOSFailures)
 }
 
-func buildColumnIndex(
-	header []string,
-) map[string]int {
-	columns := make(
-		map[string]int,
-	)
+func buildColumnIndex(header []string) map[string]int {
+	columns := make(map[string]int)
 
 	for index, name := range header {
 		name = strings.TrimSpace(name)
-
 		columns[name] = index
 	}
-
 	return columns
 }
 
-func requiredColumn(
-	columns map[string]int,
-	name string,
-) (int, error) {
+func requiredColumn(columns map[string]int, name string) (int, error) {
 	index, found := columns[name]
 
 	if !found {
 		return 0,
-			fmt.Errorf(
-				"colonna %q non trovata nel CSV",
-				name,
-			)
+			fmt.Errorf("colonna %q non trovata nel CSV", name)
 	}
 
 	return index, nil

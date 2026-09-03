@@ -309,7 +309,7 @@ func TestReplayRejectsDecreasingEventTime(t *testing.T) {
 
 func TestReplayRejectsLateStartButNotLaterLateness(t *testing.T) {
 	config := validSimulatorConfig()
-	lateClock := newFakeClock(config.ReplayStartAt.Add(5 * time.Second))
+	lateClock := newFakeClock(config.ReplayStartAt.Add(15 * time.Second))
 
 	stats, err := replaySite(
 		replayReader(

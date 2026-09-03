@@ -2,6 +2,7 @@ package globalaggregator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,6 +16,8 @@ type GlobalAggregateSink func(
 	context.Context,
 	model.GlobalAggregate,
 ) error
+
+var ErrClosedWindow = errors.New("finestra globale gia chiusa")
 
 type windowKey struct {
 	start int64
@@ -42,13 +45,18 @@ type windowState struct {
 }
 
 type Aggregator struct {
-	expectedEdges map[string]struct{}
-	endedEdges    map[string]struct{}
-	windowSize    time.Duration
+	expectedEdges  map[string]struct{}
+	endedEdges     map[string]struct{}
+	windowSize     time.Duration
+	watermarkDelay time.Duration
+
+	maxEventTime time.Time
 
 	windows       map[windowKey]*windowState
 	closedWindows map[windowKey]struct{}
 	complete      bool
+
+	lateAggregatesDropped uint64
 
 	sink GlobalAggregateSink
 	now  func() time.Time
@@ -57,6 +65,7 @@ type Aggregator struct {
 func New(
 	expectedEdgeIDs []string,
 	windowSize time.Duration,
+	watermarkDelay time.Duration,
 	sink GlobalAggregateSink,
 ) (*Aggregator, error) {
 	if len(expectedEdgeIDs) == 0 {
@@ -66,6 +75,9 @@ func New(
 		return nil, fmt.Errorf(
 			"GLOBAL_WINDOW_SIZE deve essere maggiore di zero",
 		)
+	}
+	if watermarkDelay <= 0 {
+		watermarkDelay = windowSize
 	}
 	if sink == nil {
 		return nil, fmt.Errorf("GlobalAggregate sink non configurato")
@@ -89,14 +101,26 @@ func New(
 	}
 
 	return &Aggregator{
-		expectedEdges: expected,
-		endedEdges:    make(map[string]struct{}, len(expected)),
-		windowSize:    windowSize,
-		windows:       make(map[windowKey]*windowState),
-		closedWindows: make(map[windowKey]struct{}),
-		sink:          sink,
-		now:           time.Now,
+		expectedEdges:  expected,
+		endedEdges:     make(map[string]struct{}, len(expected)),
+		windowSize:     windowSize,
+		watermarkDelay: watermarkDelay,
+		windows:        make(map[windowKey]*windowState),
+		closedWindows:  make(map[windowKey]struct{}),
+		sink:           sink,
+		now:            time.Now,
 	}, nil
+}
+
+func (aggregator *Aggregator) LateAggregatesDropped() uint64 {
+	return aggregator.lateAggregatesDropped
+}
+
+func (aggregator *Aggregator) Watermark() time.Time {
+	if aggregator.maxEventTime.IsZero() {
+		return time.Time{}
+	}
+	return aggregator.maxEventTime.Add(-(aggregator.watermarkDelay + aggregator.windowSize))
 }
 
 func (aggregator *Aggregator) Add(
@@ -132,11 +156,13 @@ func (aggregator *Aggregator) Add(
 
 	key := makeWindowKey(input.WindowStart, input.WindowEnd)
 	if _, closed := aggregator.closedWindows[key]; closed {
+		aggregator.lateAggregatesDropped++
 		return fmt.Errorf(
-			"CloudEdgeAggregate %q tenta di riaprire la finestra globale gia chiusa [%s,%s)",
+			"CloudEdgeAggregate %q tenta di riaprire la finestra globale gia chiusa [%s,%s): %w",
 			input.AggregateID,
 			input.WindowStart.Format(time.RFC3339),
 			input.WindowEnd.Format(time.RFC3339),
+			ErrClosedWindow,
 		)
 	}
 
@@ -159,15 +185,37 @@ func (aggregator *Aggregator) Add(
 	}
 
 	state.add(input)
-	if len(state.contributors) != len(aggregator.expectedEdges) {
-		return nil
+
+	if input.WindowEnd.After(aggregator.maxEventTime) {
+		aggregator.maxEventTime = input.WindowEnd
 	}
 
-	if err := aggregator.emit(ctx, state); err != nil {
-		return err
+	// 1. Fast path: se tutti i 13 Edge sono arrivati per questa finestra, emetti subito
+	if len(state.contributors) == len(aggregator.expectedEdges) {
+		if err := aggregator.emit(ctx, state); err != nil {
+			return err
+		}
+		delete(aggregator.windows, key)
+		aggregator.closedWindows[key] = struct{}{}
 	}
-	delete(aggregator.windows, key)
-	aggregator.closedWindows[key] = struct{}{}
+
+	// 2. Watermark trigger: chiudi finestre aperte per cui Watermark >= WindowEnd
+	watermark := aggregator.Watermark()
+	if !watermark.IsZero() {
+		for _, wKey := range aggregator.sortedOpenWindowKeys() {
+			wState := aggregator.windows[wKey]
+			if wState == nil {
+				continue
+			}
+			if !watermark.Before(wState.end) {
+				if err := aggregator.emit(ctx, wState); err != nil {
+					return err
+				}
+				delete(aggregator.windows, wKey)
+				aggregator.closedWindows[wKey] = struct{}{}
+			}
+		}
+	}
 
 	return nil
 }

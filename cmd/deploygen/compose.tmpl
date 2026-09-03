@@ -100,6 +100,7 @@ services:
       KAFKA_INPUT_TOPIC: "cloud-edge-aggregates"
       KAFKA_GROUP_ID: "global-aggregator"
       GLOBAL_WINDOW_SIZE: "{{.CloudWindowSize}}"
+      GLOBAL_WATERMARK_DELAY: "{{.GlobalWatermarkDelay}}"
       EXPECTED_EDGE_IDS: "{{.ExpectedEdgeIDs}}"
 
     depends_on:
@@ -166,6 +167,7 @@ services:
       REPLAY_START_AT: "{{$.ReplayStartAt}}"
       ACCELERATION_FACTOR: "{{$.AccelerationFactor}}"
       TELEMETRY_QUEUE_CAPACITY: "{{$.TelemetryQueueCapacity}}"
+      START_LATE_TOLERANCE: "{{$.StartLateTolerance}}"
     volumes:
       - ../../dataset:/app/dataset:ro
     depends_on:

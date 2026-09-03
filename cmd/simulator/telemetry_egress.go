@@ -45,6 +45,7 @@ type TelemetryEgressFactory func(
 
 // costruisce un gestore della coda e lancia la goroutine che si occupa di pubblicare su MQTT
 func newTelemetryEgress(capacity int, publish TelemetryPublisher, now func() time.Time) (*TelemetryEgress, error) {
+
 	if capacity <= 0 {
 		return nil, fmt.Errorf("TELEMETRY_QUEUE_CAPACITY deve essere maggiore di zero")
 	}
@@ -78,7 +79,7 @@ func (egress *TelemetryEgress) TryEnqueue(event model.SensorEvent) bool {
 }
 
 func (
-	egress *TelemetryEgress,
+egress *TelemetryEgress,
 ) CloseAndWait() TelemetryEgressStats {
 	egress.closeOnce.Do(func() {
 		close(egress.queue)

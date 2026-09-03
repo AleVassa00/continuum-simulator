@@ -18,6 +18,7 @@ type SimulatorConfig struct {
 	ReplayStartAt          time.Time
 	AccelerationFactor     float64
 	TelemetryQueueCapacity int
+	StartLateTolerance     time.Duration
 }
 
 const (
@@ -29,6 +30,9 @@ const (
 
 	// Numero massimo di eventi che possono attendere localmente di essere pubblicati verso MQTT
 	defaultTelemetryQueueCapacity = 1000
+
+	// Tolleranza per il ritardo di avvio del replay
+	defaultStartLateTolerance = 10 * time.Second
 )
 
 // loadSimulatorConfig costruisce la configurazione del simulatore leggendo e validando le variabili d'ambiente
@@ -85,6 +89,11 @@ func loadSimulatorConfig(getenv func(string) string) (SimulatorConfig, error) {
 		return SimulatorConfig{}, err
 	}
 
+	startLateTolerance, err := parseStartLateTolerance(getenv("START_LATE_TOLERANCE"))
+	if err != nil {
+		return SimulatorConfig{}, err
+	}
+
 	return SimulatorConfig{
 		SiteID:                 siteID,
 		MQTTEndpoint:           mqttEndpoint,
@@ -94,6 +103,7 @@ func loadSimulatorConfig(getenv func(string) string) (SimulatorConfig, error) {
 		ReplayStartAt:          replayStartAt,
 		AccelerationFactor:     accelerationFactor,
 		TelemetryQueueCapacity: telemetryQueueCapacity,
+		StartLateTolerance:     startLateTolerance,
 	}, nil
 }
 
@@ -171,4 +181,22 @@ func parseMaxEvents(value string) (int, error) {
 	}
 
 	return maxEvents, nil
+}
+
+func parseStartLateTolerance(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultStartLateTolerance, nil
+	}
+
+	tolerance, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("START_LATE_TOLERANCE non valida %q: %w", value, err)
+	}
+
+	if tolerance <= 0 {
+		return 0, fmt.Errorf("START_LATE_TOLERANCE deve essere maggiore di zero")
+	}
+
+	return tolerance, nil
 }

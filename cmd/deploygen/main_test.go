@@ -16,7 +16,7 @@ import (
 func TestBuildComposeMatchesPreRefactorOutput(t *testing.T) {
 	compose := buildCompose(testEdges(2), testEffectiveConfig(2))
 	checksum := fmt.Sprintf("%x", sha256.Sum256([]byte(compose)))
-	const expectedChecksum = "520efbc0ccdeee2e01ec06614775841a6733f456db0cd2467b1716ed9a3ca30f"
+	const expectedChecksum = "d68348d2e827ac2b30a59efa1b9f8817178c22caab82e6711036be79bc5fd7c1"
 
 	if checksum != expectedChecksum {
 		t.Fatalf(

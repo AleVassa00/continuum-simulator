@@ -242,6 +242,7 @@ func newTestGlobalProcessor(
 	aggregator, err := globalaggregator.New(
 		expectedEdgeIDs,
 		15*time.Minute,
+		15*time.Minute,
 		sink,
 	)
 	if err != nil {

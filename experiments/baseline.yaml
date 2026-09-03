@@ -8,6 +8,7 @@ workload:
 
 simulator:
   telemetry_queue_capacity: 1000
+  start_late_tolerance: 10s
 
 edge:
   window_size: 5m
@@ -16,3 +17,6 @@ edge:
 cloud:
   workers: 1
   window_size: 15m
+
+global:
+  watermark_delay: 15m
