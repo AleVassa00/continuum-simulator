@@ -45,12 +45,15 @@ type windowState struct {
 }
 
 type Aggregator struct {
-	expectedEdges  map[string]struct{}
-	endedEdges     map[string]struct{}
-	windowSize     time.Duration
-	watermarkDelay time.Duration
+	expectedEdges   map[string]struct{}
+	endedEdges      map[string]struct{}
+	windowSize      time.Duration
+	watermarkDelay  time.Duration
+	edgeIdleTimeout time.Duration
 
-	maxEventTime time.Time
+	maxWindowEndByEdge map[string]time.Time
+	lastActivityByEdge map[string]time.Time
+	watermark          time.Time
 
 	windows       map[windowKey]*windowState
 	closedWindows map[windowKey]struct{}
@@ -66,7 +69,26 @@ func New(
 	expectedEdgeIDs []string,
 	windowSize time.Duration,
 	watermarkDelay time.Duration,
+	edgeIdleTimeout time.Duration,
 	sink GlobalAggregateSink,
+) (*Aggregator, error) {
+	return newAggregator(
+		expectedEdgeIDs,
+		windowSize,
+		watermarkDelay,
+		edgeIdleTimeout,
+		sink,
+		time.Now,
+	)
+}
+
+func newAggregator(
+	expectedEdgeIDs []string,
+	windowSize time.Duration,
+	watermarkDelay time.Duration,
+	edgeIdleTimeout time.Duration,
+	sink GlobalAggregateSink,
+	now func() time.Time,
 ) (*Aggregator, error) {
 	if len(expectedEdgeIDs) == 0 {
 		return nil, fmt.Errorf("EXPECTED_EDGE_IDS non puo essere vuota")
@@ -79,8 +101,16 @@ func New(
 	if watermarkDelay <= 0 {
 		watermarkDelay = windowSize
 	}
+	if edgeIdleTimeout <= 0 {
+		return nil, fmt.Errorf(
+			"GLOBAL_EDGE_IDLE_TIMEOUT deve essere maggiore di zero",
+		)
+	}
 	if sink == nil {
 		return nil, fmt.Errorf("GlobalAggregate sink non configurato")
+	}
+	if now == nil {
+		return nil, fmt.Errorf("clock Global Aggregator non configurato")
 	}
 
 	expected := make(map[string]struct{}, len(expectedEdgeIDs))
@@ -99,16 +129,24 @@ func New(
 		}
 		expected[edgeID] = struct{}{}
 	}
+	startedAt := now().UTC()
+	lastActivityByEdge := make(map[string]time.Time, len(expected))
+	for edgeID := range expected {
+		lastActivityByEdge[edgeID] = startedAt
+	}
 
 	return &Aggregator{
-		expectedEdges:  expected,
-		endedEdges:     make(map[string]struct{}, len(expected)),
-		windowSize:     windowSize,
-		watermarkDelay: watermarkDelay,
-		windows:        make(map[windowKey]*windowState),
-		closedWindows:  make(map[windowKey]struct{}),
-		sink:           sink,
-		now:            time.Now,
+		expectedEdges:      expected,
+		endedEdges:         make(map[string]struct{}, len(expected)),
+		windowSize:         windowSize,
+		watermarkDelay:     watermarkDelay,
+		edgeIdleTimeout:    edgeIdleTimeout,
+		maxWindowEndByEdge: make(map[string]time.Time, len(expected)),
+		lastActivityByEdge: lastActivityByEdge,
+		windows:            make(map[windowKey]*windowState),
+		closedWindows:      make(map[windowKey]struct{}),
+		sink:               sink,
+		now:                now,
 	}, nil
 }
 
@@ -117,10 +155,7 @@ func (aggregator *Aggregator) LateAggregatesDropped() uint64 {
 }
 
 func (aggregator *Aggregator) Watermark() time.Time {
-	if aggregator.maxEventTime.IsZero() {
-		return time.Time{}
-	}
-	return aggregator.maxEventTime.Add(-(aggregator.watermarkDelay + aggregator.windowSize))
+	return aggregator.watermark
 }
 
 func (aggregator *Aggregator) Add(
@@ -154,8 +189,17 @@ func (aggregator *Aggregator) Add(
 		return err
 	}
 
+	now := aggregator.now().UTC()
+	aggregator.lastActivityByEdge[input.EdgeID] = now
+	if input.WindowEnd.After(aggregator.maxWindowEndByEdge[input.EdgeID]) {
+		aggregator.maxWindowEndByEdge[input.EdgeID] = input.WindowEnd.UTC()
+	}
+
 	key := makeWindowKey(input.WindowStart, input.WindowEnd)
-	if _, closed := aggregator.closedWindows[key]; closed {
+	_, explicitlyClosed := aggregator.closedWindows[key]
+	closedByWatermark := !aggregator.watermark.IsZero() &&
+		!input.WindowEnd.After(aggregator.watermark)
+	if explicitlyClosed || closedByWatermark {
 		aggregator.lateAggregatesDropped++
 		return fmt.Errorf(
 			"CloudEdgeAggregate %q tenta di riaprire la finestra globale gia chiusa [%s,%s): %w",
@@ -186,11 +230,7 @@ func (aggregator *Aggregator) Add(
 
 	state.add(input)
 
-	if input.WindowEnd.After(aggregator.maxEventTime) {
-		aggregator.maxEventTime = input.WindowEnd
-	}
-
-	// 1. Fast path: se tutti i 13 Edge sono arrivati per questa finestra, emetti subito
+	// 1. Fast path: se tutti gli Edge attesi sono arrivati per questa finestra, emetti subito.
 	if len(state.contributors) == len(aggregator.expectedEdges) {
 		if err := aggregator.emit(ctx, state); err != nil {
 			return err
@@ -199,25 +239,70 @@ func (aggregator *Aggregator) Add(
 		aggregator.closedWindows[key] = struct{}{}
 	}
 
-	// 2. Watermark trigger: chiudi finestre aperte per cui Watermark >= WindowEnd
-	watermark := aggregator.Watermark()
-	if !watermark.IsZero() {
-		for _, wKey := range aggregator.sortedOpenWindowKeys() {
-			wState := aggregator.windows[wKey]
-			if wState == nil {
-				continue
-			}
-			if !watermark.Before(wState.end) {
-				if err := aggregator.emit(ctx, wState); err != nil {
-					return err
-				}
-				delete(aggregator.windows, wKey)
-				aggregator.closedWindows[wKey] = struct{}{}
-			}
+	// 2. Watermark trigger: chiudi finestre aperte per cui Watermark >= WindowEnd.
+	return aggregator.advanceWatermarkAt(ctx, now)
+}
+
+func (aggregator *Aggregator) AdvanceWatermark(ctx context.Context) error {
+	if aggregator.complete {
+		return nil
+	}
+
+	return aggregator.advanceWatermarkAt(ctx, aggregator.now().UTC())
+}
+
+func (aggregator *Aggregator) advanceWatermarkAt(
+	ctx context.Context,
+	now time.Time,
+) error {
+	candidate, available := aggregator.watermarkCandidate(now)
+	if available && candidate.After(aggregator.watermark) {
+		aggregator.watermark = candidate
+	}
+
+	if aggregator.watermark.IsZero() {
+		return nil
+	}
+	for _, key := range aggregator.sortedOpenWindowKeys() {
+		state := aggregator.windows[key]
+		if state == nil || aggregator.watermark.Before(state.end) {
+			continue
 		}
+		if err := aggregator.emit(ctx, state); err != nil {
+			return err
+		}
+		delete(aggregator.windows, key)
+		aggregator.closedWindows[key] = struct{}{}
 	}
 
 	return nil
+}
+
+func (aggregator *Aggregator) watermarkCandidate(
+	now time.Time,
+) (time.Time, bool) {
+	var candidate time.Time
+	activeEdges := 0
+
+	for edgeID := range aggregator.expectedEdges {
+		lastActivity := aggregator.lastActivityByEdge[edgeID]
+		if now.Sub(lastActivity) >= aggregator.edgeIdleTimeout {
+			continue
+		}
+
+		activeEdges++
+		maxWindowEnd := aggregator.maxWindowEndByEdge[edgeID]
+		if maxWindowEnd.IsZero() {
+			return time.Time{}, false
+		}
+
+		edgeWatermark := maxWindowEnd.Add(-aggregator.watermarkDelay)
+		if candidate.IsZero() || edgeWatermark.Before(candidate) {
+			candidate = edgeWatermark
+		}
+	}
+
+	return candidate, activeEdges > 0
 }
 
 func (aggregator *Aggregator) EndReplay(

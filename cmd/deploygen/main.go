@@ -48,10 +48,11 @@ type composeEdge struct {
 type composeTemplateData struct {
 	ExperimentName string
 
-	CloudWorkers         []composeCloudWorker
-	CloudWindowSize      string
-	GlobalWatermarkDelay string
-	ExpectedEdgeIDs      string
+	CloudWorkers          []composeCloudWorker
+	CloudWindowSize       string
+	GlobalWatermarkDelay  string
+	GlobalEdgeIdleTimeout string
+	ExpectedEdgeIDs       string
 
 	Edges                    []composeEdge
 	EdgeWindowSize           string
@@ -191,6 +192,9 @@ func printExperimentSummary(
 	fmt.Fprintln(output, "Cloud:")
 	fmt.Fprintf(output, "  workers: %d\n", config.Cloud.Workers)
 	fmt.Fprintf(output, "  window: %s\n\n", config.Cloud.WindowSize)
+	fmt.Fprintln(output, "Global:")
+	fmt.Fprintf(output, "  watermark delay: %s\n", config.Global.WatermarkDelay)
+	fmt.Fprintf(output, "  edge idle timeout: %s\n\n", config.Global.EdgeIdleTimeout)
 	fmt.Fprintf(output, "Effective config: %s\n\n", effectivePath)
 }
 
@@ -391,10 +395,11 @@ func buildCompose(
 	data := composeTemplateData{
 		ExperimentName: config.Experiment.Name,
 
-		CloudWorkers:         cloudWorkers,
-		CloudWindowSize:      config.Cloud.WindowSize.String(),
-		GlobalWatermarkDelay: config.Global.WatermarkDelay.String(),
-		ExpectedEdgeIDs:      strings.Join(expectedEdgeIDs, ","),
+		CloudWorkers:          cloudWorkers,
+		CloudWindowSize:       config.Cloud.WindowSize.String(),
+		GlobalWatermarkDelay:  config.Global.WatermarkDelay.String(),
+		GlobalEdgeIdleTimeout: config.Global.EdgeIdleTimeout.String(),
+		ExpectedEdgeIDs:       strings.Join(expectedEdgeIDs, ","),
 
 		Edges:                    composeEdges,
 		EdgeWindowSize:           config.Edge.WindowSize.String(),

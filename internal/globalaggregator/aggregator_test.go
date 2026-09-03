@@ -128,9 +128,9 @@ func TestAggregatorKeepsDifferentWindowsSeparate(t *testing.T) {
 
 	for _, input := range []model.CloudEdgeAggregate{
 		testCloudAggregate("edge-0", first, 1, 0, 10, 10, 10),
+		testCloudAggregate("edge-1", first, 1, 0, 40, 40, 40),
 		testCloudAggregate("edge-0", second, 1, 0, 20, 20, 20),
 		testCloudAggregate("edge-1", second, 1, 0, 30, 30, 30),
-		testCloudAggregate("edge-1", first, 1, 0, 40, 40, 40),
 	} {
 		if err := aggregator.Add(context.Background(), input); err != nil {
 			t.Fatal(err)
@@ -140,8 +140,8 @@ func TestAggregatorKeepsDifferentWindowsSeparate(t *testing.T) {
 	if len(outputs) != 2 {
 		t.Fatalf("output=%d, attesi 2", len(outputs))
 	}
-	if !outputs[0].WindowStart.Equal(second) ||
-		!outputs[1].WindowStart.Equal(first) {
+	if !outputs[0].WindowStart.Equal(first) ||
+		!outputs[1].WindowStart.Equal(second) {
 		t.Fatalf("finestre mescolate: %#v", outputs)
 	}
 }
@@ -348,10 +348,25 @@ func TestNewValidatesExpectedEdges(t *testing.T) {
 		"duplicate":  {"edge-0", "edge-0"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := New(edgeIDs, 15*time.Minute, 15*time.Minute, discardSink); err == nil {
+			if _, err := New(
+				edgeIDs,
+				15*time.Minute,
+				15*time.Minute,
+				5*time.Second,
+				discardSink,
+			); err == nil {
 				t.Fatal("configurazione attesa invalida")
 			}
 		})
+	}
+	if _, err := New(
+		[]string{"edge-0"},
+		15*time.Minute,
+		15*time.Minute,
+		0,
+		discardSink,
+	); err == nil {
+		t.Fatal("edge idle timeout nullo accettato")
 	}
 }
 
@@ -425,12 +440,48 @@ func newTestAggregator(
 	sink GlobalAggregateSink,
 ) *Aggregator {
 	t.Helper()
-	aggregator, err := New(expected, 15*time.Minute, 15*time.Minute, sink)
+	clock := &testClock{current: globalTestTime(12, 0)}
+	return newTestAggregatorWithClock(
+		t,
+		expected,
+		5*time.Second,
+		clock,
+		sink,
+	)
+}
+
+func newTestAggregatorWithClock(
+	t *testing.T,
+	expected []string,
+	edgeIdleTimeout time.Duration,
+	clock *testClock,
+	sink GlobalAggregateSink,
+) *Aggregator {
+	t.Helper()
+	aggregator, err := newAggregator(
+		expected,
+		15*time.Minute,
+		15*time.Minute,
+		edgeIdleTimeout,
+		sink,
+		clock.Now,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	aggregator.now = func() time.Time { return globalTestTime(12, 0) }
 	return aggregator
+}
+
+type testClock struct {
+	current time.Time
+}
+
+func (clock *testClock) Now() time.Time {
+	return clock.current
+}
+
+func (clock *testClock) Advance(duration time.Duration) {
+	clock.current = clock.current.Add(duration)
 }
 
 func collectSink(outputs *[]model.GlobalAggregate) GlobalAggregateSink {
@@ -549,55 +600,299 @@ func assertGlobalMetric(
 	}
 }
 
-func TestWatermarkEmitsPartialWindowAndDropsLateData(t *testing.T) {
+func TestFastEdgeDoesNotCloseWindowWhileActiveEdgeIsBehind(t *testing.T) {
 	outputs := make([]model.GlobalAggregate, 0)
-	aggregator := newTestAggregator(t, testEdgeIDs(3), collectSink(&outputs))
+	clock := &testClock{current: globalTestTime(12, 0)}
+	aggregator := newTestAggregatorWithClock(
+		t,
+		testEdgeIDs(2),
+		5*time.Second,
+		clock,
+		collectSink(&outputs),
+	)
 
-	firstWindow := globalTestTime(10, 0)
-	thirdWindow := globalTestTime(10, 30)
-
-	// Invia solo da 2 edge su 3 per la finestra delle 10:00
-	for _, edgeID := range []string{"edge-0", "edge-1"} {
-		if err := aggregator.Add(
-			context.Background(),
-			testCloudAggregate(edgeID, firstWindow, 1, 0, 10, 10, 10),
-		); err != nil {
+	behind := globalTestTime(9, 45)
+	target := globalTestTime(10, 0)
+	ahead := globalTestTime(10, 30)
+	for _, input := range []model.CloudEdgeAggregate{
+		testCloudAggregate("edge-1", behind, 1, 0, 10, 10, 10),
+		testCloudAggregate("edge-0", target, 1, 0, 20, 20, 20),
+		testCloudAggregate("edge-0", ahead, 1, 0, 30, 30, 30),
+	} {
+		if err := aggregator.Add(context.Background(), input); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// Nessuna emissione finora (watermark non ancora avanzato)
 	if len(outputs) != 0 {
-		t.Fatalf("emesso prematuramente: %#v", outputs)
+		t.Fatalf("Edge veloce ha chiuso finestre con Edge attivo indietro: %#v", outputs)
 	}
+}
 
-	// Ora arriva un aggregato della terza finestra (10:30-10:45)
-	// Watermark = 10:45 - (15m + 15m) = 10:15 >= prima finestra (10:15)
+func TestGlobalWatermarkIsMinimumOfActiveEdgeWatermarks(t *testing.T) {
+	clock := &testClock{current: globalTestTime(12, 0)}
+	aggregator := newTestAggregatorWithClock(
+		t,
+		testEdgeIDs(2),
+		5*time.Second,
+		clock,
+		discardSink,
+	)
+
 	if err := aggregator.Add(
 		context.Background(),
-		testCloudAggregate("edge-0", thirdWindow, 1, 0, 20, 20, 20),
+		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 10, 10, 10),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-1", globalTestTime(10, 0), 1, 0, 10, 10, 10),
 	); err != nil {
 		t.Fatal(err)
 	}
 
-	// La prima finestra deve essere stata emessa con ContributingEdges = 2!
-	if len(outputs) != 1 {
-		t.Fatalf("attesa 1 finestra emessa dal watermark, trovate %d", len(outputs))
+	want := globalTestTime(10, 0)
+	if !aggregator.Watermark().Equal(want) {
+		t.Fatalf("watermark=%s, atteso minimo %s", aggregator.Watermark(), want)
 	}
-	emitted := outputs[0]
-	if emitted.ContributingEdges != 2 || emitted.ExpectedEdges != 3 {
-		t.Fatalf("contributori inattesi: contributing=%d expected=%d", emitted.ContributingEdges, emitted.ExpectedEdges)
+}
+
+func TestEdgeSkippingWindowAdvancesWatermarkWithLaterWindow(t *testing.T) {
+	outputs := make([]model.GlobalAggregate, 0)
+	aggregator := newTestAggregator(t, testEdgeIDs(2), collectSink(&outputs))
+
+	firstWindow := globalTestTime(10, 0)
+	secondWindow := globalTestTime(10, 15)
+	for _, input := range []model.CloudEdgeAggregate{
+		testCloudAggregate("edge-0", firstWindow, 1, 0, 10, 10, 10),
+		testCloudAggregate("edge-0", secondWindow, 1, 0, 20, 20, 20),
+		testCloudAggregate("edge-1", secondWindow, 1, 0, 30, 30, 30),
+	} {
+		if err := aggregator.Add(context.Background(), input); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// Un aggregato tardivo per la prima finestra deve essere scartato come late data
+	if len(outputs) != 2 {
+		t.Fatalf("output=%d, attesi finestra completa e finestra saltata", len(outputs))
+	}
+	var skipped *model.GlobalAggregate
+	for index := range outputs {
+		if outputs[index].WindowStart.Equal(firstWindow) {
+			skipped = &outputs[index]
+		}
+	}
+	if skipped == nil || skipped.ContributingEdges != 1 || skipped.ExpectedEdges != 2 {
+		t.Fatalf("finestra saltata non emessa correttamente: %#v", skipped)
+	}
+}
+
+func TestNeverSeenEdgeBlocksUntilIdleTimeout(t *testing.T) {
+	outputs := make([]model.GlobalAggregate, 0)
+	clock := &testClock{current: globalTestTime(12, 0)}
+	aggregator := newTestAggregatorWithClock(
+		t,
+		testEdgeIDs(2),
+		5*time.Second,
+		clock,
+		collectSink(&outputs),
+	)
+
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", globalTestTime(10, 0), 1, 0, 10, 10, 10),
+	); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(4 * time.Second)
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 20, 20, 20),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !aggregator.Watermark().IsZero() || len(outputs) != 0 {
+		t.Fatalf("Edge mai visto escluso prima del timeout: watermark=%s outputs=%d", aggregator.Watermark(), len(outputs))
+	}
+
+	clock.Advance(time.Second)
+	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(outputs) != 1 || !outputs[0].WindowStart.Equal(globalTestTime(10, 0)) {
+		t.Fatalf("finestra non chiusa dopo idle timeout: %#v", outputs)
+	}
+}
+
+func TestSeenEdgeBecomesIdleAfterTimeout(t *testing.T) {
+	outputs := make([]model.GlobalAggregate, 0)
+	clock := &testClock{current: globalTestTime(12, 0)}
+	aggregator := newTestAggregatorWithClock(
+		t,
+		testEdgeIDs(2),
+		5*time.Second,
+		clock,
+		collectSink(&outputs),
+	)
+
+	for _, input := range []model.CloudEdgeAggregate{
+		testCloudAggregate("edge-1", globalTestTime(9, 45), 1, 0, 10, 10, 10),
+		testCloudAggregate("edge-0", globalTestTime(10, 0), 1, 0, 20, 20, 20),
+	} {
+		if err := aggregator.Add(context.Background(), input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clock.Advance(4 * time.Second)
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 30, 30, 30),
+	); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Second)
+	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(outputs) != 2 {
+		t.Fatalf("finestre non chiuse dopo inattivita dell'Edge visto: %#v", outputs)
+	}
+}
+
+func TestReturningIdleEdgeDoesNotMoveWatermarkBackward(t *testing.T) {
+	clock := &testClock{current: globalTestTime(12, 0)}
+	aggregator := newTestAggregatorWithClock(
+		t,
+		testEdgeIDs(2),
+		5*time.Second,
+		clock,
+		discardSink,
+	)
+
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 10, 10, 10),
+	); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(4 * time.Second)
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", globalTestTime(10, 45), 1, 0, 20, 20, 20),
+	); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Second)
+	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	beforeReturn := aggregator.Watermark()
+
 	err := aggregator.Add(
 		context.Background(),
-		testCloudAggregate("edge-2", firstWindow, 1, 0, 30, 30, 30),
+		testCloudAggregate("edge-1", globalTestTime(10, 15), 1, 0, 30, 30, 30),
+	)
+	if err != nil && !errors.Is(err, ErrClosedWindow) {
+		t.Fatal(err)
+	}
+	candidate, available := aggregator.watermarkCandidate(clock.Now())
+	if !available || !candidate.Equal(globalTestTime(10, 15)) {
+		t.Fatalf("Edge rientrato non riattivato: candidate=%s available=%t", candidate, available)
+	}
+	if !aggregator.Watermark().Equal(beforeReturn) {
+		t.Fatalf("watermark arretrato da %s a %s", beforeReturn, aggregator.Watermark())
+	}
+}
+
+func TestAggregateForWatermarkClosedWindowIsLate(t *testing.T) {
+	clock := &testClock{current: globalTestTime(12, 0)}
+	aggregator := newTestAggregatorWithClock(
+		t,
+		testEdgeIDs(2),
+		5*time.Second,
+		clock,
+		discardSink,
+	)
+	firstWindow := globalTestTime(10, 0)
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", firstWindow, 1, 0, 10, 10, 10),
+	); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(4 * time.Second)
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 20, 20, 20),
+	); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Second)
+	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-1", firstWindow, 1, 0, 30, 30, 30),
 	)
 	if !errors.Is(err, ErrClosedWindow) {
 		t.Fatalf("atteso ErrClosedWindow, ottenuto %v", err)
 	}
 	if aggregator.LateAggregatesDropped() != 1 {
 		t.Fatalf("atteso lateAggregatesDropped=1, ottenuto %d", aggregator.LateAggregatesDropped())
+	}
+}
+
+func TestAllIdleEdgesKeepLastWatermark(t *testing.T) {
+	clock := &testClock{current: globalTestTime(12, 0)}
+	aggregator := newTestAggregatorWithClock(
+		t,
+		testEdgeIDs(2),
+		5*time.Second,
+		clock,
+		discardSink,
+	)
+	for _, input := range []model.CloudEdgeAggregate{
+		testCloudAggregate("edge-0", globalTestTime(10, 0), 1, 0, 10, 10, 10),
+		testCloudAggregate("edge-1", globalTestTime(10, 15), 1, 0, 20, 20, 20),
+	} {
+		if err := aggregator.Add(context.Background(), input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := aggregator.Watermark()
+	if want.IsZero() {
+		t.Fatal("watermark iniziale non avanzato")
+	}
+
+	clock.Advance(5 * time.Second)
+	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !aggregator.Watermark().Equal(want) {
+		t.Fatalf("tutti gli Edge idle hanno mosso il watermark da %s a %s", want, aggregator.Watermark())
+	}
+}
+
+func TestEndOfReplayDoesNotAdvanceOnlineWatermark(t *testing.T) {
+	outputs := make([]model.GlobalAggregate, 0)
+	aggregator := newTestAggregator(t, testEdgeIDs(2), collectSink(&outputs))
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", globalTestTime(10, 0), 1, 0, 10, 10, 10),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	complete, err := aggregator.EndReplay(context.Background(), testEndOfReplay("edge-1"))
+	if err != nil || complete || !aggregator.Watermark().IsZero() || len(outputs) != 0 {
+		t.Fatalf("EOS ha influenzato il watermark: complete=%t watermark=%s outputs=%d err=%v", complete, aggregator.Watermark(), len(outputs), err)
+	}
+	complete, err = aggregator.EndReplay(context.Background(), testEndOfReplay("edge-0"))
+	if err != nil || !complete || len(outputs) != 1 {
+		t.Fatalf("flush EOS finale inatteso: complete=%t outputs=%d err=%v", complete, len(outputs), err)
 	}
 }

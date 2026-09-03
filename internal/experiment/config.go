@@ -49,7 +49,8 @@ type CloudConfig struct {
 }
 
 type GlobalConfig struct {
-	WatermarkDelay Duration `yaml:"watermark_delay,omitempty"`
+	WatermarkDelay  Duration `yaml:"watermark_delay,omitempty"`
+	EdgeIdleTimeout Duration `yaml:"edge_idle_timeout,omitempty"`
 }
 
 type EffectiveConfig struct {
@@ -157,6 +158,9 @@ func (config Config) Validate() error {
 	if config.Global.WatermarkDelay.Duration() < 0 {
 		return fmt.Errorf("global.watermark_delay non puo essere negativo")
 	}
+	if config.Global.EdgeIdleTimeout.Duration() < 0 {
+		return fmt.Errorf("global.edge_idle_timeout non puo essere negativo")
+	}
 	if config.Edge.WindowSize.Duration() <= 0 {
 		return fmt.Errorf("edge.window_size deve essere maggiore di zero")
 	}
@@ -189,6 +193,9 @@ func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
 	global := config.Global
 	if global.WatermarkDelay.Duration() <= 0 {
 		global.WatermarkDelay = config.Cloud.WindowSize
+	}
+	if global.EdgeIdleTimeout.Duration() <= 0 {
+		global.EdgeIdleTimeout = Duration(5 * time.Second)
 	}
 
 	return EffectiveConfig{

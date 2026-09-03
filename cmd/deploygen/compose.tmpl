@@ -101,6 +101,7 @@ services:
       KAFKA_GROUP_ID: "global-aggregator"
       GLOBAL_WINDOW_SIZE: "{{.CloudWindowSize}}"
       GLOBAL_WATERMARK_DELAY: "{{.GlobalWatermarkDelay}}"
+      GLOBAL_EDGE_IDLE_TIMEOUT: "{{.GlobalEdgeIdleTimeout}}"
       EXPECTED_EDGE_IDS: "{{.ExpectedEdgeIDs}}"
 
     depends_on:

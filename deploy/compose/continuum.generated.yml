@@ -101,6 +101,7 @@ services:
       KAFKA_GROUP_ID: "global-aggregator"
       GLOBAL_WINDOW_SIZE: "15m0s"
       GLOBAL_WATERMARK_DELAY: "15m0s"
+      GLOBAL_EDGE_IDLE_TIMEOUT: "5s"
       EXPECTED_EDGE_IDS: "edge-0,edge-1,edge-2,edge-3,edge-4,edge-5,edge-6,edge-7,edge-8,edge-9,edge-10,edge-11,edge-12"
 
     depends_on:

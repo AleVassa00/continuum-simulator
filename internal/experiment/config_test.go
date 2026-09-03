@@ -23,7 +23,9 @@ func TestLoadBaseline(t *testing.T) {
 		config.Edge.WindowSize.Duration() != 5*time.Minute ||
 		config.Edge.IngressQueueCapacity != 1000 ||
 		config.Cloud.Workers != 1 ||
-		config.Cloud.WindowSize.Duration() != 15*time.Minute {
+		config.Cloud.WindowSize.Duration() != 15*time.Minute ||
+		config.Global.WatermarkDelay.Duration() != 15*time.Minute ||
+		config.Global.EdgeIdleTimeout.Duration() != 5*time.Second {
 		t.Fatalf("baseline inattesa: %#v", config)
 	}
 }
@@ -59,6 +61,7 @@ func TestConfigValidation(t *testing.T) {
 		{"zero_workers", func(c *Config) { c.Cloud.Workers = 0 }, "cloud.workers"},
 		{"zero_cloud_window", func(c *Config) { c.Cloud.WindowSize = 0 }, "cloud.window_size"},
 		{"non_multiple_windows", func(c *Config) { c.Cloud.WindowSize = Duration(14 * time.Minute) }, "multiplo"},
+		{"negative_global_idle_timeout", func(c *Config) { c.Global.EdgeIdleTimeout = -1 }, "edge_idle_timeout"},
 	}
 
 	for _, test := range tests {
@@ -94,10 +97,23 @@ func TestWriteEffectiveUsesActualReplayStart(t *testing.T) {
 		"telemetry_queue_capacity: 1000",
 		"ingress_queue_capacity: 1000",
 		"workers: 1",
+		"watermark_delay: 15m0s",
+		"edge_idle_timeout: 5s",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Errorf("effective config senza %q:\n%s", expected, text)
 		}
+	}
+}
+
+func TestBuildEffectiveDefaultsGlobalWatermarkAndIdleTimeout(t *testing.T) {
+	config := validConfig()
+	config.Global = GlobalConfig{}
+
+	effective := BuildEffective(config, time.Now())
+	if effective.Global.WatermarkDelay.Duration() != config.Cloud.WindowSize.Duration() ||
+		effective.Global.EdgeIdleTimeout.Duration() != 5*time.Second {
+		t.Fatalf("default globali inattesi: %#v", effective.Global)
 	}
 }
 
@@ -118,6 +134,10 @@ func validConfig() Config {
 			Workers:    1,
 			WindowSize: Duration(15 * time.Minute),
 		},
+		Global: GlobalConfig{
+			WatermarkDelay:  Duration(15 * time.Minute),
+			EdgeIdleTimeout: Duration(5 * time.Second),
+		},
 	}
 }
 
@@ -136,5 +156,8 @@ edge:
 cloud:
   workers: 1
   window_size: 15m
+global:
+  watermark_delay: 15m
+  edge_idle_timeout: 5s
 `
 }

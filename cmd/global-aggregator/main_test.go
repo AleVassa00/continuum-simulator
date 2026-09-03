@@ -208,8 +208,9 @@ func TestJSONLogSinkUsesRecognizablePrefixAndValidJSON(t *testing.T) {
 
 func TestLoadGlobalConfiguration(t *testing.T) {
 	env := map[string]string{
-		"GLOBAL_WINDOW_SIZE": "30m",
-		"EXPECTED_EDGE_IDS":  "edge-0, edge-2,edge-7",
+		"GLOBAL_WINDOW_SIZE":       "30m",
+		"GLOBAL_EDGE_IDLE_TIMEOUT": "7s",
+		"EXPECTED_EDGE_IDS":        "edge-0, edge-2,edge-7",
 	}
 	getenv := func(name string) string { return env[name] }
 	window, err := loadGlobalWindowSize(getenv)
@@ -223,6 +224,10 @@ func TestLoadGlobalConfiguration(t *testing.T) {
 	if value := envutil.OrDefault(getenv, "KAFKA_INPUT_TOPIC", "cloud-edge-aggregates"); value != "cloud-edge-aggregates" {
 		t.Fatalf("topic default=%q", value)
 	}
+	idleTimeout, err := loadGlobalEdgeIdleTimeout(getenv)
+	if err != nil || idleTimeout != 7*time.Second {
+		t.Fatalf("edge idle timeout=%s err=%v", idleTimeout, err)
+	}
 }
 
 func TestLoadGlobalConfigurationRejectsInvalidValues(t *testing.T) {
@@ -231,6 +236,18 @@ func TestLoadGlobalConfigurationRejectsInvalidValues(t *testing.T) {
 	}
 	if _, err := loadGlobalWindowSize(func(string) string { return "0s" }); err == nil {
 		t.Fatal("GLOBAL_WINDOW_SIZE zero accettata")
+	}
+	for _, value := range []string{"0s", "-1s", "invalid"} {
+		if _, err := loadGlobalEdgeIdleTimeout(func(string) string { return value }); err == nil {
+			t.Fatalf("GLOBAL_EDGE_IDLE_TIMEOUT=%q accettato", value)
+		}
+	}
+	if timeout, err := loadGlobalEdgeIdleTimeout(func(string) string { return "" }); err != nil || timeout != defaultGlobalEdgeIdleTimeout {
+		t.Fatalf("default edge idle timeout=%s err=%v", timeout, err)
+	}
+	if watermarkAdvanceCheckInterval(500*time.Millisecond) != 500*time.Millisecond ||
+		watermarkAdvanceCheckInterval(5*time.Second) != time.Second {
+		t.Fatal("intervallo di controllo watermark inatteso")
 	}
 }
 
@@ -244,6 +261,7 @@ func newTestGlobalProcessor(
 		expectedEdgeIDs,
 		15*time.Minute,
 		15*time.Minute,
+		5*time.Second,
 		sink,
 	)
 	if err != nil {

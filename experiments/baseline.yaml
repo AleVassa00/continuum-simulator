@@ -20,3 +20,4 @@ cloud:
 
 global:
   watermark_delay: 15m
+  edge_idle_timeout: 5s

@@ -21,7 +21,11 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-const operationTimeout = 5 * time.Second
+const (
+	operationTimeout                 = 5 * time.Second
+	defaultGlobalEdgeIdleTimeout     = 5 * time.Second
+	maxWatermarkAdvanceCheckInterval = 1 * time.Second
+)
 
 type KafkaMessageCommitter func(kafka.Message) error
 
@@ -49,6 +53,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	edgeIdleTimeout, err := loadGlobalEdgeIdleTimeout(os.Getenv)
+	if err != nil {
+		panic(err)
+	}
 	expectedEdgeIDs, err := loadExpectedEdgeIDs(os.Getenv)
 	if err != nil {
 		panic(err)
@@ -58,6 +66,7 @@ func main() {
 		expectedEdgeIDs,
 		windowSize,
 		watermarkDelay,
+		edgeIdleTimeout,
 		newJSONLogSink(os.Stdout),
 	)
 	if err != nil {
@@ -86,6 +95,7 @@ func main() {
 	fmt.Printf("Consumer group: %s\n", groupID)
 	fmt.Printf("Global window: %s\n", windowSize)
 	fmt.Printf("Watermark delay: %s\n", watermarkDelay)
+	fmt.Printf("Edge idle timeout: %s\n", edgeIdleTimeout)
 	fmt.Printf("Expected Edge: %s\n\n", strings.Join(expectedEdgeIDs, ","))
 
 	ctx, stop := signal.NotifyContext(
@@ -95,7 +105,12 @@ func main() {
 	)
 	defer stop()
 
-	completed, err := consume(ctx, reader, processor)
+	completed, err := consume(
+		ctx,
+		reader,
+		processor,
+		watermarkAdvanceCheckInterval(edgeIdleTimeout),
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -110,12 +125,27 @@ func consume(
 	ctx context.Context,
 	reader *kafka.Reader,
 	processor *GlobalMessageProcessor,
+	watermarkCheckInterval time.Duration,
 ) (bool, error) {
 	for {
-		message, err := reader.FetchMessage(ctx)
+		fetchContext, cancelFetch := context.WithTimeout(
+			ctx,
+			watermarkCheckInterval,
+		)
+		message, err := reader.FetchMessage(fetchContext)
+		cancelFetch()
 		if err != nil {
 			if ctx.Err() != nil {
 				return false, nil
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				if err := processor.aggregator.AdvanceWatermark(ctx); err != nil {
+					return false, fmt.Errorf(
+						"avanzamento watermark globale fallito: %w",
+						err,
+					)
+				}
+				continue
 			}
 			return false, fmt.Errorf("lettura Kafka globale fallita: %w", err)
 		}
@@ -284,6 +314,37 @@ func loadGlobalWatermarkDelay(
 		return 0, fmt.Errorf("GLOBAL_WATERMARK_DELAY deve essere maggiore di zero")
 	}
 	return delay, nil
+}
+
+func loadGlobalEdgeIdleTimeout(
+	getenv func(string) string,
+) (time.Duration, error) {
+	value := envutil.OrDefault(
+		getenv,
+		"GLOBAL_EDGE_IDLE_TIMEOUT",
+		defaultGlobalEdgeIdleTimeout.String(),
+	)
+	timeout, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"GLOBAL_EDGE_IDLE_TIMEOUT non valido %q: %w",
+			value,
+			err,
+		)
+	}
+	if timeout <= 0 {
+		return 0, fmt.Errorf(
+			"GLOBAL_EDGE_IDLE_TIMEOUT deve essere maggiore di zero",
+		)
+	}
+	return timeout, nil
+}
+
+func watermarkAdvanceCheckInterval(edgeIdleTimeout time.Duration) time.Duration {
+	if edgeIdleTimeout < maxWatermarkAdvanceCheckInterval {
+		return edgeIdleTimeout
+	}
+	return maxWatermarkAdvanceCheckInterval
 }
 
 func loadExpectedEdgeIDs(

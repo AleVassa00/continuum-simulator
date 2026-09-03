@@ -16,3 +16,4 @@ cloud:
     window_size: 15m0s
 global:
     watermark_delay: 15m0s
+    edge_idle_timeout: 5s

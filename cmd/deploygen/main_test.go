@@ -13,10 +13,10 @@ import (
 	"continuum/internal/experiment"
 )
 
-func TestBuildComposeMatchesPreRefactorOutput(t *testing.T) {
+func TestBuildComposeMatchesExpectedOutput(t *testing.T) {
 	compose := buildCompose(testEdges(2), testEffectiveConfig(2))
 	checksum := fmt.Sprintf("%x", sha256.Sum256([]byte(compose)))
-	const expectedChecksum = "d68348d2e827ac2b30a59efa1b9f8817178c22caab82e6711036be79bc5fd7c1"
+	const expectedChecksum = "5b5bdc83523efa38ce5ce428c22fac97ae4699982e002fe01c62bc823c9a38fc"
 
 	if checksum != expectedChecksum {
 		t.Fatalf(
@@ -125,6 +125,8 @@ func TestBuildComposeUsesEffectiveExperimentConfig(t *testing.T) {
 		"KAFKA_INPUT_TOPIC: \"cloud-edge-aggregates\"",
 		"KAFKA_GROUP_ID: \"global-aggregator\"",
 		"GLOBAL_WINDOW_SIZE: \"15m0s\"",
+		"GLOBAL_WATERMARK_DELAY: \"15m0s\"",
+		"GLOBAL_EDGE_IDLE_TIMEOUT: \"5s\"",
 		"EXPECTED_EDGE_IDS: \"edge-0,edge-1,edge-2,edge-3,edge-4,edge-5,edge-6,edge-7,edge-8,edge-9,edge-10,edge-11,edge-12\"",
 		"restart: \"no\"",
 	} {
@@ -141,6 +143,7 @@ func TestBuildComposeUsesEffectiveExperimentConfig(t *testing.T) {
 		"${EDGE_WINDOW_SIZE",
 		"${EDGE_INGRESS_QUEUE_CAPACITY",
 		"${CLOUD_WINDOW_SIZE",
+		"${GLOBAL_EDGE_IDLE_TIMEOUT",
 	} {
 		if strings.Contains(compose, forbidden) {
 			t.Errorf("override esterno sperimentale rimasto nel Compose: %s", forbidden)
@@ -169,6 +172,9 @@ edge:
 cloud:
   workers: 2
   window_size: 20m
+global:
+  watermark_delay: 3m
+  edge_idle_timeout: 7s
 `)
 	writeTestTopology(t, topologyPath, 13)
 
@@ -203,6 +209,8 @@ cloud:
 		"WINDOW_SIZE: \"5m0s\"",
 		"CLOUD_WINDOW_SIZE: \"20m0s\"",
 		"GLOBAL_WINDOW_SIZE: \"20m0s\"",
+		"GLOBAL_WATERMARK_DELAY: \"3m0s\"",
+		"GLOBAL_EDGE_IDLE_TIMEOUT: \"7s\"",
 		"EXPECTED_EDGE_IDS: \"edge-0,edge-1,edge-2,edge-3,edge-4,edge-5,edge-6,edge-7,edge-8,edge-9,edge-10,edge-11,edge-12\"",
 	} {
 		if !strings.Contains(compose, expected) {
@@ -226,6 +234,8 @@ cloud:
 		"acceleration_factor: 77.5",
 		"replay_start_at: \"2026-08-31T12:00:12Z\"",
 		"workers: 2",
+		"watermark_delay: 3m0s",
+		"edge_idle_timeout: 7s",
 	} {
 		if !strings.Contains(effective, expected) {
 			t.Errorf("effective config senza %q:\n%s", expected, effective)
@@ -239,6 +249,7 @@ cloud:
 		"telemetry queue capacity: 111",
 		"ingress queue capacity: 222",
 		"workers: 2",
+		"edge idle timeout: 7s",
 	} {
 		if !strings.Contains(summary, expected) {
 			t.Errorf("summary senza %q:\n%s", expected, summary)
@@ -263,6 +274,10 @@ func testEffectiveConfig(workers int) experiment.EffectiveConfig {
 		Cloud: experiment.CloudConfig{
 			Workers:    workers,
 			WindowSize: experiment.Duration(15 * time.Minute),
+		},
+		Global: experiment.GlobalConfig{
+			WatermarkDelay:  experiment.Duration(15 * time.Minute),
+			EdgeIdleTimeout: experiment.Duration(5 * time.Second),
 		},
 	}
 }
