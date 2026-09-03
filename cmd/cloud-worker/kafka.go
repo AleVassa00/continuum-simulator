@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"continuum/internal/cloudworker"
+	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 
 	"github.com/segmentio/kafka-go"
@@ -77,7 +77,7 @@ func consume(
 			message,
 			processor,
 			func(message kafka.Message) error {
-				return commitMessage(reader, message)
+				return kafkautil.CommitMessage(reader, message, operationTimeout)
 			},
 		); err != nil {
 			return fmt.Errorf(
@@ -105,57 +105,6 @@ func processAndCommitMessage(
 	}
 
 	return nil
-}
-
-func kafkaRecordType(
-	headers []kafka.Header,
-) (string, error) {
-	var recordType string
-	found := false
-
-	for _, header := range headers {
-		if header.Key != model.RecordTypeHeader {
-			continue
-		}
-
-		if found {
-			return "", fmt.Errorf(
-				"header Kafka %q duplicato",
-				model.RecordTypeHeader,
-			)
-		}
-
-		recordType = strings.TrimSpace(string(header.Value))
-		found = true
-	}
-
-	if !found || recordType == "" {
-		return "", fmt.Errorf(
-			"header Kafka %q mancante o vuoto",
-			model.RecordTypeHeader,
-		)
-	}
-
-	return recordType, nil
-}
-
-func decodeEndOfReplay(
-	payload []byte,
-) (model.EndOfReplay, error) {
-	var record model.EndOfReplay
-	if err := json.Unmarshal(payload, &record); err != nil {
-		return model.EndOfReplay{},
-			fmt.Errorf(
-				"EndOfReplay JSON non valido: %w",
-				err,
-			)
-	}
-
-	if err := model.ValidateEndOfReplay(record); err != nil {
-		return model.EndOfReplay{}, err
-	}
-
-	return record, nil
 }
 
 func decodeEdgeAggregate(
@@ -315,22 +264,6 @@ func flushWindows(
 	}
 
 	return nil
-}
-
-func commitMessage(
-	reader *kafka.Reader,
-	message kafka.Message,
-) error {
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		operationTimeout,
-	)
-	defer cancel()
-
-	return reader.CommitMessages(
-		ctx,
-		message,
-	)
 }
 
 func logPublishedWindow(

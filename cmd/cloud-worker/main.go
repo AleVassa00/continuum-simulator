@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"continuum/internal/cloudworker"
+	"continuum/internal/envutil"
 )
 
 func main() {
@@ -19,11 +20,11 @@ func main() {
 }
 
 func runCloudWorker() error {
-	kafkaBroker := requiredEnv("KAFKA_BROKER")
+	kafkaBroker := envutil.Required("KAFKA_BROKER")
 
 	inputTopic := loadInputTopic()
-	outputTopic := envOrDefault("KAFKA_OUTPUT_TOPIC", "cloud-edge-aggregates")
-	groupID := envOrDefault("KAFKA_GROUP_ID", "cloud-workers")
+	outputTopic := envutil.OrDefault(os.Getenv, "KAFKA_OUTPUT_TOPIC", "cloud-edge-aggregates")
+	groupID := envutil.OrDefault(os.Getenv, "KAFKA_GROUP_ID", "cloud-workers")
 	workerID := loadWorkerID()
 	windowSize, err := loadCloudWindowSize()
 	if err != nil {
@@ -128,7 +129,8 @@ func loadCloudWindowSize() (
 	time.Duration,
 	error,
 ) {
-	value := envOrDefault(
+	value := envutil.OrDefault(
+		os.Getenv,
 		"CLOUD_WINDOW_SIZE",
 		"15m",
 	)
@@ -188,38 +190,4 @@ func loadWorkerID() string {
 	}
 
 	return hostname
-}
-
-func envOrDefault(
-	name string,
-	defaultValue string,
-) string {
-	value := strings.TrimSpace(
-		os.Getenv(name),
-	)
-
-	if value == "" {
-		return defaultValue
-	}
-
-	return value
-}
-
-func requiredEnv(
-	name string,
-) string {
-	value := strings.TrimSpace(
-		os.Getenv(name),
-	)
-
-	if value == "" {
-		panic(
-			fmt.Sprintf(
-				"variabile %s non impostata",
-				name,
-			),
-		)
-	}
-
-	return value
 }

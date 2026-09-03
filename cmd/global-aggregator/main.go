@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"continuum/internal/cloudworker"
+	"continuum/internal/envutil"
 	"continuum/internal/globalaggregator"
+	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 
 	"github.com/segmentio/kafka-go"
@@ -28,13 +30,13 @@ type GlobalMessageProcessor struct {
 }
 
 func main() {
-	kafkaBroker := requiredEnv("KAFKA_BROKER")
-	inputTopic := envOrDefault(
+	kafkaBroker := envutil.Required("KAFKA_BROKER")
+	inputTopic := envutil.OrDefault(
 		os.Getenv,
 		"KAFKA_INPUT_TOPIC",
 		"cloud-edge-aggregates",
 	)
-	groupID := envOrDefault(
+	groupID := envutil.OrDefault(
 		os.Getenv,
 		"KAFKA_GROUP_ID",
 		"global-aggregator",
@@ -123,7 +125,7 @@ func consume(
 			message,
 			processor,
 			func(message kafka.Message) error {
-				return commitMessage(reader, message)
+				return kafkautil.CommitMessage(reader, message, operationTimeout)
 			},
 		)
 		if err != nil {
@@ -160,7 +162,7 @@ func (processor *GlobalMessageProcessor) Process(
 	ctx context.Context,
 	message kafka.Message,
 ) (bool, error) {
-	recordType, err := kafkaRecordType(message.Headers)
+	recordType, err := kafkautil.ParseRecordType(message.Headers)
 	if err != nil {
 		return false, err
 	}
@@ -188,7 +190,7 @@ func (processor *GlobalMessageProcessor) Process(
 		return false, nil
 
 	case model.RecordTypeEndOfReplay:
-		record, err := decodeEndOfReplay(message.Value)
+		record, err := kafkautil.DecodeEndOfReplay(message.Value)
 		if err != nil {
 			return false, err
 		}
@@ -209,31 +211,6 @@ func (processor *GlobalMessageProcessor) Process(
 	}
 }
 
-func kafkaRecordType(headers []kafka.Header) (string, error) {
-	var recordType string
-	found := false
-	for _, header := range headers {
-		if header.Key != model.RecordTypeHeader {
-			continue
-		}
-		if found {
-			return "", fmt.Errorf(
-				"header Kafka %q duplicato",
-				model.RecordTypeHeader,
-			)
-		}
-		recordType = strings.TrimSpace(string(header.Value))
-		found = true
-	}
-	if !found || recordType == "" {
-		return "", fmt.Errorf(
-			"header Kafka %q mancante o vuoto",
-			model.RecordTypeHeader,
-		)
-	}
-	return recordType, nil
-}
-
 func decodeCloudEdgeAggregate(payload []byte) (model.CloudEdgeAggregate, error) {
 	var aggregate model.CloudEdgeAggregate
 	if err := json.Unmarshal(payload, &aggregate); err != nil {
@@ -246,20 +223,6 @@ func decodeCloudEdgeAggregate(payload []byte) (model.CloudEdgeAggregate, error) 
 		return model.CloudEdgeAggregate{}, err
 	}
 	return aggregate, nil
-}
-
-func decodeEndOfReplay(payload []byte) (model.EndOfReplay, error) {
-	var record model.EndOfReplay
-	if err := json.Unmarshal(payload, &record); err != nil {
-		return model.EndOfReplay{}, fmt.Errorf(
-			"EndOfReplay JSON non valido: %w",
-			err,
-		)
-	}
-	if err := model.ValidateEndOfReplay(record); err != nil {
-		return model.EndOfReplay{}, err
-	}
-	return record, nil
 }
 
 func newJSONLogSink(writer io.Writer) globalaggregator.GlobalAggregateSink {
@@ -285,19 +248,10 @@ func newJSONLogSink(writer io.Writer) globalaggregator.GlobalAggregateSink {
 	}
 }
 
-func commitMessage(reader *kafka.Reader, message kafka.Message) error {
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		operationTimeout,
-	)
-	defer cancel()
-	return reader.CommitMessages(ctx, message)
-}
-
 func loadGlobalWindowSize(
 	getenv func(string) string,
 ) (time.Duration, error) {
-	value := envOrDefault(getenv, "GLOBAL_WINDOW_SIZE", "15m")
+	value := envutil.OrDefault(getenv, "GLOBAL_WINDOW_SIZE", "15m")
 	windowSize, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf(
@@ -345,24 +299,4 @@ func loadExpectedEdgeIDs(
 		edgeIDs[index] = strings.TrimSpace(part)
 	}
 	return edgeIDs, nil
-}
-
-func envOrDefault(
-	getenv func(string) string,
-	name string,
-	defaultValue string,
-) string {
-	value := strings.TrimSpace(getenv(name))
-	if value == "" {
-		return defaultValue
-	}
-	return value
-}
-
-func requiredEnv(name string) string {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
-		panic(fmt.Sprintf("variabile %s non impostata", name))
-	}
-	return value
 }

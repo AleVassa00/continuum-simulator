@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"continuum/internal/cloudworker"
+	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 
 	"github.com/segmentio/kafka-go"
@@ -30,7 +31,7 @@ func (
 ) Process(
 	message kafka.Message,
 ) error {
-	recordType, err := kafkaRecordType(message.Headers)
+	recordType, err := kafkautil.ParseRecordType(message.Headers)
 	if err != nil {
 		return err
 	}
@@ -99,7 +100,7 @@ func (
 ) processEndOfReplay(
 	message kafka.Message,
 ) error {
-	record, err := decodeEndOfReplay(message.Value)
+	record, err := kafkautil.DecodeEndOfReplay(message.Value)
 	if err != nil {
 		return err
 	}

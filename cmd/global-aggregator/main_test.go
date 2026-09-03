@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"continuum/internal/envutil"
 	"continuum/internal/globalaggregator"
 	"continuum/internal/model"
 
@@ -219,7 +220,7 @@ func TestLoadGlobalConfiguration(t *testing.T) {
 	if err != nil || strings.Join(edges, ",") != "edge-0,edge-2,edge-7" {
 		t.Fatalf("edges=%v err=%v", edges, err)
 	}
-	if value := envOrDefault(getenv, "KAFKA_INPUT_TOPIC", "cloud-edge-aggregates"); value != "cloud-edge-aggregates" {
+	if value := envutil.OrDefault(getenv, "KAFKA_INPUT_TOPIC", "cloud-edge-aggregates"); value != "cloud-edge-aggregates" {
 		t.Fatalf("topic default=%q", value)
 	}
 }

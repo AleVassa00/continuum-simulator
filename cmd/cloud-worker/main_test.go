@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"continuum/internal/cloudworker"
+	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 
 	"github.com/segmentio/kafka-go"
@@ -482,7 +483,7 @@ func cloudRecordType(
 ) string {
 	t.Helper()
 
-	recordType, err := kafkaRecordType(message.Headers)
+	recordType, err := kafkautil.ParseRecordType(message.Headers)
 	if err != nil {
 		t.Fatalf("record_type non valido: %v", err)
 	}
@@ -496,7 +497,7 @@ func decodeCloudEndOfReplay(
 ) model.EndOfReplay {
 	t.Helper()
 
-	record, err := decodeEndOfReplay(message.Value)
+	record, err := kafkautil.DecodeEndOfReplay(message.Value)
 	if err != nil {
 		t.Fatalf("decodeEndOfReplay() fallita: %v", err)
 	}
