@@ -53,6 +53,7 @@ type Aggregator struct {
 
 	maxWindowEndByEdge map[string]time.Time
 	lastActivityByEdge map[string]time.Time
+	firstAggregateAt   time.Time
 	watermark          time.Time
 
 	windows       map[windowKey]*windowState
@@ -129,12 +130,6 @@ func newAggregator(
 		}
 		expected[edgeID] = struct{}{}
 	}
-	startedAt := now().UTC()
-	lastActivityByEdge := make(map[string]time.Time, len(expected))
-	for edgeID := range expected {
-		lastActivityByEdge[edgeID] = startedAt
-	}
-
 	return &Aggregator{
 		expectedEdges:      expected,
 		endedEdges:         make(map[string]struct{}, len(expected)),
@@ -142,7 +137,7 @@ func newAggregator(
 		watermarkDelay:     watermarkDelay,
 		edgeIdleTimeout:    edgeIdleTimeout,
 		maxWindowEndByEdge: make(map[string]time.Time, len(expected)),
-		lastActivityByEdge: lastActivityByEdge,
+		lastActivityByEdge: make(map[string]time.Time, len(expected)),
 		windows:            make(map[windowKey]*windowState),
 		closedWindows:      make(map[windowKey]struct{}),
 		sink:               sink,
@@ -190,11 +185,13 @@ func (aggregator *Aggregator) Add(
 	}
 
 	now := aggregator.now().UTC()
-	aggregator.lastActivityByEdge[input.EdgeID] = now
-	if input.WindowEnd.After(aggregator.maxWindowEndByEdge[input.EdgeID]) {
-		aggregator.maxWindowEndByEdge[input.EdgeID] = input.WindowEnd.UTC()
+	if aggregator.firstAggregateAt.IsZero() {
+		aggregator.firstAggregateAt = now
 	}
+	// L'attivita e processing-time: anche un record late segnala che l'Edge e tornato attivo.
+	aggregator.lastActivityByEdge[input.EdgeID] = now
 
+	// Il record e late soltanto rispetto al watermark valido prima del suo arrivo.
 	key := makeWindowKey(input.WindowStart, input.WindowEnd)
 	_, explicitlyClosed := aggregator.closedWindows[key]
 	closedByWatermark := !aggregator.watermark.IsZero() &&
@@ -226,6 +223,10 @@ func (aggregator *Aggregator) Add(
 			state.start.Format(time.RFC3339),
 			state.end.Format(time.RFC3339),
 		)
+	}
+
+	if input.WindowEnd.After(aggregator.maxWindowEndByEdge[input.EdgeID]) {
+		aggregator.maxWindowEndByEdge[input.EdgeID] = input.WindowEnd.UTC()
 	}
 
 	state.add(input)
@@ -281,11 +282,24 @@ func (aggregator *Aggregator) advanceWatermarkAt(
 func (aggregator *Aggregator) watermarkCandidate(
 	now time.Time,
 ) (time.Time, bool) {
+	if aggregator.firstAggregateAt.IsZero() {
+		return time.Time{}, false
+	}
+
 	var candidate time.Time
 	activeEdges := 0
+	startupGraceElapsed := now.Sub(aggregator.firstAggregateAt) >=
+		aggregator.edgeIdleTimeout
 
 	for edgeID := range aggregator.expectedEdges {
-		lastActivity := aggregator.lastActivityByEdge[edgeID]
+		lastActivity, seen := aggregator.lastActivityByEdge[edgeID]
+		if !seen {
+			if !startupGraceElapsed {
+				return time.Time{}, false
+			}
+			continue
+		}
+
 		if now.Sub(lastActivity) >= aggregator.edgeIdleTimeout {
 			continue
 		}
@@ -295,7 +309,6 @@ func (aggregator *Aggregator) watermarkCandidate(
 		if maxWindowEnd.IsZero() {
 			return time.Time{}, false
 		}
-
 		edgeWatermark := maxWindowEnd.Add(-aggregator.watermarkDelay)
 		if candidate.IsZero() || edgeWatermark.Before(candidate) {
 			candidate = edgeWatermark

@@ -725,6 +725,56 @@ func TestNeverSeenEdgeBlocksUntilIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestNeverSeenEdgesStartupGraceBeginsWithFirstAggregate(t *testing.T) {
+	outputs := make([]model.GlobalAggregate, 0)
+	clock := &testClock{current: globalTestTime(12, 0)}
+	aggregator := newTestAggregatorWithClock(
+		t,
+		testEdgeIDs(3),
+		5*time.Second,
+		clock,
+		collectSink(&outputs),
+	)
+
+	clock.Advance(90 * time.Second)
+	firstAggregateAt := clock.Now()
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", globalTestTime(10, 0), 1, 0, 10, 10, 10),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !aggregator.firstAggregateAt.Equal(firstAggregateAt) ||
+		!aggregator.Watermark().IsZero() {
+		t.Fatalf(
+			"startup grace non iniziata dal primo aggregato: first=%s watermark=%s",
+			aggregator.firstAggregateAt,
+			aggregator.Watermark(),
+		)
+	}
+
+	clock.Advance(4 * time.Second)
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 20, 20, 20),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !aggregator.Watermark().IsZero() || len(outputs) != 0 {
+		t.Fatalf("Edge mai visti esclusi durante la startup grace: watermark=%s outputs=%d", aggregator.Watermark(), len(outputs))
+	}
+
+	clock.Advance(2 * time.Second)
+	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if aggregator.Watermark().IsZero() ||
+		len(outputs) != 1 ||
+		!outputs[0].WindowStart.Equal(globalTestTime(10, 0)) {
+		t.Fatalf("watermark non avanzato dopo la startup grace: watermark=%s outputs=%#v", aggregator.Watermark(), outputs)
+	}
+}
+
 func TestSeenEdgeBecomesIdleAfterTimeout(t *testing.T) {
 	outputs := make([]model.GlobalAggregate, 0)
 	clock := &testClock{current: globalTestTime(12, 0)}
@@ -792,17 +842,57 @@ func TestReturningIdleEdgeDoesNotMoveWatermarkBackward(t *testing.T) {
 
 	err := aggregator.Add(
 		context.Background(),
-		testCloudAggregate("edge-1", globalTestTime(10, 15), 1, 0, 30, 30, 30),
+		testCloudAggregate("edge-1", globalTestTime(10, 45), 1, 0, 30, 30, 30),
 	)
-	if err != nil && !errors.Is(err, ErrClosedWindow) {
+	if err != nil {
 		t.Fatal(err)
 	}
 	candidate, available := aggregator.watermarkCandidate(clock.Now())
-	if !available || !candidate.Equal(globalTestTime(10, 15)) {
+	if !available || !candidate.Equal(globalTestTime(10, 45)) {
 		t.Fatalf("Edge rientrato non riattivato: candidate=%s available=%t", candidate, available)
 	}
 	if !aggregator.Watermark().Equal(beforeReturn) {
 		t.Fatalf("watermark arretrato da %s a %s", beforeReturn, aggregator.Watermark())
+	}
+}
+
+func TestRecordUsesPreviousWatermarkBeforeAdvancingIt(t *testing.T) {
+	outputs := make([]model.GlobalAggregate, 0)
+	clock := &testClock{current: globalTestTime(12, 0)}
+	aggregator := newTestAggregatorWithClock(
+		t,
+		testEdgeIDs(3),
+		5*time.Second,
+		clock,
+		collectSink(&outputs),
+	)
+
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-1", globalTestTime(10, 45), 1, 0, 10, 10, 10),
+	); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(5 * time.Second)
+	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !aggregator.Watermark().IsZero() {
+		t.Fatalf("tutti gli Edge idle hanno inventato watermark=%s", aggregator.Watermark())
+	}
+
+	inputWindow := globalTestTime(10, 15)
+	if err := aggregator.Add(
+		context.Background(),
+		testCloudAggregate("edge-1", inputWindow, 1, 0, 20, 20, 20),
+	); err != nil {
+		t.Fatalf("record classificato late dal watermark che ha contribuito ad avanzare: %v", err)
+	}
+	if aggregator.LateAggregatesDropped() != 0 {
+		t.Fatalf("record accettato contato come late: %d", aggregator.LateAggregatesDropped())
+	}
+	if len(outputs) != 1 || !outputs[0].WindowStart.Equal(inputWindow) {
+		t.Fatalf("record non accettato prima della chiusura tramite nuovo watermark: %#v", outputs)
 	}
 }
 
@@ -843,6 +933,13 @@ func TestAggregateForWatermarkClosedWindowIsLate(t *testing.T) {
 	}
 	if aggregator.LateAggregatesDropped() != 1 {
 		t.Fatalf("atteso lateAggregatesDropped=1, ottenuto %d", aggregator.LateAggregatesDropped())
+	}
+	lastActivity, active := aggregator.lastActivityByEdge["edge-1"]
+	if !active || !lastActivity.Equal(clock.Now()) {
+		t.Fatalf("Edge con record late non riattivato: activity=%s active=%t", lastActivity, active)
+	}
+	if !aggregator.maxWindowEndByEdge["edge-1"].IsZero() {
+		t.Fatal("record late ha aggiornato il progresso event-time")
 	}
 }
 
