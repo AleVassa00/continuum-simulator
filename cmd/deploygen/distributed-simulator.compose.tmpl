@@ -2,7 +2,7 @@ services:
 
 {{range .Edges}}  # {{.EdgeID}}: {{.SensorCount}} sensors
   {{.SimulatorService}}:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: {{.SimulatorService}}
     profiles: ["replay"]
     environment:

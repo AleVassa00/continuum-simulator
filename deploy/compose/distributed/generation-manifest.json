@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "config_sha256": "f69cebdda6fba5cbd2eb816953635358154e1d524f07512c77935659ac8aeac5",
+  "topology_sha256": "968ca2c43817ac51a5df9272255c7c3ccbb744ccf0093af21b00b25cf4156eed",
+  "resolved_config_yaml": "experiment:\n    name: baseline\nworkload:\n    acceleration_factor: 10000\n    max_events: 0\n    start_lead_time: 1m30s\nsimulator:\n    telemetry_queue_capacity: 1000\n    start_late_tolerance: 10s\nedge:\n    window_size: 5m0s\n    ingress_queue_capacity: 1000\ncloud:\n    workers: 1\n    window_size: 15m0s\nglobal:\n    watermark_delay: 15m0s\n    edge_idle_timeout: 5s\n",
+  "compose_sha256": {
+    "cloud-core.generated.yml": "d80627034ef7e8eb41ca989d359fc872e622344af1fe70ce8ac2cc669e51fb81",
+    "edge.generated.yml": "555d5b87f7c75a795c9af0ec84205c770b2e5d0d0bf135638a384b0b1595c9a4",
+    "simulator.generated.yml": "e9dd1bfff4aa256a13dfd2e15144d5f123eb5c0f2b9723a5f68c38d97dacca56",
+    "workers.generated.yml": "91ae4ab4fec4df62b7b9bb9402bbda0311174dc91678c0a5f6ad7f189ee36a95"
+  }
+}

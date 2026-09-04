@@ -1,6 +1,8 @@
 package experiment
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -202,6 +204,25 @@ func ResolveDefaults(config Config) Config {
 	config.Global = global
 
 	return config
+}
+
+func MarshalResolved(config Config) ([]byte, error) {
+	payload, err := yaml.Marshal(ResolveDefaults(config))
+	if err != nil {
+		return nil, fmt.Errorf("serializzazione experiment config risolta fallita: %w", err)
+	}
+
+	return payload, nil
+}
+
+func Fingerprint(config Config) (string, error) {
+	payload, err := MarshalResolved(config)
+	if err != nil {
+		return "", err
+	}
+
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {

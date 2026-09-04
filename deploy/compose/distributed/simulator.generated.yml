@@ -2,7 +2,7 @@ services:
 
   # edge-0: 11 sensors
   simulator-edge-0:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-0
     profiles: ["replay"]
     environment:
@@ -21,7 +21,7 @@ services:
 
   # edge-1: 12 sensors
   simulator-edge-1:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-1
     profiles: ["replay"]
     environment:
@@ -40,7 +40,7 @@ services:
 
   # edge-2: 12 sensors
   simulator-edge-2:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-2
     profiles: ["replay"]
     environment:
@@ -59,7 +59,7 @@ services:
 
   # edge-3: 12 sensors
   simulator-edge-3:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-3
     profiles: ["replay"]
     environment:
@@ -78,7 +78,7 @@ services:
 
   # edge-4: 11 sensors
   simulator-edge-4:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-4
     profiles: ["replay"]
     environment:
@@ -97,7 +97,7 @@ services:
 
   # edge-5: 12 sensors
   simulator-edge-5:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-5
     profiles: ["replay"]
     environment:
@@ -116,7 +116,7 @@ services:
 
   # edge-6: 11 sensors
   simulator-edge-6:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-6
     profiles: ["replay"]
     environment:
@@ -135,7 +135,7 @@ services:
 
   # edge-7: 12 sensors
   simulator-edge-7:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-7
     profiles: ["replay"]
     environment:
@@ -154,7 +154,7 @@ services:
 
   # edge-8: 12 sensors
   simulator-edge-8:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-8
     profiles: ["replay"]
     environment:
@@ -173,7 +173,7 @@ services:
 
   # edge-9: 12 sensors
   simulator-edge-9:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-9
     profiles: ["replay"]
     environment:
@@ -192,7 +192,7 @@ services:
 
   # edge-10: 11 sensors
   simulator-edge-10:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-10
     profiles: ["replay"]
     environment:
@@ -211,7 +211,7 @@ services:
 
   # edge-11: 11 sensors
   simulator-edge-11:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-11
     profiles: ["replay"]
     environment:
@@ -230,7 +230,7 @@ services:
 
   # edge-12: 11 sensors
   simulator-edge-12:
-    image: continuum-simulator:local
+    image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-12
     profiles: ["replay"]
     environment:

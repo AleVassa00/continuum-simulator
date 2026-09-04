@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -167,6 +168,8 @@ func TestBuildDistributedComposesSeparatesHostsAndUsesRuntimeAddresses(t *testin
 		"  kafka:\n",
 		"  kafka-init:\n",
 		"  global-aggregator:\n",
+		"image: \"continuum-kafka:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}\"",
+		"image: \"continuum-global-aggregator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}\"",
 		"INTERNAL://kafka:29092",
 		"EXTERNAL://${KAFKA_ADVERTISED_HOST:?KAFKA_ADVERTISED_HOST is required}:9092",
 		"--topic edge-aggregates",
@@ -187,14 +190,14 @@ func TestBuildDistributedComposesSeparatesHostsAndUsesRuntimeAddresses(t *testin
 		"continuum-cloud-worker:local",
 		"continuum-edge:local",
 		"continuum-simulator:local",
-		"eclipse-mosquitto:2",
+		"continuum-mosquitto:",
 	} {
 		if strings.Contains(cloudCore, forbidden) {
 			t.Errorf("cloud core contiene servizio di un altro host: %s", forbidden)
 		}
 	}
 
-	if count := strings.Count(workers, "    image: continuum-cloud-worker:local\n"); count != 3 {
+	if count := strings.Count(workers, "    image: \"continuum-cloud-worker:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}\"\n"); count != 3 {
 		t.Fatalf("Cloud Worker distributed=%d, attesi 3", count)
 	}
 	for workerNumber := 0; workerNumber < 3; workerNumber++ {
@@ -204,6 +207,7 @@ func TestBuildDistributedComposesSeparatesHostsAndUsesRuntimeAddresses(t *testin
 			"KAFKA_BROKER: \"${CLOUD_KAFKA_HOST}:9092\"",
 			"KAFKA_GROUP_ID: \"cloud-workers\"",
 			"WORKER_ID: \"" + workerID + "\"",
+			"restart: \"no\"",
 		} {
 			if !strings.Contains(worker, expected) {
 				t.Errorf("Cloud Worker %s senza %q", workerID, expected)
@@ -225,10 +229,10 @@ func TestBuildDistributedComposesSeparatesHostsAndUsesRuntimeAddresses(t *testin
 		}
 	}
 
-	if count := strings.Count(edge, "    image: continuum-edge:local\n"); count != 13 {
+	if count := strings.Count(edge, "    image: \"continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}\"\n"); count != 13 {
 		t.Fatalf("Edge distributed=%d, attesi 13", count)
 	}
-	if count := strings.Count(edge, "    image: eclipse-mosquitto:2\n"); count != 13 {
+	if count := strings.Count(edge, "    image: \"continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}\"\n"); count != 13 {
 		t.Fatalf("Mosquitto distributed=%d, attesi 13", count)
 	}
 	for _, edgeDeployment := range testEdges(13) {
@@ -243,6 +247,7 @@ func TestBuildDistributedComposesSeparatesHostsAndUsesRuntimeAddresses(t *testin
 			"MQTT_BROKER: \"tcp://mqtt-" + edgeID + ":1883\"",
 			"KAFKA_BROKER: \"${CLOUD_KAFKA_HOST}:9092\"",
 			"http://localhost:8080/readyz",
+			"restart: \"no\"",
 		} {
 			if !strings.Contains(edgeService, expected) {
 				t.Errorf("Edge %s senza %q", edgeID, expected)
@@ -264,7 +269,7 @@ func TestBuildDistributedComposesSeparatesHostsAndUsesRuntimeAddresses(t *testin
 		}
 	}
 
-	if count := strings.Count(simulator, "    image: continuum-simulator:local\n"); count != 13 {
+	if count := strings.Count(simulator, "    image: \"continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}\"\n"); count != 13 {
 		t.Fatalf("Simulator distributed=%d, attesi 13", count)
 	}
 	for _, edgeDeployment := range testEdges(13) {
@@ -294,7 +299,7 @@ func TestBuildDistributedComposesSeparatesHostsAndUsesRuntimeAddresses(t *testin
 	}
 }
 
-func TestRunDeploygenDistributedWritesFourFilesWithoutMaterializingReplayStart(t *testing.T) {
+func TestRunDeploygenDistributedWritesComposesAndManifestWithoutMaterializingReplayStart(t *testing.T) {
 	temp := t.TempDir()
 	experimentPath := filepath.Join(temp, "custom.yaml")
 	topologyPath := filepath.Join(temp, "topology.csv")
@@ -343,8 +348,8 @@ global: {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 4 {
-		t.Fatalf("file distributed=%d, attesi 4", len(entries))
+	if len(entries) != 5 {
+		t.Fatalf("file distributed=%d, attesi 5", len(entries))
 	}
 	for _, filename := range []string{
 		cloudCoreComposeFilename,
@@ -356,6 +361,48 @@ global: {}
 			t.Errorf("file %s non generato: %v", filename, err)
 		}
 	}
+	manifestPayload := readTestFile(t, filepath.Join(distributedOutputDir, generationManifestFilename))
+	var manifest composeGenerationManifest
+	if err := json.Unmarshal([]byte(manifestPayload), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.SchemaVersion != 1 ||
+		len(manifest.ConfigSHA256) != 64 ||
+		len(manifest.TopologySHA256) != 64 {
+		t.Fatalf("generation manifest inatteso: %#v", manifest)
+	}
+	loadedConfig, err := experiment.Load(experimentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedConfigSHA256, err := experiment.Fingerprint(loadedConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ConfigSHA256 != expectedConfigSHA256 {
+		t.Fatalf("config SHA=%s, atteso %s", manifest.ConfigSHA256, expectedConfigSHA256)
+	}
+	topologyPayload, err := os.ReadFile(topologyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedTopologySHA256 := fmt.Sprintf("%x", sha256.Sum256(topologyPayload))
+	if manifest.TopologySHA256 != expectedTopologySHA256 {
+		t.Fatalf("topology SHA=%s, atteso %s", manifest.TopologySHA256, expectedTopologySHA256)
+	}
+	if len(manifest.ComposeSHA256) != 4 {
+		t.Fatalf("checksum Compose=%d, attesi 4", len(manifest.ComposeSHA256))
+	}
+	if strings.Contains(manifest.ResolvedConfigYAML, "replay_start_at") {
+		t.Fatal("generation manifest contiene REPLAY_START_AT prematuro")
+	}
+	for filename, expectedDigest := range manifest.ComposeSHA256 {
+		payload := readTestFile(t, filepath.Join(distributedOutputDir, filename))
+		actualDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+		if actualDigest != expectedDigest {
+			t.Errorf("checksum %s=%s, atteso %s", filename, actualDigest, expectedDigest)
+		}
+	}
 	if _, err := os.Stat(localOutputPath); !os.IsNotExist(err) {
 		t.Errorf("output locale generato in modalita distributed: %v", err)
 	}
@@ -364,7 +411,7 @@ global: {}
 	}
 
 	workers := readTestFile(t, filepath.Join(distributedOutputDir, workersComposeFilename))
-	if count := strings.Count(workers, "    image: continuum-cloud-worker:local\n"); count != 6 {
+	if count := strings.Count(workers, "    image: \"continuum-cloud-worker:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}\"\n"); count != 6 {
 		t.Fatalf("Cloud Worker=%d, attesi 6", count)
 	}
 	simulator := readTestFile(t, filepath.Join(distributedOutputDir, simulatorComposeFilename))

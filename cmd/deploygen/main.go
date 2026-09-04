@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
 	_ "embed"
 	"encoding/csv"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -28,10 +31,11 @@ const (
 	localMode       = "local"
 	distributedMode = "distributed"
 
-	cloudCoreComposeFilename = "cloud-core.generated.yml"
-	workersComposeFilename   = "workers.generated.yml"
-	edgeComposeFilename      = "edge.generated.yml"
-	simulatorComposeFilename = "simulator.generated.yml"
+	cloudCoreComposeFilename   = "cloud-core.generated.yml"
+	workersComposeFilename     = "workers.generated.yml"
+	edgeComposeFilename        = "edge.generated.yml"
+	simulatorComposeFilename   = "simulator.generated.yml"
+	generationManifestFilename = "generation-manifest.json"
 
 	mqttBasePort = 18830
 )
@@ -87,6 +91,14 @@ type deploygenOptions struct {
 type generatedCompose struct {
 	Filename string
 	Content  string
+}
+
+type composeGenerationManifest struct {
+	SchemaVersion      int               `json:"schema_version"`
+	ConfigSHA256       string            `json:"config_sha256"`
+	TopologySHA256     string            `json:"topology_sha256"`
+	ResolvedConfigYAML string            `json:"resolved_config_yaml"`
+	ComposeSHA256      map[string]string `json:"compose_sha256"`
 }
 
 //go:embed local.compose.tmpl
@@ -263,6 +275,17 @@ func generateDistributedDeployment(
 			return err
 		}
 	}
+	manifest, err := buildComposeGenerationManifest(config, options.TopologyPath, composes)
+	if err != nil {
+		return err
+	}
+	manifestPath := filepath.Join(
+		options.DistributedOutputDir,
+		generationManifestFilename,
+	)
+	if err := os.WriteFile(manifestPath, manifest, 0644); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(options.Stdout, "Experiment: %s\n\n", resolved.Experiment.Name)
 	fmt.Fprintln(options.Stdout, "Mode: distributed")
@@ -277,8 +300,48 @@ func generateDistributedDeployment(
 			filepath.Join(options.DistributedOutputDir, compose.Filename),
 		)
 	}
+	fmt.Fprintf(options.Stdout, "Generato: %s\n", manifestPath)
 
 	return nil
+}
+
+func buildComposeGenerationManifest(
+	config experiment.Config,
+	topologyPath string,
+	composes []generatedCompose,
+) ([]byte, error) {
+	configSHA256, err := experiment.Fingerprint(config)
+	if err != nil {
+		return nil, err
+	}
+	topologyPayload, err := os.ReadFile(topologyPath)
+	if err != nil {
+		return nil, fmt.Errorf("lettura topologia per generation manifest fallita: %w", err)
+	}
+	topologyDigest := sha256.Sum256(topologyPayload)
+	resolvedConfig, err := experiment.MarshalResolved(config)
+	if err != nil {
+		return nil, err
+	}
+
+	composeSHA256 := make(map[string]string, len(composes))
+	for _, compose := range composes {
+		digest := sha256.Sum256([]byte(compose.Content))
+		composeSHA256[compose.Filename] = hex.EncodeToString(digest[:])
+	}
+
+	payload, err := json.MarshalIndent(composeGenerationManifest{
+		SchemaVersion:      1,
+		ConfigSHA256:       configSHA256,
+		TopologySHA256:     hex.EncodeToString(topologyDigest[:]),
+		ResolvedConfigYAML: string(resolvedConfig),
+		ComposeSHA256:      composeSHA256,
+	}, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("serializzazione generation manifest fallita: %w", err)
+	}
+
+	return append(payload, '\n'), nil
 }
 
 func printExperimentSummary(

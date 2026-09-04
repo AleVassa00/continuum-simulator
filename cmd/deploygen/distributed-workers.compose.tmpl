@@ -1,7 +1,7 @@
 services:
 
 {{range .CloudWorkers}}  {{.WorkerID}}:
-    image: continuum-cloud-worker:local
+    image: "continuum-cloud-worker:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: {{.WorkerID}}
 
     environment:
@@ -12,6 +12,6 @@ services:
       CLOUD_WINDOW_SIZE: "{{$.CloudWindowSize}}"
       WORKER_ID: "{{.WorkerID}}"
 
-    restart: unless-stopped
+    restart: "no"
 
 {{end}}

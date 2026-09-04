@@ -19,6 +19,7 @@ bin/
 
 # Generated deployment artifacts
 .build/
+artifacts/aws-runs/
 
 # Terraform local state and working directories
 .terraform/

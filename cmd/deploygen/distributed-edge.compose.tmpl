@@ -2,7 +2,7 @@ services:
 
 {{range .Edges}}  # {{.EdgeID}}: {{.SensorCount}} sensors
   {{.MQTTService}}:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: {{.MQTTService}}
     ports:
       - "{{.MQTTPort}}:1883"
@@ -18,7 +18,7 @@ services:
       - {{.ZoneNetwork}}
 
   {{.EdgeID}}:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: {{.EdgeID}}
     environment:
       EDGE_ID: "{{.EdgeID}}"
@@ -35,7 +35,7 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - {{.ZoneNetwork}}
 

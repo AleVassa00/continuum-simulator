@@ -135,6 +135,55 @@ func TestResolveDefaultsDoesNotRequireReplayStart(t *testing.T) {
 	}
 }
 
+func TestFingerprintUsesTheEntireResolvedConfiguration(t *testing.T) {
+	baseline := validConfig()
+	baseline.Simulator.StartLateTolerance = 0
+	baseline.Global = GlobalConfig{}
+
+	baselineFingerprint, err := Fingerprint(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedFingerprint, err := Fingerprint(ResolveDefaults(baseline))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baselineFingerprint != resolvedFingerprint {
+		t.Fatal("i default risolti cambiano il fingerprint")
+	}
+
+	mutations := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"experiment_name", func(c *Config) { c.Experiment.Name = "changed" }},
+		{"acceleration_factor", func(c *Config) { c.Workload.AccelerationFactor++ }},
+		{"max_events", func(c *Config) { c.Workload.MaxEvents = 99 }},
+		{"start_lead_time", func(c *Config) { c.Workload.StartLeadTime++ }},
+		{"telemetry_queue_capacity", func(c *Config) { c.Simulator.TelemetryQueueCapacity++ }},
+		{"start_late_tolerance", func(c *Config) { c.Simulator.StartLateTolerance = Duration(11 * time.Second) }},
+		{"edge_window_size", func(c *Config) { c.Edge.WindowSize++ }},
+		{"edge_ingress_queue_capacity", func(c *Config) { c.Edge.IngressQueueCapacity++ }},
+		{"workers", func(c *Config) { c.Cloud.Workers++ }},
+		{"cloud_window_size", func(c *Config) { c.Cloud.WindowSize++ }},
+		{"watermark_delay", func(c *Config) { c.Global.WatermarkDelay = Duration(16 * time.Minute) }},
+		{"edge_idle_timeout", func(c *Config) { c.Global.EdgeIdleTimeout = Duration(7 * time.Second) }},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			changed := baseline
+			mutation.mutate(&changed)
+			fingerprint, err := Fingerprint(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fingerprint == baselineFingerprint {
+				t.Fatal("la modifica non ha cambiato il fingerprint")
+			}
+		})
+	}
+}
+
 func validConfig() Config {
 	return Config{
 		Experiment: ExperimentConfig{Name: "baseline"},

@@ -1,0 +1,4 @@
+*.sh text eol=lf
+cmd/deploygen/*.compose.tmpl text eol=lf
+deploy/compose/distributed/*.generated.yml text eol=lf
+deploy/compose/distributed/generation-manifest.json text eol=lf

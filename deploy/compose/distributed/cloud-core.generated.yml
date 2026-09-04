@@ -1,7 +1,7 @@
 services:
 
   kafka:
-    image: apache/kafka:4.3.0
+    image: "continuum-kafka:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: kafka
     ports:
       - "9092:9092"
@@ -40,7 +40,7 @@ services:
 
 
   kafka-init:
-    image: apache/kafka:4.3.0
+    image: "continuum-kafka:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: kafka-init
 
     depends_on:
@@ -72,7 +72,7 @@ services:
 
 
   global-aggregator:
-    image: continuum-global-aggregator:local
+    image: "continuum-global-aggregator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: global-aggregator
 
     environment:

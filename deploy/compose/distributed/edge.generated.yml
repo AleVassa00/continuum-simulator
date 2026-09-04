@@ -2,7 +2,7 @@ services:
 
   # edge-0: 11 sensors
   mqtt-edge-0:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-0
     ports:
       - "18830:1883"
@@ -18,7 +18,7 @@ services:
       - zone-edge-0
 
   edge-0:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-0
     environment:
       EDGE_ID: "edge-0"
@@ -35,13 +35,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-0
 
   # edge-1: 12 sensors
   mqtt-edge-1:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-1
     ports:
       - "18831:1883"
@@ -57,7 +57,7 @@ services:
       - zone-edge-1
 
   edge-1:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-1
     environment:
       EDGE_ID: "edge-1"
@@ -74,13 +74,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-1
 
   # edge-2: 12 sensors
   mqtt-edge-2:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-2
     ports:
       - "18832:1883"
@@ -96,7 +96,7 @@ services:
       - zone-edge-2
 
   edge-2:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-2
     environment:
       EDGE_ID: "edge-2"
@@ -113,13 +113,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-2
 
   # edge-3: 12 sensors
   mqtt-edge-3:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-3
     ports:
       - "18833:1883"
@@ -135,7 +135,7 @@ services:
       - zone-edge-3
 
   edge-3:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-3
     environment:
       EDGE_ID: "edge-3"
@@ -152,13 +152,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-3
 
   # edge-4: 11 sensors
   mqtt-edge-4:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-4
     ports:
       - "18834:1883"
@@ -174,7 +174,7 @@ services:
       - zone-edge-4
 
   edge-4:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-4
     environment:
       EDGE_ID: "edge-4"
@@ -191,13 +191,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-4
 
   # edge-5: 12 sensors
   mqtt-edge-5:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-5
     ports:
       - "18835:1883"
@@ -213,7 +213,7 @@ services:
       - zone-edge-5
 
   edge-5:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-5
     environment:
       EDGE_ID: "edge-5"
@@ -230,13 +230,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-5
 
   # edge-6: 11 sensors
   mqtt-edge-6:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-6
     ports:
       - "18836:1883"
@@ -252,7 +252,7 @@ services:
       - zone-edge-6
 
   edge-6:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-6
     environment:
       EDGE_ID: "edge-6"
@@ -269,13 +269,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-6
 
   # edge-7: 12 sensors
   mqtt-edge-7:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-7
     ports:
       - "18837:1883"
@@ -291,7 +291,7 @@ services:
       - zone-edge-7
 
   edge-7:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-7
     environment:
       EDGE_ID: "edge-7"
@@ -308,13 +308,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-7
 
   # edge-8: 12 sensors
   mqtt-edge-8:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-8
     ports:
       - "18838:1883"
@@ -330,7 +330,7 @@ services:
       - zone-edge-8
 
   edge-8:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-8
     environment:
       EDGE_ID: "edge-8"
@@ -347,13 +347,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-8
 
   # edge-9: 12 sensors
   mqtt-edge-9:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-9
     ports:
       - "18839:1883"
@@ -369,7 +369,7 @@ services:
       - zone-edge-9
 
   edge-9:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-9
     environment:
       EDGE_ID: "edge-9"
@@ -386,13 +386,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-9
 
   # edge-10: 11 sensors
   mqtt-edge-10:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-10
     ports:
       - "18840:1883"
@@ -408,7 +408,7 @@ services:
       - zone-edge-10
 
   edge-10:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-10
     environment:
       EDGE_ID: "edge-10"
@@ -425,13 +425,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-10
 
   # edge-11: 11 sensors
   mqtt-edge-11:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-11
     ports:
       - "18841:1883"
@@ -447,7 +447,7 @@ services:
       - zone-edge-11
 
   edge-11:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-11
     environment:
       EDGE_ID: "edge-11"
@@ -464,13 +464,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-11
 
   # edge-12: 11 sensors
   mqtt-edge-12:
-    image: eclipse-mosquitto:2
+    image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-12
     ports:
       - "18842:1883"
@@ -486,7 +486,7 @@ services:
       - zone-edge-12
 
   edge-12:
-    image: continuum-edge:local
+    image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-12
     environment:
       EDGE_ID: "edge-12"
@@ -503,7 +503,7 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - zone-edge-12
 
