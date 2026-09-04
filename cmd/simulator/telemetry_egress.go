@@ -10,7 +10,7 @@ import (
 	"continuum/internal/mqtttopic"
 )
 
-// struct che gestisce la queue
+// TelemetryEgress disaccoppia il pacing del replay dalla pubblicazione MQTT tramite una coda locale consumata da una goroutine dedicata
 type TelemetryEgress struct {
 	queue chan model.SensorEvent
 
@@ -23,7 +23,6 @@ type TelemetryEgress struct {
 }
 
 type TelemetryEgressStats struct {
-	QueueCapacity     int
 	CurrentQueueDepth int
 	PublishAttempts   uint64
 	PublishErrors     uint64
@@ -31,7 +30,7 @@ type TelemetryEgressStats struct {
 
 type TelemetryPublisher func(topic string, event model.SensorEvent) error
 
-// costruisce un gestore della coda e lancia la goroutine che si occupa di pubblicare su MQTT
+// newTelemetryEgress crea la coda locale della telemetry e avvia la goroutine responsabile delle publish MQTT
 func newTelemetryEgress(capacity int, publish TelemetryPublisher) (*TelemetryEgress, error) {
 
 	if capacity <= 0 {
@@ -51,7 +50,7 @@ func newTelemetryEgress(capacity int, publish TelemetryPublisher) (*TelemetryEgr
 	return egress, nil
 }
 
-// Se c'è spazio nella coda, inserisce il SensorEvent senza bloccare il replay.
+// TryEnqueue prova a inserire un evento nella coda senza bloccare il replay. Restituisce false se la coda è piena
 func (egress *TelemetryEgress) TryEnqueue(event model.SensorEvent) bool {
 	select {
 	case egress.queue <- event:
@@ -59,35 +58,35 @@ func (egress *TelemetryEgress) TryEnqueue(event model.SensorEvent) bool {
 	default:
 		return false
 	}
-}
 
-func (
-	egress *TelemetryEgress,
-) CloseAndWait() TelemetryEgressStats {
-	egress.closeOnce.Do(func() {
-		close(egress.queue)
-	})
+} // CloseAndWait chiude la coda e attende che tutti gli eventi già accettati siano stati processati dalla goroutine di pubblicazione
+func (egress *TelemetryEgress) CloseAndWait() TelemetryEgressStats {
+	egress.closeOnce.Do(
+		func() {
+			close(egress.queue)
+		})
 	<-egress.done
 
 	return egress.Stats()
 }
 
+// Stats restituisce una fotografia delle statistiche correnti della telemetry egress
 func (egress *TelemetryEgress) Stats() TelemetryEgressStats {
 	return TelemetryEgressStats{
-		QueueCapacity:     cap(egress.queue),
 		CurrentQueueDepth: len(egress.queue),
 		PublishAttempts:   egress.publishAttempts.Load(),
 		PublishErrors:     egress.publishErrors.Load(),
 	}
 }
 
-// metodo di una TelemetryEgress che si preoccupa di consumare gli elementi nella coda e pu
+// run consuma gli eventi dalla coda e ne esegue la pubblicazione MQTT
 func (egress *TelemetryEgress) run() {
 	defer close(egress.done)
 
 	for event := range egress.queue {
 		egress.publishAttempts.Add(1)
 
+		// EmittedAt rappresenta l'istante reale in cui l'evento viene consegnato al publisher MQTT, distinto dall'EventTime del dataset
 		event.EmittedAt = time.Now().UTC()
 		if err := egress.publish(mqtttopic.Telemetry(event.SensorID), event); err != nil {
 			egress.publishErrors.Add(1)

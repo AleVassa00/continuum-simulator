@@ -13,6 +13,7 @@ func main() {
 	}
 }
 
+// runSimulator inizializza il Sensor Simulator, configura la connessione MQTT e avvia il replay del dataset
 func runSimulator() error {
 	config, err := loadSimulatorConfig()
 	if err != nil {
@@ -47,10 +48,10 @@ func runSimulator() error {
 		}
 
 	publishEndOfReplaySignal :=
-		func(topic string) (PublishResult, error) {
+		func(topic string) error {
 			return publishEndOfReplay(client.Publish, topic)
 		}
-
+	// Fornisce al replay le funzioni necessarie per pubblicare telemetry ed EndOfReplay senza dipendere direttamente dal client MQTT
 	replayRuntime := ReplayRuntime{
 		PublishTelemetry:   publishTelemetry,
 		PublishEndOfReplay: publishEndOfReplaySignal,

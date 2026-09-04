@@ -10,17 +10,6 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-type PublishToken interface {
-	WaitTimeout(time.Duration) bool
-	Done() <-chan struct{}
-	Error() error
-}
-
-type PublishResult struct {
-	Token       PublishToken
-	PublishedAt time.Time
-}
-
 type MQTTPublish func(
 	topic string,
 	qos byte,
@@ -28,42 +17,11 @@ type MQTTPublish func(
 	payload interface{},
 ) mqtt.Token
 
-type EndOfReplayPublisher func(
-	topic string,
-) (PublishResult, error)
+type EndOfReplayPublisher func(topic string) error
 
 const publishAckTimeout = 5 * time.Second
 
-func waitForPublishCompletion(result PublishResult, topic string) error {
-	if result.Token == nil {
-		return fmt.Errorf("token MQTT nil sul topic %s", topic)
-	}
-	if result.PublishedAt.IsZero() {
-		return fmt.Errorf("istante publish MQTT mancante sul topic %s", topic)
-	}
-
-	select {
-	case <-result.Token.Done():
-		if err := result.Token.Error(); err != nil {
-			return fmt.Errorf("publish MQTT topic=%s fallito: %w", topic, err)
-		}
-		return nil
-	default:
-	}
-
-	timeRemaining := time.Until(result.PublishedAt.Add(publishAckTimeout))
-	if timeRemaining <= 0 ||
-		!result.Token.WaitTimeout(timeRemaining) {
-		return fmt.Errorf("timeout PUBACK MQTT topic=%s dopo %s dal publish", topic, publishAckTimeout)
-	}
-
-	if err := result.Token.Error(); err != nil {
-		return fmt.Errorf("publish MQTT topic=%s fallito: %w", topic, err)
-	}
-
-	return nil
-}
-
+// connectMQTTClient crea il client MQTT del simulatore e attende il completamento della connessione al broker
 func connectMQTTClient(siteID string, endpoint string) (mqtt.Client, error) {
 
 	options := mqtt.NewClientOptions()
@@ -90,29 +48,38 @@ func connectMQTTClient(siteID string, endpoint string) (mqtt.Client, error) {
 	return client, nil
 }
 
+// publishSensorEvent serializza un SensorEvent e lo pubblica con QoS 0. La publish è best effort e non attende alcuna conferma dal broker
 func publishSensorEvent(publish MQTTPublish, topic string, event model.SensorEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("serializzazione SensorEvent fallita: %w", err)
 	}
-	// semantica At most once
 	token := publish(topic, 0, false, payload)
 	if token == nil {
 		return fmt.Errorf("client MQTT ha restituito un token nil sul topic %s", topic)
 	}
 
-	// QoS0 e best effort: non attendiamo il completamento del token.
+	// non attendiamo il completamento del token
 	return token.Error()
 }
 
-func publishEndOfReplay(publish MQTTPublish, topic string) (PublishResult, error) {
-	publishedAt := time.Now()
+// publishEndOfReplay pubblica il segnale di fine replay con QoS 1 e attende il completamento della publish entro il timeout configurato
+func publishEndOfReplay(publish MQTTPublish, topic string) error {
 
+	// QoS 1: l'EndOfReplay deve essere confermato prima di terminare il replay
 	token := publish(topic, 1, false, []byte{})
 
 	if token == nil {
-		return PublishResult{}, fmt.Errorf("client MQTT ha restituito un token nil sul topic %s", topic)
+		return fmt.Errorf("client MQTT ha restituito un token nil sul topic %s", topic)
 	}
 
-	return PublishResult{Token: token, PublishedAt: publishedAt}, nil
+	if !token.WaitTimeout(publishAckTimeout) {
+		return fmt.Errorf("timeout PUBACK MQTT topic=%s dopo %s", topic, publishAckTimeout)
+	}
+
+	if err := token.Error(); err != nil {
+		return fmt.Errorf("publish MQTT topic=%s fallito: %w", topic, err)
+	}
+
+	return nil
 }
