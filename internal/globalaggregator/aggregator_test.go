@@ -440,48 +440,32 @@ func newTestAggregator(
 	sink GlobalAggregateSink,
 ) *Aggregator {
 	t.Helper()
-	clock := &testClock{current: globalTestTime(12, 0)}
-	return newTestAggregatorWithClock(
+	return newTestAggregatorWithIdleTimeout(
 		t,
 		expected,
 		5*time.Second,
-		clock,
 		sink,
 	)
 }
 
-func newTestAggregatorWithClock(
+func newTestAggregatorWithIdleTimeout(
 	t *testing.T,
 	expected []string,
 	edgeIdleTimeout time.Duration,
-	clock *testClock,
 	sink GlobalAggregateSink,
 ) *Aggregator {
 	t.Helper()
-	aggregator, err := newAggregator(
+	aggregator, err := New(
 		expected,
 		15*time.Minute,
 		15*time.Minute,
 		edgeIdleTimeout,
 		sink,
-		clock.Now,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return aggregator
-}
-
-type testClock struct {
-	current time.Time
-}
-
-func (clock *testClock) Now() time.Time {
-	return clock.current
-}
-
-func (clock *testClock) Advance(duration time.Duration) {
-	clock.current = clock.current.Add(duration)
 }
 
 func collectSink(outputs *[]model.GlobalAggregate) GlobalAggregateSink {
@@ -602,12 +586,10 @@ func assertGlobalMetric(
 
 func TestFastEdgeDoesNotCloseWindowWhileActiveEdgeIsBehind(t *testing.T) {
 	outputs := make([]model.GlobalAggregate, 0)
-	clock := &testClock{current: globalTestTime(12, 0)}
-	aggregator := newTestAggregatorWithClock(
+	aggregator := newTestAggregatorWithIdleTimeout(
 		t,
 		testEdgeIDs(2),
 		5*time.Second,
-		clock,
 		collectSink(&outputs),
 	)
 
@@ -630,12 +612,10 @@ func TestFastEdgeDoesNotCloseWindowWhileActiveEdgeIsBehind(t *testing.T) {
 }
 
 func TestGlobalWatermarkIsMinimumOfActiveEdgeWatermarks(t *testing.T) {
-	clock := &testClock{current: globalTestTime(12, 0)}
-	aggregator := newTestAggregatorWithClock(
+	aggregator := newTestAggregatorWithIdleTimeout(
 		t,
 		testEdgeIDs(2),
 		5*time.Second,
-		clock,
 		discardSink,
 	)
 
@@ -690,12 +670,10 @@ func TestEdgeSkippingWindowAdvancesWatermarkWithLaterWindow(t *testing.T) {
 
 func TestNeverSeenEdgeBlocksUntilIdleTimeout(t *testing.T) {
 	outputs := make([]model.GlobalAggregate, 0)
-	clock := &testClock{current: globalTestTime(12, 0)}
-	aggregator := newTestAggregatorWithClock(
+	aggregator := newTestAggregatorWithIdleTimeout(
 		t,
 		testEdgeIDs(2),
 		5*time.Second,
-		clock,
 		collectSink(&outputs),
 	)
 
@@ -705,7 +683,6 @@ func TestNeverSeenEdgeBlocksUntilIdleTimeout(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(4 * time.Second)
 	if err := aggregator.Add(
 		context.Background(),
 		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 20, 20, 20),
@@ -716,7 +693,7 @@ func TestNeverSeenEdgeBlocksUntilIdleTimeout(t *testing.T) {
 		t.Fatalf("Edge mai visto escluso prima del timeout: watermark=%s outputs=%d", aggregator.Watermark(), len(outputs))
 	}
 
-	clock.Advance(time.Second)
+	aggregator.firstAggregateAt = time.Now().UTC().Add(-6 * time.Second)
 	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -727,24 +704,26 @@ func TestNeverSeenEdgeBlocksUntilIdleTimeout(t *testing.T) {
 
 func TestNeverSeenEdgesStartupGraceBeginsWithFirstAggregate(t *testing.T) {
 	outputs := make([]model.GlobalAggregate, 0)
-	clock := &testClock{current: globalTestTime(12, 0)}
-	aggregator := newTestAggregatorWithClock(
+	aggregator := newTestAggregatorWithIdleTimeout(
 		t,
 		testEdgeIDs(3),
 		5*time.Second,
-		clock,
 		collectSink(&outputs),
 	)
 
-	clock.Advance(90 * time.Second)
-	firstAggregateAt := clock.Now()
+	if !aggregator.firstAggregateAt.IsZero() {
+		t.Fatalf("firstAggregateAt valorizzato prima del primo aggregato: %s", aggregator.firstAggregateAt)
+	}
+	beforeFirstAggregate := time.Now().UTC()
 	if err := aggregator.Add(
 		context.Background(),
 		testCloudAggregate("edge-0", globalTestTime(10, 0), 1, 0, 10, 10, 10),
 	); err != nil {
 		t.Fatal(err)
 	}
-	if !aggregator.firstAggregateAt.Equal(firstAggregateAt) ||
+	afterFirstAggregate := time.Now().UTC()
+	if aggregator.firstAggregateAt.Before(beforeFirstAggregate) ||
+		aggregator.firstAggregateAt.After(afterFirstAggregate) ||
 		!aggregator.Watermark().IsZero() {
 		t.Fatalf(
 			"startup grace non iniziata dal primo aggregato: first=%s watermark=%s",
@@ -753,7 +732,6 @@ func TestNeverSeenEdgesStartupGraceBeginsWithFirstAggregate(t *testing.T) {
 		)
 	}
 
-	clock.Advance(4 * time.Second)
 	if err := aggregator.Add(
 		context.Background(),
 		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 20, 20, 20),
@@ -764,7 +742,7 @@ func TestNeverSeenEdgesStartupGraceBeginsWithFirstAggregate(t *testing.T) {
 		t.Fatalf("Edge mai visti esclusi durante la startup grace: watermark=%s outputs=%d", aggregator.Watermark(), len(outputs))
 	}
 
-	clock.Advance(2 * time.Second)
+	aggregator.firstAggregateAt = time.Now().UTC().Add(-6 * time.Second)
 	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -777,12 +755,10 @@ func TestNeverSeenEdgesStartupGraceBeginsWithFirstAggregate(t *testing.T) {
 
 func TestSeenEdgeBecomesIdleAfterTimeout(t *testing.T) {
 	outputs := make([]model.GlobalAggregate, 0)
-	clock := &testClock{current: globalTestTime(12, 0)}
-	aggregator := newTestAggregatorWithClock(
+	aggregator := newTestAggregatorWithIdleTimeout(
 		t,
 		testEdgeIDs(2),
 		5*time.Second,
-		clock,
 		collectSink(&outputs),
 	)
 
@@ -794,14 +770,13 @@ func TestSeenEdgeBecomesIdleAfterTimeout(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	clock.Advance(4 * time.Second)
 	if err := aggregator.Add(
 		context.Background(),
 		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 30, 30, 30),
 	); err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(time.Second)
+	aggregator.lastActivityByEdge["edge-1"] = time.Now().UTC().Add(-6 * time.Second)
 	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -812,12 +787,10 @@ func TestSeenEdgeBecomesIdleAfterTimeout(t *testing.T) {
 }
 
 func TestReturningIdleEdgeDoesNotMoveWatermarkBackward(t *testing.T) {
-	clock := &testClock{current: globalTestTime(12, 0)}
-	aggregator := newTestAggregatorWithClock(
+	aggregator := newTestAggregatorWithIdleTimeout(
 		t,
 		testEdgeIDs(2),
 		5*time.Second,
-		clock,
 		discardSink,
 	)
 
@@ -827,14 +800,13 @@ func TestReturningIdleEdgeDoesNotMoveWatermarkBackward(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(4 * time.Second)
 	if err := aggregator.Add(
 		context.Background(),
 		testCloudAggregate("edge-0", globalTestTime(10, 45), 1, 0, 20, 20, 20),
 	); err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(time.Second)
+	aggregator.firstAggregateAt = time.Now().UTC().Add(-6 * time.Second)
 	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -847,7 +819,7 @@ func TestReturningIdleEdgeDoesNotMoveWatermarkBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate, available := aggregator.watermarkCandidate(clock.Now())
+	candidate, available := aggregator.watermarkCandidate(time.Now().UTC())
 	if !available || !candidate.Equal(globalTestTime(10, 45)) {
 		t.Fatalf("Edge rientrato non riattivato: candidate=%s available=%t", candidate, available)
 	}
@@ -858,12 +830,10 @@ func TestReturningIdleEdgeDoesNotMoveWatermarkBackward(t *testing.T) {
 
 func TestRecordUsesPreviousWatermarkBeforeAdvancingIt(t *testing.T) {
 	outputs := make([]model.GlobalAggregate, 0)
-	clock := &testClock{current: globalTestTime(12, 0)}
-	aggregator := newTestAggregatorWithClock(
+	aggregator := newTestAggregatorWithIdleTimeout(
 		t,
 		testEdgeIDs(3),
 		5*time.Second,
-		clock,
 		collectSink(&outputs),
 	)
 
@@ -873,7 +843,8 @@ func TestRecordUsesPreviousWatermarkBeforeAdvancingIt(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(5 * time.Second)
+	aggregator.firstAggregateAt = time.Now().UTC().Add(-6 * time.Second)
+	aggregator.lastActivityByEdge["edge-1"] = time.Now().UTC().Add(-6 * time.Second)
 	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -897,12 +868,10 @@ func TestRecordUsesPreviousWatermarkBeforeAdvancingIt(t *testing.T) {
 }
 
 func TestAggregateForWatermarkClosedWindowIsLate(t *testing.T) {
-	clock := &testClock{current: globalTestTime(12, 0)}
-	aggregator := newTestAggregatorWithClock(
+	aggregator := newTestAggregatorWithIdleTimeout(
 		t,
 		testEdgeIDs(2),
 		5*time.Second,
-		clock,
 		discardSink,
 	)
 	firstWindow := globalTestTime(10, 0)
@@ -912,22 +881,23 @@ func TestAggregateForWatermarkClosedWindowIsLate(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(4 * time.Second)
 	if err := aggregator.Add(
 		context.Background(),
 		testCloudAggregate("edge-0", globalTestTime(10, 30), 1, 0, 20, 20, 20),
 	); err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(time.Second)
+	aggregator.firstAggregateAt = time.Now().UTC().Add(-6 * time.Second)
 	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
+	beforeLateAggregate := time.Now().UTC()
 	err := aggregator.Add(
 		context.Background(),
 		testCloudAggregate("edge-1", firstWindow, 1, 0, 30, 30, 30),
 	)
+	afterLateAggregate := time.Now().UTC()
 	if !errors.Is(err, ErrClosedWindow) {
 		t.Fatalf("atteso ErrClosedWindow, ottenuto %v", err)
 	}
@@ -935,7 +905,7 @@ func TestAggregateForWatermarkClosedWindowIsLate(t *testing.T) {
 		t.Fatalf("atteso lateAggregatesDropped=1, ottenuto %d", aggregator.LateAggregatesDropped())
 	}
 	lastActivity, active := aggregator.lastActivityByEdge["edge-1"]
-	if !active || !lastActivity.Equal(clock.Now()) {
+	if !active || lastActivity.Before(beforeLateAggregate) || lastActivity.After(afterLateAggregate) {
 		t.Fatalf("Edge con record late non riattivato: activity=%s active=%t", lastActivity, active)
 	}
 	if !aggregator.maxWindowEndByEdge["edge-1"].IsZero() {
@@ -944,12 +914,10 @@ func TestAggregateForWatermarkClosedWindowIsLate(t *testing.T) {
 }
 
 func TestAllIdleEdgesKeepLastWatermark(t *testing.T) {
-	clock := &testClock{current: globalTestTime(12, 0)}
-	aggregator := newTestAggregatorWithClock(
+	aggregator := newTestAggregatorWithIdleTimeout(
 		t,
 		testEdgeIDs(2),
 		5*time.Second,
-		clock,
 		discardSink,
 	)
 	for _, input := range []model.CloudEdgeAggregate{
@@ -965,7 +933,9 @@ func TestAllIdleEdgesKeepLastWatermark(t *testing.T) {
 		t.Fatal("watermark iniziale non avanzato")
 	}
 
-	clock.Advance(5 * time.Second)
+	idleSince := time.Now().UTC().Add(-6 * time.Second)
+	aggregator.lastActivityByEdge["edge-0"] = idleSince
+	aggregator.lastActivityByEdge["edge-1"] = idleSince
 	if err := aggregator.AdvanceWatermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}

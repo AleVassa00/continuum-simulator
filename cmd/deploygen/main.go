@@ -84,7 +84,6 @@ type deploygenOptions struct {
 	OutputPath           string
 	DistributedOutputDir string
 	ArtifactsRoot        string
-	Now                  func() time.Time
 	Stdout               io.Writer
 }
 
@@ -152,7 +151,6 @@ func main() {
 		OutputPath:           defaultOutputPath,
 		DistributedOutputDir: defaultDistributedOutputDir,
 		ArtifactsRoot:        defaultArtifactsRoot,
-		Now:                  time.Now,
 		Stdout:               os.Stdout,
 	}); err != nil {
 		panic(err)
@@ -207,7 +205,7 @@ func generateLocalDeployment(
 	options deploygenOptions,
 ) error {
 
-	replayStartAt := options.Now().UTC().Add(
+	replayStartAt := time.Now().UTC().Add(
 		config.Workload.StartLeadTime.Duration(),
 	)
 	effective := experiment.BuildEffective(config, replayStartAt)

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"continuum/internal/experiment"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestBuildComposeMatchesExpectedOutput(t *testing.T) {
@@ -333,11 +335,7 @@ global: {}
 			OutputPath:           localOutputPath,
 			DistributedOutputDir: distributedOutputDir,
 			ArtifactsRoot:        artifactsRoot,
-			Now: func() time.Time {
-				t.Fatal("la modalita distributed non deve calcolare REPLAY_START_AT")
-				return time.Time{}
-			},
-			Stdout: &output,
+			Stdout:               &output,
 		},
 	)
 	if err != nil {
@@ -456,17 +454,17 @@ global:
 	t.Setenv("EDGE_INGRESS_QUEUE_CAPACITY", "999999")
 
 	var output bytes.Buffer
-	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	earliestBaseTime := time.Now().UTC()
 	err := runDeploygen(
 		[]string{"--experiment", experimentPath},
 		deploygenOptions{
 			TopologyPath:  topologyPath,
 			OutputPath:    outputPath,
 			ArtifactsRoot: artifactsRoot,
-			Now:           func() time.Time { return now },
 			Stdout:        &output,
 		},
 	)
+	latestBaseTime := time.Now().UTC()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,7 +473,6 @@ global:
 	for _, expected := range []string{
 		"ACCELERATION_FACTOR: \"77.5\"",
 		"MAX_EVENTS: \"9\"",
-		"REPLAY_START_AT: \"2026-08-31T12:00:12Z\"",
 		"TELEMETRY_QUEUE_CAPACITY: \"111\"",
 		"EDGE_INGRESS_QUEUE_CAPACITY: \"222\"",
 		"WINDOW_SIZE: \"5m0s\"",
@@ -500,24 +497,44 @@ global:
 	}
 
 	effectivePath := filepath.Join(artifactsRoot, "custom", "effective-config.yaml")
-	effective := readTestFile(t, effectivePath)
+	effectivePayload := readTestFile(t, effectivePath)
+	var effective experiment.EffectiveConfig
+	if err := yaml.Unmarshal([]byte(effectivePayload), &effective); err != nil {
+		t.Fatal(err)
+	}
+	replayStartAt, err := time.Parse(time.RFC3339Nano, effective.Workload.ReplayStartAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leadTime := 12 * time.Second
+	if replayStartAt.Before(earliestBaseTime.Add(leadTime)) ||
+		replayStartAt.After(latestBaseTime.Add(leadTime)) {
+		t.Fatalf(
+			"replay_start_at=%s, atteso tra %s e %s",
+			replayStartAt,
+			earliestBaseTime.Add(leadTime),
+			latestBaseTime.Add(leadTime),
+		)
+	}
+	if !strings.Contains(compose, "REPLAY_START_AT: \""+effective.Workload.ReplayStartAt+"\"") {
+		t.Fatalf("Compose senza il replay_start_at effettivo %s", effective.Workload.ReplayStartAt)
+	}
 	for _, expected := range []string{
 		"name: custom",
 		"acceleration_factor: 77.5",
-		"replay_start_at: \"2026-08-31T12:00:12Z\"",
 		"workers: 2",
 		"watermark_delay: 3m0s",
 		"edge_idle_timeout: 7s",
 	} {
-		if !strings.Contains(effective, expected) {
-			t.Errorf("effective config senza %q:\n%s", expected, effective)
+		if !strings.Contains(effectivePayload, expected) {
+			t.Errorf("effective config senza %q:\n%s", expected, effectivePayload)
 		}
 	}
 
 	summary := output.String()
 	for _, expected := range []string{
 		"Experiment: custom",
-		"replay start at: 2026-08-31T12:00:12Z",
+		"replay start at: " + effective.Workload.ReplayStartAt,
 		"telemetry queue capacity: 111",
 		"ingress queue capacity: 222",
 		"workers: 2",

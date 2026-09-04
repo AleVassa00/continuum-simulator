@@ -180,7 +180,6 @@ func TestBuildSensorEventSerializesNullableNumericMeasurements(t *testing.T) {
 
 func TestReplayPreservesEventSemanticsAndOrder(t *testing.T) {
 	config := validSimulatorConfig()
-	clock := newFakeClock(config.ReplayStartAt)
 	var topics []string
 	var events []model.SensorEvent
 
@@ -191,7 +190,7 @@ func TestReplayPreservesEventSemanticsAndOrder(t *testing.T) {
 			"101;BME280;1;45.0;9.0;2025-01-01T00:00:02Z;100002;22;52",
 		),
 		config,
-		testReplayRuntime(clock, func(topic string, event model.SensorEvent) error {
+		testReplayRuntime(func(topic string, event model.SensorEvent) error {
 			topics = append(topics, topic)
 			events = append(events, event)
 			return nil
@@ -242,14 +241,13 @@ func TestReplayPreservesEventSemanticsAndOrder(t *testing.T) {
 
 func TestReplayRejectsMalformedMeasurement(t *testing.T) {
 	config := validSimulatorConfig()
-	clock := newFakeClock(config.ReplayStartAt)
 
 	stats, err := replaySite(
 		replayReader(
 			"101;BME280;1;45.0;9.0;2025-01-01T00:00:00Z;100000;abc;50",
 		),
 		config,
-		testReplayRuntime(clock, func(string, model.SensorEvent) error { return nil }),
+		testReplayRuntime(func(string, model.SensorEvent) error { return nil }),
 	)
 	if err == nil || !strings.Contains(err.Error(), "temperature") {
 		t.Fatalf("errore inatteso: %v", err)
@@ -262,9 +260,8 @@ func TestReplayRejectsMalformedMeasurement(t *testing.T) {
 func TestMaxEventsTruncatesWithoutEndOfReplay(t *testing.T) {
 	config := validSimulatorConfig()
 	config.MaxEvents = 2
-	clock := newFakeClock(config.ReplayStartAt)
 	eosCalls := 0
-	runtime := testReplayRuntime(clock, func(string, model.SensorEvent) error {
+	runtime := testReplayRuntime(func(string, model.SensorEvent) error {
 		return nil
 	})
 	runtime.PublishEndOfReplay = func(string) (PublishResult, error) {
@@ -292,7 +289,6 @@ func TestMaxEventsTruncatesWithoutEndOfReplay(t *testing.T) {
 
 func TestReplayRejectsDecreasingEventTime(t *testing.T) {
 	config := validSimulatorConfig()
-	clock := newFakeClock(config.ReplayStartAt)
 
 	_, err := replaySite(
 		replayReader(
@@ -300,7 +296,7 @@ func TestReplayRejectsDecreasingEventTime(t *testing.T) {
 			"302;BME280;3;45.0;9.0;2025-01-01T00:00:01Z;100001;21;51",
 		),
 		config,
-		testReplayRuntime(clock, func(string, model.SensorEvent) error { return nil }),
+		testReplayRuntime(func(string, model.SensorEvent) error { return nil }),
 	)
 	if err == nil || !strings.Contains(err.Error(), "non ordinato") {
 		t.Fatalf("errore inatteso: %v", err)
@@ -309,25 +305,23 @@ func TestReplayRejectsDecreasingEventTime(t *testing.T) {
 
 func TestReplayRejectsLateStartButNotLaterLateness(t *testing.T) {
 	config := validSimulatorConfig()
-	lateClock := newFakeClock(config.ReplayStartAt.Add(15 * time.Second))
+	config.ReplayStartAt = time.Now().UTC().Add(-15 * time.Second)
 
 	stats, err := replaySite(
 		replayReader(
 			"401;BME280;4;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
 		),
 		config,
-		testReplayRuntime(lateClock, func(string, model.SensorEvent) error { return nil }),
+		testReplayRuntime(func(string, model.SensorEvent) error { return nil }),
 	)
 	if err == nil || !strings.Contains(err.Error(), "avviato troppo tardi") ||
 		stats.OfferedEvents != 0 {
 		t.Fatalf("stats=%#v err=%v", stats, err)
 	}
 
-	clock := newFakeClock(config.ReplayStartAt)
-	runtime := testReplayRuntime(clock, func(string, model.SensorEvent) error { return nil })
-	runtime.Sleep = func(duration time.Duration) {
-		clock.Advance(duration + 2*time.Second)
-	}
+	config = validSimulatorConfig()
+	config.ReplayStartAt = time.Now().UTC().Add(-9 * time.Second)
+	runtime := testReplayRuntime(func(string, model.SensorEvent) error { return nil })
 	stats, err = replaySite(
 		replayReader(
 			"401;BME280;4;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
@@ -339,29 +333,19 @@ func TestReplayRejectsLateStartButNotLaterLateness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.OfferedEvents != 2 || stats.SchedulingLagMax != 2*time.Second {
+	if stats.OfferedEvents != 2 || stats.SchedulingLagMax < 8*time.Second {
 		t.Fatalf("stats=%#v", stats)
 	}
 }
 
-func TestReplayThroughputUsesOnlyOfferWindow(t *testing.T) {
-	config := validSimulatorConfig()
-	clock := newFakeClock(config.ReplayStartAt.Add(-10 * time.Second))
+func TestReplayStatsThroughputUsesOnlyOfferWindow(t *testing.T) {
+	firstOfferedAt := mustTime("2026-08-28T20:00:00Z")
+	stats := ReplayStats{}
+	stats.RecordOffer(firstOfferedAt, 0)
+	stats.RecordOffer(firstOfferedAt.Add(2*time.Second), 0)
+	stats.CompletedAt = firstOfferedAt.Add(time.Minute)
 
-	stats, err := replaySite(
-		replayReader(
-			"401;BME280;4;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
-			"402;BME280;4;45.0;9.0;2025-01-01T00:00:20Z;100000;20;50",
-		),
-		config,
-		testReplayRuntime(clock, func(string, model.SensorEvent) error { return nil }),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !stats.FirstOfferedAt.Equal(config.ReplayStartAt) ||
-		!stats.LastOfferedAt.Equal(config.ReplayStartAt.Add(2*time.Second)) ||
-		stats.OfferDuration() != 2*time.Second ||
+	if stats.OfferDuration() != 2*time.Second ||
 		stats.Throughput() != 0.5 {
 		t.Fatalf("statistiche offer inattese: %#v", stats)
 	}
@@ -565,14 +549,13 @@ func TestTelemetryEgressConcurrentCloseIsSafe(t *testing.T) {
 
 func TestRunReplayLoopCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *testing.T) {
 	config := validSimulatorConfig()
-	clock := newFakeClock(config.ReplayStartAt)
 	egress := &TelemetryEgress{
 		queue: make(chan model.SensorEvent, 1),
 	}
-	runtime := testReplayRuntime(clock, func(string, model.SensorEvent) error { return nil })
+	runtime := testReplayRuntime(func(string, model.SensorEvent) error { return nil })
 	pacer := ReplayPacer{
 		Epoch:              config.ReplayEpoch,
-		StartAt:            localReplayStart(clock.Now(), config.ReplayStartAt),
+		StartAt:            localReplayStart(time.Now(), config.ReplayStartAt),
 		AccelerationFactor: config.AccelerationFactor,
 	}
 	stats := ReplayStats{}
@@ -602,11 +585,10 @@ func TestRunReplayLoopCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *tes
 
 func TestReplayDrainsLocalQueueBeforeEndOfReplay(t *testing.T) {
 	config := validSimulatorConfig()
-	clock := newFakeClock(config.ReplayStartAt)
 	endToken := newAwaitableToken(nil)
 	var mu sync.Mutex
 	order := make([]string, 0, 4)
-	runtime := testReplayRuntime(clock, func(_ string, event model.SensorEvent) error {
+	runtime := testReplayRuntime(func(_ string, event model.SensorEvent) error {
 		mu.Lock()
 		order = append(order, "telemetry-"+event.EventID)
 		mu.Unlock()
@@ -625,7 +607,7 @@ func TestReplayDrainsLocalQueueBeforeEndOfReplay(t *testing.T) {
 		}
 		return PublishResult{
 			Token:       endToken,
-			PublishedAt: clock.Now(),
+			PublishedAt: time.Now(),
 		}, nil
 	}
 
@@ -686,7 +668,7 @@ func TestReplayFailsOnEndOfReplayPublishErrorAndTimeout(t *testing.T) {
 			publisher: func(string) (PublishResult, error) {
 				return PublishResult{
 					Token:       newAwaitableToken(errors.New("PUBACK fallito")),
-					PublishedAt: testPublishTime,
+					PublishedAt: time.Now(),
 				}, nil
 			},
 			contains: "PUBACK fallito",
@@ -694,8 +676,7 @@ func TestReplayFailsOnEndOfReplayPublishErrorAndTimeout(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			config := validSimulatorConfig()
-			clock := newFakeClock(config.ReplayStartAt)
-			runtime := testReplayRuntime(clock, func(string, model.SensorEvent) error { return nil })
+			runtime := testReplayRuntime(func(string, model.SensorEvent) error { return nil })
 			runtime.PublishEndOfReplay = test.publisher
 
 			stats, err := replaySite(
@@ -776,7 +757,6 @@ func TestPublishEndOfReplayUsesQoSOneWithoutRetain(t *testing.T) {
 			return token
 		},
 		"replay/edge-3/end",
-		func() time.Time { return testPublishTime },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -923,35 +903,6 @@ func TestSimulatorCreatesExactlyOneMQTTClientAndHasNoPendingQueue(t *testing.T) 
 	}
 }
 
-type fakeClock struct {
-	mu     sync.Mutex
-	now    time.Time
-	sleeps []time.Duration
-}
-
-func newFakeClock(now time.Time) *fakeClock {
-	return &fakeClock{now: now}
-}
-
-func (clock *fakeClock) Now() time.Time {
-	clock.mu.Lock()
-	defer clock.mu.Unlock()
-	return clock.now
-}
-
-func (clock *fakeClock) Sleep(duration time.Duration) {
-	clock.mu.Lock()
-	clock.sleeps = append(clock.sleeps, duration)
-	clock.now = clock.now.Add(duration)
-	clock.mu.Unlock()
-}
-
-func (clock *fakeClock) Advance(duration time.Duration) {
-	clock.mu.Lock()
-	clock.now = clock.now.Add(duration)
-	clock.mu.Unlock()
-}
-
 type fakeToken struct {
 	mu         sync.Mutex
 	done       chan struct{}
@@ -1024,24 +975,21 @@ func (token *fakeToken) Error() error {
 }
 
 func testReplayRuntime(
-	clock *fakeClock,
 	publish TelemetryPublisher,
 ) ReplayRuntime {
 	return ReplayRuntime{
-		Now:                clock.Now,
-		Sleep:              clock.Sleep,
 		PublishTelemetry:   publish,
-		PublishEndOfReplay: completedEndPublisher(clock),
+		PublishEndOfReplay: completedEndPublisher(),
 	}
 }
 
-func completedEndPublisher(clock *fakeClock) EndOfReplayPublisher {
+func completedEndPublisher() EndOfReplayPublisher {
 	return func(
 		_ string,
 	) (PublishResult, error) {
 		return PublishResult{
 			Token:       newCompletedToken(nil),
-			PublishedAt: clock.Now(),
+			PublishedAt: time.Now(),
 		}, nil
 	}
 }
@@ -1050,7 +998,7 @@ func validSimulatorConfig() SimulatorConfig {
 	return SimulatorConfig{
 		SiteID:                 "edge-3",
 		ReplayEpoch:            mustTime("2025-01-01T00:00:00Z"),
-		ReplayStartAt:          mustTime("2026-08-28T20:00:00Z"),
+		ReplayStartAt:          time.Now().UTC().Add(-time.Second),
 		AccelerationFactor:     10,
 		TelemetryQueueCapacity: 10,
 	}

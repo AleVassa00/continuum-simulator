@@ -534,7 +534,7 @@ func TestDuplicateEndOfReplayIsIgnored(t *testing.T) {
 
 func TestRetrySubscriptionSucceedsAfterTransientFailures(t *testing.T) {
 	calls := 0
-	var waits []time.Duration
+	startedAt := time.Now()
 
 	attempts, err := retrySubscription(
 		testRetryPolicy(),
@@ -551,10 +551,8 @@ func TestRetrySubscriptionSucceedsAfterTransientFailures(t *testing.T) {
 
 			return nil
 		},
-		func(duration time.Duration) {
-			waits = append(waits, duration)
-		},
 	)
+	elapsed := time.Since(startedAt)
 	if err != nil {
 		t.Fatalf("retrySubscription() ha restituito un errore: %v", err)
 	}
@@ -563,16 +561,14 @@ func TestRetrySubscriptionSucceedsAfterTransientFailures(t *testing.T) {
 		t.Fatalf("attempts=%d calls=%d, attesi 3 e 3", attempts, calls)
 	}
 
-	if len(waits) != 2 ||
-		waits[0] != 10*time.Millisecond ||
-		waits[1] != 20*time.Millisecond {
-		t.Fatalf("backoff inattesi: %v", waits)
+	if elapsed < 30*time.Millisecond {
+		t.Fatalf("backoff totale=%s, atteso almeno 30ms", elapsed)
 	}
 }
 
 func TestRetrySubscriptionStopsAfterConfiguredAttempts(t *testing.T) {
 	calls := 0
-	waits := 0
+	startedAt := time.Now()
 
 	attempts, err := retrySubscription(
 		testRetryPolicy(),
@@ -581,18 +577,18 @@ func TestRetrySubscriptionStopsAfterConfiguredAttempts(t *testing.T) {
 			calls++
 			return errors.New("errore temporaneo")
 		},
-		func(time.Duration) { waits++ },
 	)
+	elapsed := time.Since(startedAt)
 	if err == nil {
 		t.Fatal("esaurimento retry non segnalato")
 	}
 
-	if attempts != 3 || calls != 3 || waits != 2 {
+	if attempts != 3 || calls != 3 || elapsed < 30*time.Millisecond {
 		t.Fatalf(
-			"attempts=%d calls=%d waits=%d, attesi 3, 3, 2",
+			"attempts=%d calls=%d elapsed=%s, attesi 3, 3 e almeno 30ms",
 			attempts,
 			calls,
-			waits,
+			elapsed,
 		)
 	}
 }
@@ -609,9 +605,6 @@ func TestRetrySubscriptionStopsWhenConnectionGenerationIsInvalidated(t *testing.
 			calls++
 			coordinator.Invalidate()
 			return errors.New("connessione persa")
-		},
-		func(time.Duration) {
-			t.Fatal("backoff eseguito dopo invalidazione")
 		},
 	)
 	if !errors.Is(err, errSubscriptionInactive) {

@@ -189,7 +189,6 @@ func subscribeToEdgeTopics(
 
 			return nil
 		},
-		time.Sleep,
 	)
 	if err != nil {
 		fmt.Printf(
@@ -225,7 +224,6 @@ func retrySubscription(
 	policy SubscriptionRetryPolicy,
 	isActive func() bool,
 	attempt func(time.Duration) error,
-	wait func(time.Duration),
 ) (int, error) {
 	if policy.Attempts <= 0 {
 		return 0, fmt.Errorf("numero tentativi di sottoscrizione non valido")
@@ -255,7 +253,7 @@ func retrySubscription(
 			return attemptNumber, errSubscriptionInactive
 		}
 
-		wait(
+		time.Sleep(
 			policy.Backoff * time.Duration(attemptNumber),
 		)
 	}

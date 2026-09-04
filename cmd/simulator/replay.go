@@ -36,8 +36,6 @@ type ReplayPacer struct {
 }
 
 type ReplayRuntime struct {
-	Now                func() time.Time
-	Sleep              func(time.Duration)
 	PublishTelemetry   TelemetryPublisher
 	PublishEndOfReplay EndOfReplayPublisher
 }
@@ -118,24 +116,11 @@ func localReplayStart(now time.Time, configuredStart time.Time) time.Time {
 	return now.Add(configuredStart.Sub(now))
 }
 
-func waitUntil(
-	scheduledTime time.Time,
-	now func() time.Time,
-	sleep func(time.Duration),
-) error {
-	if now == nil {
-		return fmt.Errorf("clock replay non configurato")
-	}
-	if sleep == nil {
-		return fmt.Errorf("funzione di sleep non configurata")
-	}
-
-	wait := scheduledTime.Sub(now())
+func waitUntil(scheduledTime time.Time) {
+	wait := time.Until(scheduledTime)
 	if wait > 0 {
-		sleep(wait)
+		time.Sleep(wait)
 	}
-
-	return nil
 }
 
 func (
@@ -220,7 +205,7 @@ func (
 func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntime) (stats ReplayStats, replayErr error) {
 	stats.QueueCapacity = config.TelemetryQueueCapacity
 
-	anchorNow := runtime.Now()
+	anchorNow := time.Now()
 
 	//costruzione del ReplayPacer
 	pacer := ReplayPacer{
@@ -229,7 +214,10 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 		AccelerationFactor: config.AccelerationFactor,
 	}
 
-	egress, err := createTelemetryEgress(config, runtime)
+	egress, err := newTelemetryEgress(
+		config.TelemetryQueueCapacity,
+		runtime.PublishTelemetry,
+	)
 	if err != nil {
 		return stats, err
 	}
@@ -245,7 +233,7 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 
 	defer func() {
 		closeEgress()
-		stats.CompletedAt = runtime.Now()
+		stats.CompletedAt = time.Now()
 	}()
 
 	if err := runReplayLoop(reader, config, runtime, pacer, egress, &stats); err != nil {
@@ -263,13 +251,6 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 	}
 
 	return stats, nil
-}
-
-func createTelemetryEgress(config SimulatorConfig, runtime ReplayRuntime) (*TelemetryEgress, error) {
-	return newTelemetryEgress(
-		config.TelemetryQueueCapacity,
-		runtime.PublishTelemetry,
-	)
 }
 
 func recordTelemetryEgressStats(stats *ReplayStats, egressStats TelemetryEgressStats) {
@@ -337,7 +318,7 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRun
 		}
 
 		if stats.OfferedEvents == 0 {
-			actualTime := runtime.Now()
+			actualTime := time.Now()
 			lateness := actualTime.Sub(scheduledTime)
 			tolerance := config.StartLateTolerance
 			if tolerance <= 0 {
@@ -354,11 +335,9 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRun
 			}
 		}
 
-		if err := waitUntil(scheduledTime, runtime.Now, runtime.Sleep); err != nil {
-			return err
-		}
+		waitUntil(scheduledTime)
 
-		offeredAt := runtime.Now()
+		offeredAt := time.Now()
 		schedulingLag := offeredAt.Sub(scheduledTime)
 		sequences[measurement.SensorID] = sequence
 		stats.RecordOffer(offeredAt, schedulingLag)
@@ -416,7 +395,6 @@ func publishReplayEnd(config SimulatorConfig, runtime ReplayRuntime, stats *Repl
 	if err := waitForPublishCompletion(
 		endResult,
 		endTopic,
-		runtime.Now,
 	); err != nil {
 		stats.EOSFailures++
 		return fmt.Errorf(

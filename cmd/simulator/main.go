@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
-	"time"
 
 	"continuum/internal/model"
 )
@@ -49,12 +48,10 @@ func runSimulator() error {
 
 	publishEndOfReplaySignal :=
 		func(topic string) (PublishResult, error) {
-			return publishEndOfReplay(client.Publish, topic, time.Now)
+			return publishEndOfReplay(client.Publish, topic)
 		}
 
 	replayRuntime := ReplayRuntime{
-		Now:                time.Now,
-		Sleep:              time.Sleep,
 		PublishTelemetry:   publishTelemetry,
 		PublishEndOfReplay: publishEndOfReplaySignal,
 	}

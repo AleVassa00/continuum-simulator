@@ -63,7 +63,6 @@ type Aggregator struct {
 	lateAggregatesDropped uint64
 
 	sink GlobalAggregateSink
-	now  func() time.Time
 }
 
 func New(
@@ -72,24 +71,6 @@ func New(
 	watermarkDelay time.Duration,
 	edgeIdleTimeout time.Duration,
 	sink GlobalAggregateSink,
-) (*Aggregator, error) {
-	return newAggregator(
-		expectedEdgeIDs,
-		windowSize,
-		watermarkDelay,
-		edgeIdleTimeout,
-		sink,
-		time.Now,
-	)
-}
-
-func newAggregator(
-	expectedEdgeIDs []string,
-	windowSize time.Duration,
-	watermarkDelay time.Duration,
-	edgeIdleTimeout time.Duration,
-	sink GlobalAggregateSink,
-	now func() time.Time,
 ) (*Aggregator, error) {
 	if len(expectedEdgeIDs) == 0 {
 		return nil, fmt.Errorf("EXPECTED_EDGE_IDS non puo essere vuota")
@@ -110,10 +91,6 @@ func newAggregator(
 	if sink == nil {
 		return nil, fmt.Errorf("GlobalAggregate sink non configurato")
 	}
-	if now == nil {
-		return nil, fmt.Errorf("clock Global Aggregator non configurato")
-	}
-
 	expected := make(map[string]struct{}, len(expectedEdgeIDs))
 	for _, rawEdgeID := range expectedEdgeIDs {
 		edgeID := strings.TrimSpace(rawEdgeID)
@@ -141,7 +118,6 @@ func newAggregator(
 		windows:            make(map[windowKey]*windowState),
 		closedWindows:      make(map[windowKey]struct{}),
 		sink:               sink,
-		now:                now,
 	}, nil
 }
 
@@ -184,7 +160,7 @@ func (aggregator *Aggregator) Add(
 		return err
 	}
 
-	now := aggregator.now().UTC()
+	now := time.Now().UTC()
 	if aggregator.firstAggregateAt.IsZero() {
 		aggregator.firstAggregateAt = now
 	}
@@ -249,7 +225,7 @@ func (aggregator *Aggregator) AdvanceWatermark(ctx context.Context) error {
 		return nil
 	}
 
-	return aggregator.advanceWatermarkAt(ctx, aggregator.now().UTC())
+	return aggregator.advanceWatermarkAt(ctx, time.Now().UTC())
 }
 
 func (aggregator *Aggregator) advanceWatermarkAt(
@@ -393,7 +369,7 @@ func (aggregator *Aggregator) emit(
 ) error {
 	output := state.buildAggregate(
 		uint64(len(aggregator.expectedEdges)),
-		aggregator.now().UTC(),
+		time.Now().UTC(),
 	)
 	if err := ValidateGlobalAggregate(output); err != nil {
 		return fmt.Errorf(

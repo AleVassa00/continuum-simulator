@@ -34,7 +34,7 @@ type EndOfReplayPublisher func(
 
 const publishAckTimeout = 5 * time.Second
 
-func waitForPublishCompletion(result PublishResult, topic string, now func() time.Time) error {
+func waitForPublishCompletion(result PublishResult, topic string) error {
 	if result.Token == nil {
 		return fmt.Errorf("token MQTT nil sul topic %s", topic)
 	}
@@ -51,7 +51,7 @@ func waitForPublishCompletion(result PublishResult, topic string, now func() tim
 	default:
 	}
 
-	timeRemaining := result.PublishedAt.Add(publishAckTimeout).Sub(now())
+	timeRemaining := time.Until(result.PublishedAt.Add(publishAckTimeout))
 	if timeRemaining <= 0 ||
 		!result.Token.WaitTimeout(timeRemaining) {
 		return fmt.Errorf("timeout PUBACK MQTT topic=%s dopo %s dal publish", topic, publishAckTimeout)
@@ -105,8 +105,8 @@ func publishSensorEvent(publish MQTTPublish, topic string, event model.SensorEve
 	return token.Error()
 }
 
-func publishEndOfReplay(publish MQTTPublish, topic string, now func() time.Time) (PublishResult, error) {
-	publishedAt := now()
+func publishEndOfReplay(publish MQTTPublish, topic string) (PublishResult, error) {
+	publishedAt := time.Now()
 
 	token := publish(topic, 1, false, []byte{})
 
