@@ -67,13 +67,11 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 				return
 			}
 			recordTelemetryEgressStats(&stats, egress.CloseAndWait())
+			stats.CompletedAt = time.Now()
 			egressClosed = true
 		}
 
-	defer func() {
-		closeEgress()
-		stats.CompletedAt = time.Now()
-	}()
+	defer closeEgress()
 
 	if err := runReplayLoop(reader, config, pacer, egress, &stats); err != nil {
 		return stats, err

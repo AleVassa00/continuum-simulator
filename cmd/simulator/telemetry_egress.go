@@ -58,8 +58,9 @@ func (egress *TelemetryEgress) TryEnqueue(event model.SensorEvent) bool {
 	default:
 		return false
 	}
+}
 
-} // CloseAndWait chiude la coda e attende che tutti gli eventi già accettati siano stati processati dalla goroutine di pubblicazione
+// CloseAndWait chiude la coda e attende che tutti gli eventi già accettati siano stati processati dalla goroutine di pubblicazione
 func (egress *TelemetryEgress) CloseAndWait() TelemetryEgressStats {
 	egress.closeOnce.Do(
 		func() {
