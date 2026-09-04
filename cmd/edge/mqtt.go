@@ -42,7 +42,7 @@ func (
 
 func connectEdgeMQTTClient(
 	config EdgeConfig,
-	ingress *EdgeIngressQueue,
+	ingress *EdgeIngress,
 	stats *EdgeStats,
 	readiness *ReadinessState,
 	subscriptions *SubscriptionCoordinator,
@@ -136,7 +136,7 @@ func connectEdgeMQTTClient(
 func subscribeToEdgeTopics(
 	client mqtt.Client,
 	edgeID string,
-	ingress *EdgeIngressQueue,
+	ingress *EdgeIngress,
 	stats *EdgeStats,
 	readiness *ReadinessState,
 	coordinator *SubscriptionCoordinator,
@@ -204,7 +204,7 @@ func edgeSubscriptionTopics(
 
 func makeEdgeMessageHandler(
 	edgeID string,
-	ingress *EdgeIngressQueue,
+	ingress *EdgeIngress,
 	stats *EdgeStats,
 ) mqtt.MessageHandler {
 	endTopic := mqtttopic.ReplayEnd(edgeID)

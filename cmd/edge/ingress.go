@@ -32,16 +32,15 @@ const (
 	TelemetryDroppedQueueClosed
 )
 
-type EdgeIngressQueue struct {
-	mu   sync.Mutex
-	cond *sync.Cond
+type EdgeIngress struct {
+	mu sync.Mutex
 
-	data     []EdgeIngressRecord
-	head     int
-	size     int
-	maxDepth int
+	records chan EdgeIngressRecord
 
-	terminal      *EdgeIngressRecord
+	telemetryCapacity int
+	telemetryQueued   int
+	maxDepth          int
+
 	eosRegistered bool
 	closed        bool
 }
@@ -79,119 +78,102 @@ type EdgeIngressQueueStats struct {
 
 type EdgeProcessor struct {
 	edgeID        string
-	ingress       *EdgeIngressQueue
+	ingress       *EdgeIngress
 	aggregator    *WindowAggregator
 	stats         *EdgeStats
 	lastEventTime time.Time
 }
 
-func newEdgeIngressQueue(capacity int) *EdgeIngressQueue {
-	queue := &EdgeIngressQueue{
-		data: make([]EdgeIngressRecord, capacity),
+func newEdgeIngress(capacity int) *EdgeIngress {
+	return &EdgeIngress{
+		records:           make(chan EdgeIngressRecord, capacity+1),
+		telemetryCapacity: capacity,
 	}
-	queue.cond = sync.NewCond(&queue.mu)
-
-	return queue
 }
 
-func (
-	queue *EdgeIngressQueue,
-) TryEnqueueTelemetry(payload []byte) TelemetryEnqueueResult {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
+func (ingress *EdgeIngress) TryEnqueueTelemetry(payload []byte) TelemetryEnqueueResult {
+	ingress.mu.Lock()
+	defer ingress.mu.Unlock()
 
-	if queue.closed {
+	if ingress.closed {
 		return TelemetryDroppedQueueClosed
 	}
-	if queue.eosRegistered {
+	if ingress.eosRegistered {
 		return TelemetryDroppedAfterEOS
 	}
-	if queue.size == len(queue.data) {
+	if ingress.telemetryQueued >= ingress.telemetryCapacity {
 		return TelemetryDroppedQueueFull
 	}
 
-	tail := (queue.head + queue.size) % len(queue.data)
-	queue.data[tail] = EdgeIngressRecord{
+	ingress.records <- EdgeIngressRecord{
 		Kind:    EdgeIngressTelemetry,
 		Payload: append([]byte(nil), payload...),
 	}
-	queue.size++
-	queue.maxDepth = max(queue.maxDepth, queue.size)
-	queue.cond.Signal()
+	ingress.telemetryQueued++
+	ingress.maxDepth = max(ingress.maxDepth, ingress.telemetryQueued)
 
 	return TelemetryEnqueued
 }
 
-func (queue *EdgeIngressQueue) Stats() EdgeIngressQueueStats {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
-
-	return EdgeIngressQueueStats{
-		Capacity:         len(queue.data),
-		MaxDepthObserved: queue.maxDepth,
-	}
-}
-
 func (
-	queue *EdgeIngressQueue,
+ingress *EdgeIngress,
 ) RegisterEndOfReplay() {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
+	ingress.mu.Lock()
+	defer ingress.mu.Unlock()
 
-	if queue.closed || queue.eosRegistered {
+	if ingress.closed || ingress.eosRegistered {
 		return
 	}
 
-	record := EdgeIngressRecord{
+	ingress.records <- EdgeIngressRecord{
 		Kind: EdgeIngressEndOfReplay,
 	}
-	queue.terminal = &record
-	queue.eosRegistered = true
-	queue.cond.Signal()
+	ingress.eosRegistered = true
 }
 
 func (
-	queue *EdgeIngressQueue,
+ingress *EdgeIngress,
 ) Next() (EdgeIngressRecord, bool) {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
-
-	for queue.size == 0 &&
-		queue.terminal == nil &&
-		!queue.closed {
-		queue.cond.Wait()
+	record, ok := <-ingress.records
+	if !ok {
+		return EdgeIngressRecord{}, false
 	}
 
-	if queue.size > 0 {
-		record := queue.data[queue.head]
-		queue.data[queue.head] = EdgeIngressRecord{}
-		queue.head = (queue.head + 1) % len(queue.data)
-		queue.size--
-		if queue.size == 0 {
-			queue.head = 0
-		}
-		return record, true
-	}
-	if queue.terminal != nil {
-		record := *queue.terminal
-		queue.terminal = nil
-		return record, true
+	if record.Kind == EdgeIngressTelemetry {
+		ingress.mu.Lock()
+		ingress.telemetryQueued--
+		ingress.mu.Unlock()
 	}
 
-	return EdgeIngressRecord{}, false
+	return record, true
 }
 
 func (
-	queue *EdgeIngressQueue,
+ingress *EdgeIngress,
 ) Close() {
-	queue.mu.Lock()
-	queue.closed = true
-	queue.cond.Broadcast()
-	queue.mu.Unlock()
+	ingress.mu.Lock()
+	defer ingress.mu.Unlock()
+
+	if ingress.closed {
+		return
+	}
+
+	ingress.closed = true
+	close(ingress.records)
+}
+
+func (ingress *EdgeIngress) Stats() EdgeIngressQueueStats {
+	ingress.mu.Lock()
+	defer ingress.mu.Unlock()
+
+	return EdgeIngressQueueStats{
+		Capacity:         ingress.telemetryCapacity,
+		MaxDepthObserved: ingress.maxDepth,
+	}
 }
 
 func (
-	stats *EdgeStats,
+stats *EdgeStats,
 ) Snapshot() EdgeStatsSnapshot {
 	return EdgeStatsSnapshot{
 		TelemetryReceived:    stats.telemetryReceived.Load(),
@@ -207,10 +189,10 @@ func (
 }
 
 func (
-	stats *EdgeStats,
-) SnapshotWithQueue(queue *EdgeIngressQueue) EdgeStatsSnapshot {
+stats *EdgeStats,
+) SnapshotWithQueue(ingress *EdgeIngress) EdgeStatsSnapshot {
 	snapshot := stats.Snapshot()
-	queueStats := queue.Stats()
+	queueStats := ingress.Stats()
 	snapshot.IngressQueueCapacity = queueStats.Capacity
 	snapshot.MaxIngressQueueDepthObserved = queueStats.MaxDepthObserved
 
@@ -227,7 +209,7 @@ func (stats EdgeStatsSnapshot) MaxIngressQueueUtilization() float64 {
 }
 
 func (
-	processor *EdgeProcessor,
+processor *EdgeProcessor,
 ) Run() error {
 	for {
 		record, ok := processor.ingress.Next()
@@ -242,7 +224,7 @@ func (
 }
 
 func (
-	processor *EdgeProcessor,
+processor *EdgeProcessor,
 ) Process(record EdgeIngressRecord) error {
 	switch record.Kind {
 	case EdgeIngressTelemetry:
@@ -263,7 +245,6 @@ func (
 		); err != nil {
 			return err
 		}
-		processor.stats.endOfReplayProcessed.Add(1)
 		return nil
 	default:
 		return fmt.Errorf("tipo Edge ingress sconosciuto: %d", record.Kind)
@@ -271,7 +252,7 @@ func (
 }
 
 func (
-	processor *EdgeProcessor,
+processor *EdgeProcessor,
 ) processTelemetry(payload []byte) error {
 	var event model.SensorEvent
 	if err := json.Unmarshal(payload, &event); err != nil {

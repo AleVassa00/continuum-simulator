@@ -23,7 +23,7 @@ func runEdge() error {
 		return err
 	}
 
-	ingress := newEdgeIngressQueue(config.IngressQueueCapacity)
+	ingress := newEdgeIngress(config.IngressQueueCapacity)
 	stats := &EdgeStats{}
 
 	kafkaWriter := newKafkaWriter(
@@ -31,11 +31,14 @@ func runEdge() error {
 		config.KafkaTopic,
 	)
 
+	output := make(chan EdgeOutputRecord)
+	egressStopped := make(chan struct{})
+
 	aggregator := &WindowAggregator{
-		edgeID:      config.EdgeID,
-		windowSize:  config.WindowSize,
-		kafkaWriter: kafkaWriter,
-		stats:       stats,
+		edgeID:        config.EdgeID,
+		windowSize:    config.WindowSize,
+		output:        output,
+		egressStopped: egressStopped,
 	}
 
 	processor := &EdgeProcessor{
@@ -44,9 +47,23 @@ func runEdge() error {
 		aggregator: aggregator,
 		stats:      stats,
 	}
+
+	kafkaEgress := &KafkaEgress{
+		edgeID: config.EdgeID,
+		writer: kafkaWriter,
+		input:  output,
+		stats:  stats,
+	}
+
 	processorDone := make(chan error, 1)
 	go func() {
 		processorDone <- processor.Run()
+	}()
+
+	kafkaDone := make(chan error, 1)
+	go func() {
+		kafkaDone <- kafkaEgress.Run()
+		close(egressStopped)
 	}()
 
 	readiness := &ReadinessState{}
@@ -73,76 +90,68 @@ func runEdge() error {
 	defer stop()
 
 	var processorErr error
+	var kafkaErr error
 	processorFinished := false
+	kafkaFinished := false
 
 	select {
 	case <-shutdownContext.Done():
 	case processorErr = <-processorDone:
 		processorFinished = true
+	case kafkaErr = <-kafkaDone:
+		kafkaFinished = true
 	}
 
-	fmt.Printf(
-		"\nArresto %s...\n",
-		config.EdgeID,
-	)
+	fmt.Printf("\nArresto %s...\n", config.EdgeID)
 
 	readiness.MarkNotReady()
 	subscriptions.Invalidate()
 	client.Disconnect(250)
 	ingress.Close()
+
 	if !processorFinished {
 		processorErr = <-processorDone
 	}
 
-	if processorErr == nil {
+	if processorErr == nil && kafkaErr == nil {
 		processorErr = aggregator.Flush()
 	}
+
+	close(output)
+
+	if !kafkaFinished {
+		kafkaErr = <-kafkaDone
+	}
+
 	if processorErr != nil {
-		fmt.Printf(
-			"%s: processing fallito: %v\n",
-			config.EdgeID,
-			processorErr,
-		)
+		fmt.Printf("%s: processing fallito: %v\n", config.EdgeID, processorErr)
+	}
+	if kafkaErr != nil {
+		fmt.Printf("%s: Kafka egress fallito: %v\n", config.EdgeID, kafkaErr)
 	}
 
 	if err := kafkaWriter.Close(); err != nil {
-		fmt.Printf(
-			"%s: errore chiusura Kafka writer: %v\n",
-			config.EdgeID,
-			err,
-		)
+		fmt.Printf("%s: errore chiusura Kafka writer: %v\n", config.EdgeID, err)
 	}
 
-	printEdgeSummary(
-		config.EdgeID,
-		stats.SnapshotWithQueue(ingress),
-	)
+	printEdgeSummary(config.EdgeID, stats.SnapshotWithQueue(ingress))
 
-	return processorErr
+	if processorErr != nil {
+		return processorErr
+	}
+	return kafkaErr
 }
 
-func newKafkaWriter(
-	broker string,
-	topic string,
-) *kafka.Writer {
+func newKafkaWriter(broker string, topic string) *kafka.Writer {
 	return &kafka.Writer{
-		Addr: kafka.TCP(
-			broker,
-		),
-
-		Topic: topic,
-
-		Balancer: &kafka.Hash{},
-
+		Addr:         kafka.TCP(broker),
+		Topic:        topic,
+		Balancer:     &kafka.Hash{},
 		RequiredAcks: kafka.RequireAll,
-
-		MaxAttempts: 1,
-
-		BatchSize: 1,
-
+		MaxAttempts:  1,
+		BatchSize:    1,
 		WriteTimeout: 5 * time.Second,
 		ReadTimeout:  5 * time.Second,
-
-		Async: false,
+		Async:        false,
 	}
 }

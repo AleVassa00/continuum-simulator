@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -11,9 +9,20 @@ import (
 	"time"
 
 	"continuum/internal/model"
-
-	"github.com/segmentio/kafka-go"
 )
+
+type EdgeOutputKind byte
+
+const (
+	EdgeOutputAggregate EdgeOutputKind = iota
+	EdgeOutputEndOfReplay
+)
+
+type EdgeOutputRecord struct {
+	Kind        EdgeOutputKind
+	Aggregate   model.EdgeAggregate
+	EndOfReplay model.EndOfReplay
+}
 
 type MetricValue struct {
 	Value float64
@@ -54,8 +63,8 @@ type WindowAggregator struct {
 	current    *WindowState
 	ended      bool
 
-	kafkaWriter *kafka.Writer
-	stats       *EdgeStats
+	output        chan<- EdgeOutputRecord
+	egressStopped <-chan struct{}
 }
 
 var (
@@ -303,59 +312,15 @@ func (
 		aggregator.current,
 	)
 
-	payload, err := json.Marshal(
-		aggregate,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"serializzazione EdgeAggregate fallita: %w",
-			err,
-		)
+	select {
+	case aggregator.output <- EdgeOutputRecord{
+		Kind:      EdgeOutputAggregate,
+		Aggregate: aggregate,
+	}:
+		return nil
+	case <-aggregator.egressStopped:
+		return fmt.Errorf("Kafka egress terminato")
 	}
-
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		5*time.Second,
-	)
-	defer cancel()
-
-	err = aggregator.kafkaWriter.WriteMessages(
-		ctx,
-		kafka.Message{
-			Key: []byte(
-				aggregator.edgeID,
-			),
-
-			Value: payload,
-
-			Headers: []kafka.Header{
-				{
-					Key:   model.RecordTypeHeader,
-					Value: []byte(model.RecordTypeEdgeAggregate),
-				},
-			},
-
-			Time: aggregate.EmittedAt,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"pubblicazione Kafka aggregate_id=%s fallita: %w",
-			aggregate.AggregateID,
-			err,
-		)
-	}
-
-	fmt.Printf(
-		"KAFKA_PUBLISHED edge=%s aggregate_id=%s events=%d topic=%s\n",
-		aggregate.EdgeID,
-		aggregate.AggregateID,
-		aggregate.Events,
-		aggregator.kafkaWriter.Topic,
-	)
-	aggregator.stats.aggregatesEmitted.Add(1)
-
-	return nil
 }
 
 func (
@@ -412,40 +377,14 @@ func (
 
 	forwarded := record
 	forwarded.EmittedAt = forwarded.EmittedAt.UTC()
-	payload, err := json.Marshal(forwarded)
-	if err != nil {
-		return fmt.Errorf(
-			"serializzazione EndOfReplay Edge %s fallita: %w",
-			aggregator.edgeID,
-			err,
-		)
-	}
 
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		5*time.Second,
-	)
-	defer cancel()
-
-	if err := aggregator.kafkaWriter.WriteMessages(
-		ctx,
-		kafka.Message{
-			Key:   []byte(aggregator.edgeID),
-			Value: payload,
-			Headers: []kafka.Header{
-				{
-					Key:   model.RecordTypeHeader,
-					Value: []byte(model.RecordTypeEndOfReplay),
-				},
-			},
-			Time: forwarded.EmittedAt,
-		},
-	); err != nil {
-		return fmt.Errorf(
-			"pubblicazione Kafka EndOfReplay edge=%s fallita: %w",
-			aggregator.edgeID,
-			err,
-		)
+	select {
+	case aggregator.output <- EdgeOutputRecord{
+		Kind:        EdgeOutputEndOfReplay,
+		EndOfReplay: forwarded,
+	}:
+	case <-aggregator.egressStopped:
+		return fmt.Errorf("Kafka egress terminato")
 	}
 
 	aggregator.ended = true
