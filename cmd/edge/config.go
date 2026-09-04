@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,41 +19,41 @@ type EdgeConfig struct {
 	IngressQueueCapacity int
 }
 
-func loadEdgeConfig(getenv func(string) string) (EdgeConfig, error) {
+func loadEdgeConfig() (EdgeConfig, error) {
 	edgeID := strings.TrimSpace(
-		getenv("EDGE_ID"),
+		os.Getenv("EDGE_ID"),
 	)
 	if edgeID == "" {
 		return EdgeConfig{}, fmt.Errorf("variabile EDGE_ID non impostata")
 	}
 
 	mqttBroker := strings.TrimSpace(
-		getenv("MQTT_BROKER"),
+		os.Getenv("MQTT_BROKER"),
 	)
 	if mqttBroker == "" {
 		return EdgeConfig{}, fmt.Errorf("variabile MQTT_BROKER non impostata")
 	}
 
 	kafkaBroker := strings.TrimSpace(
-		getenv("KAFKA_BROKER"),
+		os.Getenv("KAFKA_BROKER"),
 	)
 	if kafkaBroker == "" {
 		return EdgeConfig{}, fmt.Errorf("variabile KAFKA_BROKER non impostata")
 	}
 
 	kafkaTopic := strings.TrimSpace(
-		getenv("KAFKA_TOPIC"),
+		os.Getenv("KAFKA_TOPIC"),
 	)
 	if kafkaTopic == "" {
 		return EdgeConfig{}, fmt.Errorf("variabile KAFKA_TOPIC non impostata")
 	}
 
-	windowSize, err := loadWindowSize(getenv)
+	windowSize, err := loadWindowSize()
 	if err != nil {
 		return EdgeConfig{}, err
 	}
 
-	ingressCapacity, err := loadEdgeIngressQueueCapacity(getenv)
+	ingressCapacity, err := loadEdgeIngressQueueCapacity()
 	if err != nil {
 		return EdgeConfig{}, err
 	}
@@ -67,14 +68,12 @@ func loadEdgeConfig(getenv func(string) string) (EdgeConfig, error) {
 	}, nil
 }
 
-func loadWindowSize(
-	getenv func(string) string,
-) (
+func loadWindowSize() (
 	time.Duration,
 	error,
 ) {
 	value := strings.TrimSpace(
-		getenv("WINDOW_SIZE"),
+		os.Getenv("WINDOW_SIZE"),
 	)
 
 	if value == "" {
@@ -103,11 +102,9 @@ func loadWindowSize(
 	return windowSize, nil
 }
 
-func loadEdgeIngressQueueCapacity(
-	getenv func(string) string,
-) (int, error) {
+func loadEdgeIngressQueueCapacity() (int, error) {
 	value := strings.TrimSpace(
-		getenv("EDGE_INGRESS_QUEUE_CAPACITY"),
+		os.Getenv("EDGE_INGRESS_QUEUE_CAPACITY"),
 	)
 	if value == "" {
 		return defaultEdgeIngressQueueCapacity, nil

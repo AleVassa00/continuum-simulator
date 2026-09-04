@@ -22,7 +22,6 @@ type CloudMessageProcessor struct {
 	outputTopic    string
 	workerID       string
 	publishMessage KafkaMessagePublisher
-	now            func() time.Time
 	endedEdges     map[string]bool
 }
 
@@ -136,7 +135,7 @@ func (
 	}
 
 	forwarded := record
-	forwarded.EmittedAt = processor.now().UTC()
+	forwarded.EmittedAt = time.Now().UTC()
 	if err := processor.publishEndOfReplay(forwarded); err != nil {
 		return err
 	}

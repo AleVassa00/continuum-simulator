@@ -18,7 +18,7 @@ func main() {
 }
 
 func runEdge() error {
-	config, err := loadEdgeConfig(os.Getenv)
+	config, err := loadEdgeConfig()
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,6 @@ func runEdge() error {
 		ingress:    ingress,
 		aggregator: aggregator,
 		stats:      stats,
-		now:        time.Now,
 	}
 	processorDone := make(chan error, 1)
 	go func() {

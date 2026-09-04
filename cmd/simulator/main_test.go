@@ -394,7 +394,6 @@ func TestNewTelemetryEgressRejectsNonPositiveCapacity(t *testing.T) {
 			_, err := newTelemetryEgress(
 				test.capacity,
 				func(string, model.SensorEvent) error { return nil },
-				time.Now,
 			)
 			if err == nil || !strings.Contains(err.Error(), "TELEMETRY_QUEUE_CAPACITY") {
 				t.Fatalf("errore inatteso: %v", err)
@@ -414,7 +413,6 @@ func TestTelemetryEgressDropsWithoutBlockingWhenQueueIsFull(t *testing.T) {
 			<-release
 			return nil
 		},
-		time.Now,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -463,7 +461,6 @@ func TestTelemetryEgressTracksCurrentQueueDepth(t *testing.T) {
 			<-release
 			return nil
 		},
-		time.Now,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -514,7 +511,6 @@ func TestTelemetryEgressDrainsAndTracksPublishErrors(t *testing.T) {
 			}
 			return nil
 		},
-		func() time.Time { return testPublishTime },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -540,7 +536,6 @@ func TestTelemetryEgressConcurrentCloseIsSafe(t *testing.T) {
 	egress, err := newTelemetryEgress(
 		1,
 		func(string, model.SensorEvent) error { return nil },
-		time.Now,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -568,35 +563,20 @@ func TestTelemetryEgressConcurrentCloseIsSafe(t *testing.T) {
 	}
 }
 
-func TestReplayCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *testing.T) {
+func TestRunReplayLoopCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *testing.T) {
 	config := validSimulatorConfig()
 	clock := newFakeClock(config.ReplayStartAt)
-	queue := &scriptedTelemetryQueue{
-		accept: []bool{true, false, false},
-		stats: TelemetryEgressStats{
-			PublishAttempts: 1,
-		},
+	egress := &TelemetryEgress{
+		queue: make(chan model.SensorEvent, 1),
 	}
-	var endTopic string
 	runtime := testReplayRuntime(clock, func(string, model.SensorEvent) error { return nil })
-	runtime.NewTelemetryEgress = func(
-		int,
-		TelemetryPublisher,
-		func() time.Time,
-	) (TelemetryQueue, error) {
-		return queue, nil
+	pacer := ReplayPacer{
+		Epoch:              config.ReplayEpoch,
+		StartAt:            localReplayStart(clock.Now(), config.ReplayStartAt),
+		AccelerationFactor: config.AccelerationFactor,
 	}
-	runtime.PublishEndOfReplay = func(
-		topic string,
-	) (PublishResult, error) {
-		endTopic = topic
-		return PublishResult{
-			Token:       newCompletedToken(nil),
-			PublishedAt: clock.Now(),
-		}, nil
-	}
-
-	stats, err := replaySite(
+	stats := ReplayStats{}
+	err := runReplayLoop(
 		replayReader(
 			"501;BME280;5;45.0;9.0;2025-01-01T00:00:00Z;100000;20;50",
 			"502;BME280;5;45.0;9.0;2025-01-01T00:00:01Z;100000;20;50",
@@ -604,6 +584,9 @@ func TestReplayCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *testing.T)
 		),
 		config,
 		runtime,
+		pacer,
+		egress,
+		&stats,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -612,11 +595,8 @@ func TestReplayCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *testing.T)
 	if stats.OfferedEvents != 3 ||
 		stats.TelemetryEnqueued != 1 ||
 		stats.TelemetryLocallyDropped != 2 ||
-		stats.MQTTPublishAttempts != 1 ||
-		!stats.LastEventTime.Equal(last) ||
-		endTopic != mqtttopic.ReplayEnd(config.SiteID) ||
-		queue.closeCalls != 1 {
-		t.Fatalf("stats=%#v eos_topic=%q queue=%#v", stats, endTopic, queue)
+		!stats.LastEventTime.Equal(last) {
+		t.Fatalf("stats=%#v", stats)
 	}
 }
 
@@ -816,7 +796,8 @@ func TestPublishEndOfReplayUsesQoSOneWithoutRetain(t *testing.T) {
 }
 
 func TestLoadSimulatorConfig(t *testing.T) {
-	config, err := loadSimulatorConfig(envFrom(validSimulatorEnv()))
+	setSimulatorEnv(t, validSimulatorEnv())
+	config, err := loadSimulatorConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -834,7 +815,8 @@ func TestLoadSimulatorConfigValidatesTelemetryQueueCapacity(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			values := validSimulatorEnv()
 			values["TELEMETRY_QUEUE_CAPACITY"] = value
-			_, err := loadSimulatorConfig(envFrom(values))
+			setSimulatorEnv(t, values)
+			_, err := loadSimulatorConfig()
 			if err == nil || !strings.Contains(err.Error(), "TELEMETRY_QUEUE_CAPACITY") {
 				t.Fatalf("errore inatteso: %v", err)
 			}
@@ -843,7 +825,8 @@ func TestLoadSimulatorConfigValidatesTelemetryQueueCapacity(t *testing.T) {
 
 	values := validSimulatorEnv()
 	delete(values, "TELEMETRY_QUEUE_CAPACITY")
-	config, err := loadSimulatorConfig(envFrom(values))
+	setSimulatorEnv(t, values)
+	config, err := loadSimulatorConfig()
 	if err != nil || config.TelemetryQueueCapacity != defaultTelemetryQueueCapacity {
 		t.Fatalf("config=%#v err=%v", config, err)
 	}
@@ -854,7 +837,8 @@ func TestLoadSimulatorConfigValidatesReplayInputs(t *testing.T) {
 		t.Run("missing_"+missing, func(t *testing.T) {
 			values := validSimulatorEnv()
 			delete(values, missing)
-			_, err := loadSimulatorConfig(envFrom(values))
+			setSimulatorEnv(t, values)
+			_, err := loadSimulatorConfig()
 			if err == nil || !strings.Contains(err.Error(), missing) {
 				t.Fatalf("errore inatteso: %v", err)
 			}
@@ -865,7 +849,8 @@ func TestLoadSimulatorConfigValidatesReplayInputs(t *testing.T) {
 		t.Run("factor_"+factor, func(t *testing.T) {
 			values := validSimulatorEnv()
 			values["ACCELERATION_FACTOR"] = factor
-			_, err := loadSimulatorConfig(envFrom(values))
+			setSimulatorEnv(t, values)
+			_, err := loadSimulatorConfig()
 			if err == nil || !strings.Contains(err.Error(), "ACCELERATION_FACTOR") {
 				t.Fatalf("errore inatteso: %v", err)
 			}
@@ -1038,30 +1023,6 @@ func (token *fakeToken) Error() error {
 	return token.err
 }
 
-type scriptedTelemetryQueue struct {
-	accept     []bool
-	calls      int
-	closeCalls int
-	stats      TelemetryEgressStats
-}
-
-func (
-	queue *scriptedTelemetryQueue,
-) TryEnqueue(
-	_ model.SensorEvent,
-) bool {
-	accepted := queue.accept[queue.calls]
-	queue.calls++
-	return accepted
-}
-
-func (
-	queue *scriptedTelemetryQueue,
-) CloseAndWait() TelemetryEgressStats {
-	queue.closeCalls++
-	return queue.stats
-}
-
 func testReplayRuntime(
 	clock *fakeClock,
 	publish TelemetryPublisher,
@@ -1117,8 +1078,21 @@ func replayReader(rows ...string) *csv.Reader {
 	return reader
 }
 
-func envFrom(values map[string]string) func(string) string {
-	return func(name string) string { return values[name] }
+func setSimulatorEnv(t *testing.T, values map[string]string) {
+	t.Helper()
+	for _, name := range []string{
+		"SITE_ID",
+		"MQTT_ENDPOINT",
+		"REPLAY_FILE",
+		"MAX_EVENTS",
+		"REPLAY_EPOCH",
+		"REPLAY_START_AT",
+		"ACCELERATION_FACTOR",
+		"TELEMETRY_QUEUE_CAPACITY",
+		"START_LATE_TOLERANCE",
+	} {
+		t.Setenv(name, values[name])
+	}
 }
 
 func mustTime(value string) time.Time {

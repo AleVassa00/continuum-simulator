@@ -207,42 +207,44 @@ func TestJSONLogSinkUsesRecognizablePrefixAndValidJSON(t *testing.T) {
 }
 
 func TestLoadGlobalConfiguration(t *testing.T) {
-	env := map[string]string{
-		"GLOBAL_WINDOW_SIZE":       "30m",
-		"GLOBAL_EDGE_IDLE_TIMEOUT": "7s",
-		"EXPECTED_EDGE_IDS":        "edge-0, edge-2,edge-7",
-	}
-	getenv := func(name string) string { return env[name] }
-	window, err := loadGlobalWindowSize(getenv)
+	t.Setenv("GLOBAL_WINDOW_SIZE", "30m")
+	t.Setenv("GLOBAL_EDGE_IDLE_TIMEOUT", "7s")
+	t.Setenv("EXPECTED_EDGE_IDS", "edge-0, edge-2,edge-7")
+	t.Setenv("KAFKA_INPUT_TOPIC", "")
+	window, err := loadGlobalWindowSize()
 	if err != nil || window != 30*time.Minute {
 		t.Fatalf("window=%s err=%v", window, err)
 	}
-	edges, err := loadExpectedEdgeIDs(getenv)
+	edges, err := loadExpectedEdgeIDs()
 	if err != nil || strings.Join(edges, ",") != "edge-0,edge-2,edge-7" {
 		t.Fatalf("edges=%v err=%v", edges, err)
 	}
-	if value := envutil.OrDefault(getenv, "KAFKA_INPUT_TOPIC", "cloud-edge-aggregates"); value != "cloud-edge-aggregates" {
+	if value := envutil.OrDefault("KAFKA_INPUT_TOPIC", "cloud-edge-aggregates"); value != "cloud-edge-aggregates" {
 		t.Fatalf("topic default=%q", value)
 	}
-	idleTimeout, err := loadGlobalEdgeIdleTimeout(getenv)
+	idleTimeout, err := loadGlobalEdgeIdleTimeout()
 	if err != nil || idleTimeout != 7*time.Second {
 		t.Fatalf("edge idle timeout=%s err=%v", idleTimeout, err)
 	}
 }
 
 func TestLoadGlobalConfigurationRejectsInvalidValues(t *testing.T) {
-	if _, err := loadExpectedEdgeIDs(func(string) string { return " " }); err == nil {
+	t.Setenv("EXPECTED_EDGE_IDS", " ")
+	if _, err := loadExpectedEdgeIDs(); err == nil {
 		t.Fatal("EXPECTED_EDGE_IDS vuota accettata")
 	}
-	if _, err := loadGlobalWindowSize(func(string) string { return "0s" }); err == nil {
+	t.Setenv("GLOBAL_WINDOW_SIZE", "0s")
+	if _, err := loadGlobalWindowSize(); err == nil {
 		t.Fatal("GLOBAL_WINDOW_SIZE zero accettata")
 	}
 	for _, value := range []string{"0s", "-1s", "invalid"} {
-		if _, err := loadGlobalEdgeIdleTimeout(func(string) string { return value }); err == nil {
+		t.Setenv("GLOBAL_EDGE_IDLE_TIMEOUT", value)
+		if _, err := loadGlobalEdgeIdleTimeout(); err == nil {
 			t.Fatalf("GLOBAL_EDGE_IDLE_TIMEOUT=%q accettato", value)
 		}
 	}
-	if timeout, err := loadGlobalEdgeIdleTimeout(func(string) string { return "" }); err != nil || timeout != defaultGlobalEdgeIdleTimeout {
+	t.Setenv("GLOBAL_EDGE_IDLE_TIMEOUT", "")
+	if timeout, err := loadGlobalEdgeIdleTimeout(); err != nil || timeout != defaultGlobalEdgeIdleTimeout {
 		t.Fatalf("default edge idle timeout=%s err=%v", timeout, err)
 	}
 	if watermarkAdvanceCheckInterval(500*time.Millisecond) != 500*time.Millisecond ||

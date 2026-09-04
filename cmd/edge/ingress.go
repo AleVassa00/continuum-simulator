@@ -84,7 +84,6 @@ type EdgeProcessor struct {
 	ingress       *EdgeIngressQueue
 	aggregator    *WindowAggregator
 	stats         *EdgeStats
-	now           func() time.Time
 	lastEventTime time.Time
 }
 
@@ -261,7 +260,7 @@ func (
 	case EdgeIngressTelemetry:
 		return processor.processTelemetry(record.Payload)
 	case EdgeIngressEndOfReplay:
-		emittedAt := processor.now().UTC()
+		emittedAt := time.Now().UTC()
 		lastEventTime := processor.lastEventTime
 		if lastEventTime.IsZero() {
 			lastEventTime = emittedAt

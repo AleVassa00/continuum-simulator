@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -36,25 +37,25 @@ const (
 )
 
 // loadSimulatorConfig costruisce la configurazione del simulatore leggendo e validando le variabili d'ambiente
-func loadSimulatorConfig(getenv func(string) string) (SimulatorConfig, error) {
+func loadSimulatorConfig() (SimulatorConfig, error) {
 
-	siteID := strings.TrimSpace(getenv("SITE_ID"))
+	siteID := strings.TrimSpace(os.Getenv("SITE_ID"))
 	if siteID == "" {
 		return SimulatorConfig{}, fmt.Errorf("variabile SITE_ID non impostata")
 	}
 
-	mqttEndpoint := strings.TrimSpace(getenv("MQTT_ENDPOINT"))
+	mqttEndpoint := strings.TrimSpace(os.Getenv("MQTT_ENDPOINT"))
 	if mqttEndpoint == "" {
 		return SimulatorConfig{}, fmt.Errorf("variabile MQTT_ENDPOINT non impostata")
 	}
 
-	replayFile := strings.TrimSpace(getenv("REPLAY_FILE"))
+	replayFile := strings.TrimSpace(os.Getenv("REPLAY_FILE"))
 	if replayFile == "" {
 		return SimulatorConfig{},
 			fmt.Errorf("variabile REPLAY_FILE non impostata")
 	}
 
-	replayEpochValue := strings.TrimSpace(getenv("REPLAY_EPOCH"))
+	replayEpochValue := strings.TrimSpace(os.Getenv("REPLAY_EPOCH"))
 	if replayEpochValue == "" {
 		replayEpochValue = defaultReplayEpoch
 	}
@@ -64,7 +65,7 @@ func loadSimulatorConfig(getenv func(string) string) (SimulatorConfig, error) {
 		return SimulatorConfig{}, err
 	}
 
-	replayStartAtValue := strings.TrimSpace(getenv("REPLAY_START_AT"))
+	replayStartAtValue := strings.TrimSpace(os.Getenv("REPLAY_START_AT"))
 	if replayStartAtValue == "" {
 		return SimulatorConfig{}, fmt.Errorf("variabile REPLAY_START_AT non impostata")
 	}
@@ -74,22 +75,22 @@ func loadSimulatorConfig(getenv func(string) string) (SimulatorConfig, error) {
 		return SimulatorConfig{}, err
 	}
 
-	accelerationFactor, err := parseAccelerationFactor(getenv("ACCELERATION_FACTOR"))
+	accelerationFactor, err := parseAccelerationFactor(os.Getenv("ACCELERATION_FACTOR"))
 	if err != nil {
 		return SimulatorConfig{}, err
 	}
 
-	telemetryQueueCapacity, err := parseTelemetryQueueCapacity(getenv("TELEMETRY_QUEUE_CAPACITY"))
+	telemetryQueueCapacity, err := parseTelemetryQueueCapacity(os.Getenv("TELEMETRY_QUEUE_CAPACITY"))
 	if err != nil {
 		return SimulatorConfig{}, err
 	}
 
-	maxEvents, err := parseMaxEvents(getenv("MAX_EVENTS"))
+	maxEvents, err := parseMaxEvents(os.Getenv("MAX_EVENTS"))
 	if err != nil {
 		return SimulatorConfig{}, err
 	}
 
-	startLateTolerance, err := parseStartLateTolerance(getenv("START_LATE_TOLERANCE"))
+	startLateTolerance, err := parseStartLateTolerance(os.Getenv("START_LATE_TOLERANCE"))
 	if err != nil {
 		return SimulatorConfig{}, err
 	}

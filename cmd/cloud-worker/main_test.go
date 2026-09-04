@@ -122,6 +122,7 @@ func TestCloudEndOfReplayFlushesOnlyItsEdgeBeforeControlAndCommit(t *testing.T) 
 
 	input := cloudTestEndOfReplay("edge-1")
 	message := endOfReplayKafkaMessage(t, input, "edge-1")
+	startedAt := time.Now().UTC()
 	err := processAndCommitMessage(
 		message,
 		processor,
@@ -133,6 +134,7 @@ func TestCloudEndOfReplayFlushesOnlyItsEdgeBeforeControlAndCommit(t *testing.T) 
 	if err != nil {
 		t.Fatalf("EndOfReplay rifiutato: %v", err)
 	}
+	finishedAt := time.Now().UTC()
 
 	wantSteps := []string{
 		"publish:" + model.RecordTypeCloudEdgeAggregate,
@@ -160,8 +162,8 @@ func TestCloudEndOfReplayFlushesOnlyItsEdgeBeforeControlAndCommit(t *testing.T) 
 			input.LastEventTime,
 		)
 	}
-	if !forwarded.EmittedAt.Equal(cloudTestTime(12, 0)) {
-		t.Fatalf("EmittedAt=%s, atteso clock Cloud", forwarded.EmittedAt)
+	if forwarded.EmittedAt.Before(startedAt) || forwarded.EmittedAt.After(finishedAt) {
+		t.Fatalf("EmittedAt=%s, atteso tra %s e %s", forwarded.EmittedAt, startedAt, finishedAt)
 	}
 
 	if _, found := processor.aggregator.FlushEdge("edge-1"); found {
@@ -384,10 +386,7 @@ func newTestCloudProcessor(
 		outputTopic:    "cloud-edge-aggregates",
 		workerID:       "worker-test",
 		publishMessage: publish,
-		now: func() time.Time {
-			return cloudTestTime(12, 0)
-		},
-		endedEdges: make(map[string]bool),
+		endedEdges:     make(map[string]bool),
 	}
 }
 

@@ -9,11 +9,10 @@ import (
 // OrDefault restituisce il valore trimmed della variabile d'ambiente,
 // oppure defaultValue se la variabile è vuota o non impostata.
 func OrDefault(
-	getenv func(string) string,
 	name string,
 	defaultValue string,
 ) string {
-	value := strings.TrimSpace(getenv(name))
+	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
 		return defaultValue
 	}

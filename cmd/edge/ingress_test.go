@@ -231,7 +231,6 @@ func TestEdgeProcessorProcessesAcceptedTelemetryBeforeEndOfReplay(t *testing.T) 
 		ingress:    queue,
 		aggregator: aggregator,
 		stats:      stats,
-		now:        func() time.Time { return edgeTestTime(12, 0) },
 	}
 
 	for index, minute := range []int{1, 2, 3} {
@@ -248,9 +247,11 @@ func TestEdgeProcessorProcessesAcceptedTelemetryBeforeEndOfReplay(t *testing.T) 
 	}
 	queue.Close()
 
+	startedAt := time.Now().UTC()
 	if err := processor.Run(); err != nil {
 		t.Fatal(err)
 	}
+	finishedAt := time.Now().UTC()
 	if len(messages) != 2 ||
 		recordType(t, messages[0]) != model.RecordTypeEdgeAggregate ||
 		recordType(t, messages[1]) != model.RecordTypeEndOfReplay {
@@ -261,7 +262,8 @@ func TestEdgeProcessorProcessesAcceptedTelemetryBeforeEndOfReplay(t *testing.T) 
 		t.Fatal(err)
 	}
 	if !forwarded.LastEventTime.Equal(edgeTestTime(10, 3)) ||
-		!forwarded.EmittedAt.Equal(edgeTestTime(12, 0)) {
+		forwarded.EmittedAt.Before(startedAt) ||
+		forwarded.EmittedAt.After(finishedAt) {
 		t.Fatalf("EndOfReplay Kafka inatteso: %#v", forwarded)
 	}
 	aggregate := decodeEdgeAggregate(t, messages[0])
@@ -284,7 +286,6 @@ func TestEdgeProcessorAggregatesValidMeasurementsWhenOneIsNull(t *testing.T) {
 		edgeID:     "edge-0",
 		aggregator: aggregator,
 		stats:      stats,
-		now:        func() time.Time { return edgeTestTime(12, 0) },
 	}
 
 	payload, err := json.Marshal(model.SensorEvent{
@@ -353,18 +354,18 @@ func TestEdgeProcessorEndOfReplayWithoutTelemetryUsesReceptionTime(t *testing.T)
 			return nil
 		},
 	}
-	receivedAt := edgeTestTime(12, 0)
 	processor := &EdgeProcessor{
 		edgeID:     "edge-0",
 		ingress:    queue,
 		aggregator: aggregator,
 		stats:      stats,
-		now:        func() time.Time { return receivedAt },
 	}
 
+	receivedAt := time.Now().UTC()
 	if err := processor.Process(EdgeIngressRecord{Kind: EdgeIngressEndOfReplay}); err != nil {
 		t.Fatal(err)
 	}
+	processedAt := time.Now().UTC()
 	if len(messages) != 1 || recordType(t, messages[0]) != model.RecordTypeEndOfReplay {
 		t.Fatalf("messaggi Kafka inattesi: %#v", messages)
 	}
@@ -374,8 +375,9 @@ func TestEdgeProcessorEndOfReplayWithoutTelemetryUsesReceptionTime(t *testing.T)
 		t.Fatal(err)
 	}
 	if forwarded.EdgeID != "edge-0" ||
-		!forwarded.LastEventTime.Equal(receivedAt) ||
-		!forwarded.EmittedAt.Equal(receivedAt) {
+		!forwarded.LastEventTime.Equal(forwarded.EmittedAt) ||
+		forwarded.EmittedAt.Before(receivedAt) ||
+		forwarded.EmittedAt.After(processedAt) {
 		t.Fatalf("EndOfReplay Kafka inatteso: %#v", forwarded)
 	}
 }
@@ -393,7 +395,6 @@ func TestEdgeProcessorDropsClosedWindowAndPostEOSWithoutReopening(t *testing.T) 
 		ingress:    queue,
 		aggregator: aggregator,
 		stats:      stats,
-		now:        func() time.Time { return edgeTestTime(12, 0) },
 	}
 
 	if err := processor.Process(EdgeIngressRecord{
@@ -439,7 +440,6 @@ func TestEdgeProcessorCountsInvalidTelemetry(t *testing.T) {
 		ingress:    queue,
 		aggregator: aggregator,
 		stats:      stats,
-		now:        time.Now,
 	}
 
 	if err := processor.Process(EdgeIngressRecord{
@@ -464,7 +464,8 @@ func TestLoadEdgeIngressQueueCapacity(t *testing.T) {
 		{"0", 0, false},
 		{"invalid", 0, false},
 	} {
-		got, err := loadEdgeIngressQueueCapacity(func(string) string { return test.value })
+		t.Setenv("EDGE_INGRESS_QUEUE_CAPACITY", test.value)
+		got, err := loadEdgeIngressQueueCapacity()
 		if test.ok && (err != nil || got != test.want) {
 			t.Fatalf("value=%q got=%d err=%v", test.value, got, err)
 		}

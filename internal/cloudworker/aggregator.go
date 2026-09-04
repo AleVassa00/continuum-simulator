@@ -32,7 +32,6 @@ type cloudWindowState struct {
 type WindowAggregator struct {
 	windowSize time.Duration
 	states     map[string]*cloudWindowState
-	now        func() time.Time
 }
 
 func NewWindowAggregator(
@@ -50,7 +49,6 @@ func NewWindowAggregator(
 		states: make(
 			map[string]*cloudWindowState,
 		),
-		now: time.Now,
 	}, nil
 }
 
@@ -108,7 +106,7 @@ func (
 	}
 
 	emitted := current.buildAggregate(
-		aggregator.now().UTC(),
+		time.Now().UTC(),
 	)
 
 	next := newCloudWindowState(
@@ -142,7 +140,7 @@ func (
 
 	sort.Strings(edgeIDs)
 
-	emittedAt := aggregator.now().UTC()
+	emittedAt := time.Now().UTC()
 	outputs := make(
 		[]model.CloudEdgeAggregate,
 		0,
@@ -183,7 +181,7 @@ func (
 	}
 
 	output := state.buildAggregate(
-		aggregator.now().UTC(),
+		time.Now().UTC(),
 	)
 
 	return &output, true

@@ -36,28 +36,26 @@ type GlobalMessageProcessor struct {
 func main() {
 	kafkaBroker := envutil.Required("KAFKA_BROKER")
 	inputTopic := envutil.OrDefault(
-		os.Getenv,
 		"KAFKA_INPUT_TOPIC",
 		"cloud-edge-aggregates",
 	)
 	groupID := envutil.OrDefault(
-		os.Getenv,
 		"KAFKA_GROUP_ID",
 		"global-aggregator",
 	)
-	windowSize, err := loadGlobalWindowSize(os.Getenv)
+	windowSize, err := loadGlobalWindowSize()
 	if err != nil {
 		panic(err)
 	}
-	watermarkDelay, err := loadGlobalWatermarkDelay(os.Getenv, windowSize)
+	watermarkDelay, err := loadGlobalWatermarkDelay(windowSize)
 	if err != nil {
 		panic(err)
 	}
-	edgeIdleTimeout, err := loadGlobalEdgeIdleTimeout(os.Getenv)
+	edgeIdleTimeout, err := loadGlobalEdgeIdleTimeout()
 	if err != nil {
 		panic(err)
 	}
-	expectedEdgeIDs, err := loadExpectedEdgeIDs(os.Getenv)
+	expectedEdgeIDs, err := loadExpectedEdgeIDs()
 	if err != nil {
 		panic(err)
 	}
@@ -278,10 +276,8 @@ func newJSONLogSink(writer io.Writer) globalaggregator.GlobalAggregateSink {
 	}
 }
 
-func loadGlobalWindowSize(
-	getenv func(string) string,
-) (time.Duration, error) {
-	value := envutil.OrDefault(getenv, "GLOBAL_WINDOW_SIZE", "15m")
+func loadGlobalWindowSize() (time.Duration, error) {
+	value := envutil.OrDefault("GLOBAL_WINDOW_SIZE", "15m")
 	windowSize, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf(
@@ -299,10 +295,9 @@ func loadGlobalWindowSize(
 }
 
 func loadGlobalWatermarkDelay(
-	getenv func(string) string,
 	defaultDelay time.Duration,
 ) (time.Duration, error) {
-	value := strings.TrimSpace(getenv("GLOBAL_WATERMARK_DELAY"))
+	value := strings.TrimSpace(os.Getenv("GLOBAL_WATERMARK_DELAY"))
 	if value == "" {
 		return defaultDelay, nil
 	}
@@ -316,11 +311,8 @@ func loadGlobalWatermarkDelay(
 	return delay, nil
 }
 
-func loadGlobalEdgeIdleTimeout(
-	getenv func(string) string,
-) (time.Duration, error) {
+func loadGlobalEdgeIdleTimeout() (time.Duration, error) {
 	value := envutil.OrDefault(
-		getenv,
 		"GLOBAL_EDGE_IDLE_TIMEOUT",
 		defaultGlobalEdgeIdleTimeout.String(),
 	)
@@ -347,10 +339,8 @@ func watermarkAdvanceCheckInterval(edgeIdleTimeout time.Duration) time.Duration 
 	return maxWatermarkAdvanceCheckInterval
 }
 
-func loadExpectedEdgeIDs(
-	getenv func(string) string,
-) ([]string, error) {
-	value := strings.TrimSpace(getenv("EXPECTED_EDGE_IDS"))
+func loadExpectedEdgeIDs() ([]string, error) {
+	value := strings.TrimSpace(os.Getenv("EXPECTED_EDGE_IDS"))
 	if value == "" {
 		return nil, fmt.Errorf("variabile EXPECTED_EDGE_IDS non impostata")
 	}

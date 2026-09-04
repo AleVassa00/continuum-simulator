@@ -52,7 +52,6 @@ func consume(
 		) error {
 			return writer.WriteMessages(ctx, message)
 		},
-		now:        time.Now,
 		endedEdges: make(map[string]bool),
 	}
 

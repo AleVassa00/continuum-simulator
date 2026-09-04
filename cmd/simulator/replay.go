@@ -40,7 +40,6 @@ type ReplayRuntime struct {
 	Sleep              func(time.Duration)
 	PublishTelemetry   TelemetryPublisher
 	PublishEndOfReplay EndOfReplayPublisher
-	NewTelemetryEgress TelemetryEgressFactory
 }
 
 type ReplayStats struct {
@@ -68,7 +67,7 @@ type ReplayStats struct {
 }
 
 func (
-pacer ReplayPacer,
+	pacer ReplayPacer,
 ) ScheduledTime(
 	eventTime time.Time,
 ) (time.Time, error) {
@@ -140,7 +139,7 @@ func waitUntil(
 }
 
 func (
-stats ReplayStats,
+	stats ReplayStats,
 ) AverageSchedulingLag() time.Duration {
 	if stats.OfferedEvents == 0 {
 		return 0
@@ -151,7 +150,7 @@ stats ReplayStats,
 }
 
 func (
-stats ReplayStats,
+	stats ReplayStats,
 ) OfferDuration() time.Duration {
 	if stats.OfferedEvents <= 1 ||
 		stats.FirstOfferedAt.IsZero() ||
@@ -168,7 +167,7 @@ stats ReplayStats,
 }
 
 func (
-stats ReplayStats,
+	stats ReplayStats,
 ) DrainDuration() time.Duration {
 	if stats.LastOfferedAt.IsZero() || stats.CompletedAt.IsZero() {
 		return 0
@@ -183,7 +182,7 @@ stats ReplayStats,
 }
 
 func (
-stats ReplayStats,
+	stats ReplayStats,
 ) Throughput() float64 {
 	duration := stats.OfferDuration()
 	if stats.OfferedEvents <= 1 || duration <= 0 {
@@ -196,7 +195,7 @@ stats ReplayStats,
 }
 
 func (
-stats *ReplayStats,
+	stats *ReplayStats,
 ) RecordOffer(
 	offeredAt time.Time,
 	schedulingLag time.Duration,
@@ -266,16 +265,11 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 	return stats, nil
 }
 
-func createTelemetryEgress(config SimulatorConfig, runtime ReplayRuntime) (TelemetryQueue, error) {
-	egressFactory := runtime.NewTelemetryEgress
-	if egressFactory == nil {
-		egressFactory =
-			func(capacity int, publish TelemetryPublisher, now func() time.Time) (TelemetryQueue, error) {
-				return newTelemetryEgress(capacity, publish, now)
-			}
-	}
-
-	return egressFactory(config.TelemetryQueueCapacity, runtime.PublishTelemetry, runtime.Now)
+func createTelemetryEgress(config SimulatorConfig, runtime ReplayRuntime) (*TelemetryEgress, error) {
+	return newTelemetryEgress(
+		config.TelemetryQueueCapacity,
+		runtime.PublishTelemetry,
+	)
 }
 
 func recordTelemetryEgressStats(stats *ReplayStats, egressStats TelemetryEgressStats) {
@@ -286,7 +280,7 @@ func recordTelemetryEgressStats(stats *ReplayStats, egressStats TelemetryEgressS
 	stats.MQTTPublishErrors = egressStats.PublishErrors
 }
 
-func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntime, pacer ReplayPacer, egress TelemetryQueue, stats *ReplayStats) error {
+func runReplayLoop(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntime, pacer ReplayPacer, egress *TelemetryEgress, stats *ReplayStats) error {
 	header, err := reader.Read()
 	if err != nil {
 		return err

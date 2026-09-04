@@ -15,7 +15,6 @@ type TelemetryEgress struct {
 	queue chan model.SensorEvent
 
 	publish   TelemetryPublisher
-	now       func() time.Time
 	done      chan struct{}
 	closeOnce sync.Once
 
@@ -32,19 +31,8 @@ type TelemetryEgressStats struct {
 
 type TelemetryPublisher func(topic string, event model.SensorEvent) error
 
-type TelemetryQueue interface {
-	TryEnqueue(model.SensorEvent) bool
-	CloseAndWait() TelemetryEgressStats
-}
-
-type TelemetryEgressFactory func(
-	capacity int,
-	publish TelemetryPublisher,
-	now func() time.Time,
-) (TelemetryQueue, error)
-
 // costruisce un gestore della coda e lancia la goroutine che si occupa di pubblicare su MQTT
-func newTelemetryEgress(capacity int, publish TelemetryPublisher, now func() time.Time) (*TelemetryEgress, error) {
+func newTelemetryEgress(capacity int, publish TelemetryPublisher) (*TelemetryEgress, error) {
 
 	if capacity <= 0 {
 		return nil, fmt.Errorf("TELEMETRY_QUEUE_CAPACITY deve essere maggiore di zero")
@@ -52,14 +40,9 @@ func newTelemetryEgress(capacity int, publish TelemetryPublisher, now func() tim
 	if publish == nil {
 		return nil, fmt.Errorf("publisher MQTT telemetry non configurato")
 	}
-	if now == nil {
-		return nil, fmt.Errorf("clock telemetry sender non configurato")
-	}
-
 	egress := &TelemetryEgress{
 		queue:   make(chan model.SensorEvent, capacity),
 		publish: publish,
-		now:     now,
 		done:    make(chan struct{}),
 	}
 
@@ -79,7 +62,7 @@ func (egress *TelemetryEgress) TryEnqueue(event model.SensorEvent) bool {
 }
 
 func (
-egress *TelemetryEgress,
+	egress *TelemetryEgress,
 ) CloseAndWait() TelemetryEgressStats {
 	egress.closeOnce.Do(func() {
 		close(egress.queue)
@@ -105,7 +88,7 @@ func (egress *TelemetryEgress) run() {
 	for event := range egress.queue {
 		egress.publishAttempts.Add(1)
 
-		event.EmittedAt = egress.now().UTC()
+		event.EmittedAt = time.Now().UTC()
 		if err := egress.publish(mqtttopic.Telemetry(event.SensorID), event); err != nil {
 			egress.publishErrors.Add(1)
 		}

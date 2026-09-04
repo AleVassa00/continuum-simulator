@@ -23,8 +23,8 @@ func runCloudWorker() error {
 	kafkaBroker := envutil.Required("KAFKA_BROKER")
 
 	inputTopic := loadInputTopic()
-	outputTopic := envutil.OrDefault(os.Getenv, "KAFKA_OUTPUT_TOPIC", "cloud-edge-aggregates")
-	groupID := envutil.OrDefault(os.Getenv, "KAFKA_GROUP_ID", "cloud-workers")
+	outputTopic := envutil.OrDefault("KAFKA_OUTPUT_TOPIC", "cloud-edge-aggregates")
+	groupID := envutil.OrDefault("KAFKA_GROUP_ID", "cloud-workers")
 	workerID := loadWorkerID()
 	windowSize, err := loadCloudWindowSize()
 	if err != nil {
@@ -130,7 +130,6 @@ func loadCloudWindowSize() (
 	error,
 ) {
 	value := envutil.OrDefault(
-		os.Getenv,
 		"CLOUD_WINDOW_SIZE",
 		"15m",
 	)

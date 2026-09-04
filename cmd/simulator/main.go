@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
-	"os"
 	"time"
 
 	"continuum/internal/model"
@@ -16,8 +15,7 @@ func main() {
 }
 
 func runSimulator() error {
-	// incapsuli
-	config, err := loadSimulatorConfig(os.Getenv) //variabile di ambiente identificativa
+	config, err := loadSimulatorConfig()
 	if err != nil {
 		return err
 	}
