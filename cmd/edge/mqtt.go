@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -15,19 +14,11 @@ type SubscriptionCoordinator struct {
 	generation atomic.Uint64
 }
 
-type SubscriptionRetryPolicy struct {
-	Attempts int
-	Timeout  time.Duration
-	Backoff  time.Duration
-}
-
 const (
 	mqttSubscriptionAttempts = 3
 	mqttSubscriptionTimeout  = 5 * time.Second
 	mqttSubscriptionBackoff  = 250 * time.Millisecond
 )
-
-var errSubscriptionInactive = errors.New("tentativo di sottoscrizione MQTT non piu attivo")
 
 func (
 	coordinator *SubscriptionCoordinator,
@@ -160,54 +151,45 @@ func subscribeToEdgeTopics(
 		stats,
 	)
 
-	attempts, err := retrySubscription(
-		SubscriptionRetryPolicy{
-			Attempts: mqttSubscriptionAttempts,
-			Timeout:  mqttSubscriptionTimeout,
-			Backoff:  mqttSubscriptionBackoff,
-		},
-		func() bool {
-			return coordinator.IsCurrent(generation) &&
-				client.IsConnected()
-		},
-		func(timeout time.Duration) error {
-			token := client.SubscribeMultiple(
-				topics,
-				handler,
+	var lastErr error
+	for attempt := 1; attempt <= mqttSubscriptionAttempts; attempt++ {
+		if !coordinator.IsCurrent(generation) || !client.IsConnected() {
+			return
+		}
+
+		token := client.SubscribeMultiple(topics, handler)
+		if !token.WaitTimeout(mqttSubscriptionTimeout) {
+			lastErr = fmt.Errorf("timeout sottoscrizione MQTT")
+		} else if err := token.Error(); err != nil {
+			lastErr = fmt.Errorf("errore sottoscrizione MQTT: %w", err)
+		} else {
+			if !coordinator.IsCurrent(generation) || !client.IsConnected() {
+				return
+			}
+
+			readiness.MarkReady()
+			fmt.Printf(
+				"%s sottoscritto a %s e %s\n\n",
+				edgeID,
+				mqtttopic.TelemetrySubscription,
+				mqtttopic.ReplayEnd(edgeID),
 			)
+			return
+		}
 
-			if !token.WaitTimeout(timeout) {
-				return fmt.Errorf("timeout sottoscrizione MQTT")
+		if attempt < mqttSubscriptionAttempts {
+			if !coordinator.IsCurrent(generation) || !client.IsConnected() {
+				return
 			}
-
-			if token.Error() != nil {
-				return fmt.Errorf(
-					"errore sottoscrizione MQTT: %w",
-					token.Error(),
-				)
-			}
-
-			return nil
-		},
-	)
-	if err != nil {
-		fmt.Printf(
-			"%s: sottoscrizione MQTT non attiva dopo %d tentativi: %v\n",
-			edgeID,
-			attempts,
-			err,
-		)
-
-		return
+			time.Sleep(mqttSubscriptionBackoff * time.Duration(attempt))
+		}
 	}
 
-	readiness.MarkReady()
-
 	fmt.Printf(
-		"%s sottoscritto a %s e %s\n\n",
+		"%s: sottoscrizione MQTT non attiva dopo %d tentativi: %v\n",
 		edgeID,
-		mqtttopic.TelemetrySubscription,
-		mqtttopic.ReplayEnd(edgeID),
+		mqttSubscriptionAttempts,
+		lastErr,
 	)
 }
 
@@ -218,51 +200,6 @@ func edgeSubscriptionTopics(
 		mqtttopic.TelemetrySubscription: 0,
 		mqtttopic.ReplayEnd(edgeID):     1,
 	}
-}
-
-func retrySubscription(
-	policy SubscriptionRetryPolicy,
-	isActive func() bool,
-	attempt func(time.Duration) error,
-) (int, error) {
-	if policy.Attempts <= 0 {
-		return 0, fmt.Errorf("numero tentativi di sottoscrizione non valido")
-	}
-
-	var lastErr error
-
-	for attemptNumber := 1; attemptNumber <= policy.Attempts; attemptNumber++ {
-		if !isActive() {
-			return attemptNumber - 1, errSubscriptionInactive
-		}
-
-		lastErr = attempt(policy.Timeout)
-		if lastErr == nil {
-			if !isActive() {
-				return attemptNumber, errSubscriptionInactive
-			}
-
-			return attemptNumber, nil
-		}
-
-		if attemptNumber == policy.Attempts {
-			break
-		}
-
-		if !isActive() {
-			return attemptNumber, errSubscriptionInactive
-		}
-
-		time.Sleep(
-			policy.Backoff * time.Duration(attemptNumber),
-		)
-	}
-
-	return policy.Attempts,
-		fmt.Errorf(
-			"tentativi di sottoscrizione esauriti: %w",
-			lastErr,
-		)
 }
 
 func makeEdgeMessageHandler(

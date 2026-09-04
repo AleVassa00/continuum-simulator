@@ -60,7 +60,6 @@ type EdgeStats struct {
 
 type EdgeStatsSnapshot struct {
 	IngressQueueCapacity         int
-	CurrentIngressQueueDepth     int
 	MaxIngressQueueDepthObserved int
 	TelemetryReceived            uint64
 	IngressAccepted              uint64
@@ -75,7 +74,6 @@ type EdgeStatsSnapshot struct {
 
 type EdgeIngressQueueStats struct {
 	Capacity         int
-	CurrentDepth     int
 	MaxDepthObserved int
 }
 
@@ -87,19 +85,13 @@ type EdgeProcessor struct {
 	lastEventTime time.Time
 }
 
-func newEdgeIngressQueue(capacity int) (*EdgeIngressQueue, error) {
-	if capacity <= 0 {
-		return nil, fmt.Errorf(
-			"EDGE_INGRESS_QUEUE_CAPACITY deve essere maggiore di zero",
-		)
-	}
-
+func newEdgeIngressQueue(capacity int) *EdgeIngressQueue {
 	queue := &EdgeIngressQueue{
 		data: make([]EdgeIngressRecord, capacity),
 	}
 	queue.cond = sync.NewCond(&queue.mu)
 
-	return queue, nil
+	return queue
 }
 
 func (
@@ -136,19 +128,18 @@ func (queue *EdgeIngressQueue) Stats() EdgeIngressQueueStats {
 
 	return EdgeIngressQueueStats{
 		Capacity:         len(queue.data),
-		CurrentDepth:     queue.size,
 		MaxDepthObserved: queue.maxDepth,
 	}
 }
 
 func (
 	queue *EdgeIngressQueue,
-) RegisterEndOfReplay() bool {
+) RegisterEndOfReplay() {
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 
 	if queue.closed || queue.eosRegistered {
-		return false
+		return
 	}
 
 	record := EdgeIngressRecord{
@@ -157,8 +148,6 @@ func (
 	queue.terminal = &record
 	queue.eosRegistered = true
 	queue.cond.Signal()
-
-	return true
 }
 
 func (
@@ -223,7 +212,6 @@ func (
 	snapshot := stats.Snapshot()
 	queueStats := queue.Stats()
 	snapshot.IngressQueueCapacity = queueStats.Capacity
-	snapshot.CurrentIngressQueueDepth = queueStats.CurrentDepth
 	snapshot.MaxIngressQueueDepthObserved = queueStats.MaxDepthObserved
 
 	return snapshot
@@ -272,7 +260,6 @@ func (
 				LastEventTime: lastEventTime,
 				EmittedAt:     emittedAt,
 			},
-			emittedAt,
 		); err != nil {
 			return err
 		}

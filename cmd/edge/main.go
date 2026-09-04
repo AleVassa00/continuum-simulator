@@ -23,10 +23,7 @@ func runEdge() error {
 		return err
 	}
 
-	ingress, err := newEdgeIngressQueue(config.IngressQueueCapacity)
-	if err != nil {
-		return err
-	}
+	ingress := newEdgeIngressQueue(config.IngressQueueCapacity)
 	stats := &EdgeStats{}
 
 	kafkaWriter := newKafkaWriter(
@@ -35,19 +32,10 @@ func runEdge() error {
 	)
 
 	aggregator := &WindowAggregator{
-		edgeID:     config.EdgeID,
-		windowSize: config.WindowSize,
-		kafkaTopic: config.KafkaTopic,
-		publishMessage: func(
-			ctx context.Context,
-			message kafka.Message,
-		) error {
-			return kafkaWriter.WriteMessages(
-				ctx,
-				message,
-			)
-		},
-		stats: stats,
+		edgeID:      config.EdgeID,
+		windowSize:  config.WindowSize,
+		kafkaWriter: kafkaWriter,
+		stats:       stats,
 	}
 
 	processor := &EdgeProcessor{
@@ -62,66 +50,36 @@ func runEdge() error {
 	}()
 
 	readiness := &ReadinessState{}
-	readinessServer, err := startReadinessServer(
-		readiness,
-		config.EdgeID,
-	)
+	readinessServer, err := startReadinessServer(readiness, config.EdgeID)
 	if err != nil {
 		return err
 	}
-	defer stopReadinessServer(
-		readinessServer,
-		config.EdgeID,
-	)
+	defer stopReadinessServer(readinessServer, config.EdgeID)
 
-	fmt.Printf(
-		"Avvio Edge %s\n",
-		config.EdgeID,
-	)
-	fmt.Printf(
-		"Broker MQTT: %s\n",
-		config.MQTTBroker,
-	)
-	fmt.Printf(
-		"Window size: %s\n",
-		config.WindowSize,
-	)
-	fmt.Printf(
-		"Kafka broker: %s\n",
-		config.KafkaBroker,
-	)
-	fmt.Printf(
-		"Kafka topic: %s\n\n",
-		config.KafkaTopic,
-	)
-	fmt.Printf(
-		"Edge ingress queue capacity: %d\n\n",
-		config.IngressQueueCapacity,
-	)
+	fmt.Printf("Avvio Edge %s\n", config.EdgeID)
+	fmt.Printf("Broker MQTT: %s\n", config.MQTTBroker)
+	fmt.Printf("Window size: %s\n", config.WindowSize)
+	fmt.Printf("Kafka broker: %s\n", config.KafkaBroker)
+	fmt.Printf("Kafka topic: %s\n\n", config.KafkaTopic)
+	fmt.Printf("Edge ingress queue capacity: %d\n\n", config.IngressQueueCapacity)
 
 	subscriptions := &SubscriptionCoordinator{}
-	client, err := connectEdgeMQTTClient(
-		config,
-		ingress,
-		stats,
-		readiness,
-		subscriptions,
-	)
+	client, err := connectEdgeMQTTClient(config, ingress, stats, readiness, subscriptions)
 	if err != nil {
 		return err
 	}
 
-	shutdownContext, stop := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
+	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	processorErr, processorFinished := waitForShutdown(
-		shutdownContext,
-		processorDone,
-	)
+	var processorErr error
+	processorFinished := false
+
+	select {
+	case <-shutdownContext.Done():
+	case processorErr = <-processorDone:
+		processorFinished = true
+	}
 
 	fmt.Printf(
 		"\nArresto %s...\n",
@@ -186,17 +144,5 @@ func newKafkaWriter(
 		ReadTimeout:  5 * time.Second,
 
 		Async: false,
-	}
-}
-
-func waitForShutdown(
-	ctx context.Context,
-	processorDone <-chan error,
-) (processorErr error, processorFinished bool) {
-	select {
-	case <-ctx.Done():
-		return nil, false
-	case err := <-processorDone:
-		return err, true
 	}
 }

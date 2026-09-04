@@ -16,9 +16,8 @@ import (
 )
 
 type MetricValue struct {
-	Value  float64
-	Valid  bool
-	Reason string
+	Value float64
+	Valid bool
 }
 
 type EdgeMeasurement struct {
@@ -55,9 +54,8 @@ type WindowAggregator struct {
 	current    *WindowState
 	ended      bool
 
-	kafkaTopic     string
-	publishMessage func(context.Context, kafka.Message) error
-	stats          *EdgeStats
+	kafkaWriter *kafka.Writer
+	stats       *EdgeStats
 }
 
 var (
@@ -140,15 +138,13 @@ func parseMetric(
 
 	if !found {
 		return MetricValue{
-			Valid:  false,
-			Reason: "misura mancante",
+			Valid: false,
 		}
 	}
 
 	if !measurement.Valid {
 		return MetricValue{
-			Valid:  false,
-			Reason: "misura non disponibile",
+			Valid: false,
 		}
 	}
 
@@ -158,26 +154,13 @@ func parseMetric(
 		math.IsInf(value, 0) {
 		return MetricValue{
 			Valid: false,
-
-			Reason: fmt.Sprintf(
-				"valore numerico non finito %.2f",
-				value,
-			),
 		}
 	}
 
 	if value < minValue ||
 		value > maxValue {
 		return MetricValue{
-			Value: value,
 			Valid: false,
-
-			Reason: fmt.Sprintf(
-				"valore %.2f fuori dal range [%.2f, %.2f]",
-				value,
-				minValue,
-				maxValue,
-			),
 		}
 	}
 
@@ -336,7 +319,7 @@ func (
 	)
 	defer cancel()
 
-	err = aggregator.publishMessage(
+	err = aggregator.kafkaWriter.WriteMessages(
 		ctx,
 		kafka.Message{
 			Key: []byte(
@@ -368,11 +351,9 @@ func (
 		aggregate.EdgeID,
 		aggregate.AggregateID,
 		aggregate.Events,
-		aggregator.kafkaTopic,
+		aggregator.kafkaWriter.Topic,
 	)
-	if aggregator.stats != nil {
-		aggregator.stats.aggregatesEmitted.Add(1)
-	}
+	aggregator.stats.aggregatesEmitted.Add(1)
 
 	return nil
 }
@@ -396,7 +377,6 @@ func (
 	aggregator *WindowAggregator,
 ) EndReplay(
 	record model.EndOfReplay,
-	emittedAt time.Time,
 ) error {
 	if err := model.ValidateEndOfReplay(record); err != nil {
 		return err
@@ -431,7 +411,7 @@ func (
 	aggregator.current = nil
 
 	forwarded := record
-	forwarded.EmittedAt = emittedAt.UTC()
+	forwarded.EmittedAt = forwarded.EmittedAt.UTC()
 	payload, err := json.Marshal(forwarded)
 	if err != nil {
 		return fmt.Errorf(
@@ -447,7 +427,7 @@ func (
 	)
 	defer cancel()
 
-	if err := aggregator.publishMessage(
+	if err := aggregator.kafkaWriter.WriteMessages(
 		ctx,
 		kafka.Message{
 			Key:   []byte(aggregator.edgeID),
