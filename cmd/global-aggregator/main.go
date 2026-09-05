@@ -218,18 +218,7 @@ func (processor *GlobalMessageProcessor) Process(
 		return false, nil
 
 	case model.RecordTypeEndOfReplay:
-		record, err := kafkautil.DecodeEndOfReplay(message.Value)
-		if err != nil {
-			return false, err
-		}
-		if string(message.Key) != record.EdgeID {
-			return false, fmt.Errorf(
-				"EndOfReplay key Kafka=%q non coerente con edge_id=%q",
-				message.Key,
-				record.EdgeID,
-			)
-		}
-		return processor.aggregator.EndReplay(ctx, record)
+		return processor.aggregator.EndReplay(ctx, string(message.Key))
 
 	default:
 		return false, fmt.Errorf(

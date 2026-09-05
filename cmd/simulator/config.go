@@ -14,7 +14,6 @@ type SimulatorConfig struct {
 	SiteID                 string
 	MQTTEndpoint           string
 	ReplayFile             string
-	MaxEvents              int
 	ReplayEpoch            time.Time
 	ReplayStartAt          time.Time
 	AccelerationFactor     float64
@@ -85,11 +84,6 @@ func loadSimulatorConfig() (SimulatorConfig, error) {
 		return SimulatorConfig{}, err
 	}
 
-	maxEvents, err := parseMaxEvents(os.Getenv("MAX_EVENTS"))
-	if err != nil {
-		return SimulatorConfig{}, err
-	}
-
 	startLateTolerance, err := parseStartLateTolerance(os.Getenv("START_LATE_TOLERANCE"))
 	if err != nil {
 		return SimulatorConfig{}, err
@@ -99,7 +93,6 @@ func loadSimulatorConfig() (SimulatorConfig, error) {
 		SiteID:                 siteID,
 		MQTTEndpoint:           mqttEndpoint,
 		ReplayFile:             replayFile,
-		MaxEvents:              maxEvents,
 		ReplayEpoch:            replayEpoch,
 		ReplayStartAt:          replayStartAt,
 		AccelerationFactor:     accelerationFactor,
@@ -162,26 +155,6 @@ func parseTelemetryQueueCapacity(value string) (int, error) {
 	}
 
 	return capacity, nil
-}
-
-// legge il limite opzionale di eventi da riprodurre
-func parseMaxEvents(value string) (int, error) {
-	value = strings.TrimSpace(value)
-
-	if value == "" {
-		return 0, nil
-	}
-
-	maxEvents, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("MAX_EVENTS non valido %q: %w", value, err)
-	}
-
-	if maxEvents < 0 {
-		return 0, fmt.Errorf("MAX_EVENTS non può essere negativo")
-	}
-
-	return maxEvents, nil
 }
 
 func parseStartLateTolerance(value string) (time.Duration, error) {

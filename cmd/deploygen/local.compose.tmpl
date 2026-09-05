@@ -163,7 +163,6 @@ services:
       SITE_ID: "{{.EdgeID}}"
       MQTT_ENDPOINT: "tcp://{{.MQTTService}}:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/{{.EdgeID}}.csv"
-      MAX_EVENTS: "{{$.MaxEvents}}"
       REPLAY_EPOCH: "{{$.ReplayEpoch}}"
       REPLAY_START_AT: "{{$.ReplayStartAt}}"
       ACCELERATION_FACTOR: "{{$.AccelerationFactor}}"

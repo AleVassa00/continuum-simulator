@@ -22,9 +22,6 @@ type ReplayStats struct {
 	LastOfferedAt  time.Time // Istante reale in cui è stato offerto l'ultimo evento.
 	CompletedAt    time.Time // Istante reale in cui il replay ha completato anche il drain della egress.
 
-	ReachedEOF    bool      // True se il replay ha raggiunto realmente la fine del file CSV.
-	LastEventTime time.Time // Event time dell'ultimo evento offerto dal replay.
-
 	EOSSuccesses int // Numero di EndOfReplay pubblicati con PUBACK ricevuto correttamente.
 	EOSFailures  int // Numero di fallimenti durante publish o attesa del PUBACK dell'EndOfReplay.
 }

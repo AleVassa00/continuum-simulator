@@ -21,8 +21,9 @@ type cloudWindowState struct {
 	start  time.Time
 	end    time.Time
 
-	inputAggregates uint64
-	events          uint64
+	inputAggregates  uint64
+	events           uint64
+	seenAggregateIDs map[string]struct{}
 
 	temperature metricState
 	humidity    metricState
@@ -73,6 +74,11 @@ func (
 	}
 
 	current := aggregator.states[input.EdgeID]
+	if current != nil {
+		if _, seen := current.seenAggregateIDs[input.AggregateID]; seen {
+			return nil, nil
+		}
+	}
 
 	if current == nil {
 		current = newCloudWindowState(
@@ -253,6 +259,8 @@ func newCloudWindowState(
 		edgeID: edgeID,
 		start:  start,
 		end:    end,
+		// Gli ID vivono quanto la finestra: sostituzione e flush liberano il set.
+		seenAggregateIDs: make(map[string]struct{}),
 	}
 }
 
@@ -261,6 +269,7 @@ func (
 ) add(
 	input model.EdgeAggregate,
 ) {
+	state.seenAggregateIDs[input.AggregateID] = struct{}{}
 	state.inputAggregates++
 	state.events += input.Events
 
@@ -302,7 +311,6 @@ func (
 	emittedAt time.Time,
 ) model.CloudEdgeAggregate {
 	return model.CloudEdgeAggregate{
-		SchemaVersion: model.CloudEdgeAggregateSchemaVersion,
 		AggregateID: buildCloudAggregateID(
 			state.edgeID,
 			state.start,

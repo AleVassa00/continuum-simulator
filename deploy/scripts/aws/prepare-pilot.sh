@@ -108,8 +108,6 @@ validate_release_source() {
   local actual
   local source_status
 
-  [[ "$(jq -er '.schema_version' "${GENERATION_MANIFEST_PATH}")" == "1" ]] ||
-    die "schema version del generation manifest non supportata"
   [[ "$(jq -er '.config_sha256 | select(type == "string" and length == 64)' "${GENERATION_MANIFEST_PATH}")" =~ ^[0-9a-f]{64}$ ]] ||
     die "config_sha256 mancante o non valido nel generation manifest"
   [[ "$(jq -er '.topology_sha256 | select(type == "string" and length == 64)' "${GENERATION_MANIFEST_PATH}")" =~ ^[0-9a-f]{64}$ ]] ||
@@ -514,7 +512,6 @@ create_release_manifest() {
     --argjson replay_shard_sha256 "${REPLAY_SHARD_SHA256}" \
     --argjson images_by_role "${IMAGES_BY_ROLE}" \
     '{
-      schema_version: 1,
       deployment_id: $deployment_id,
       git_commit_sha: $git_commit_sha,
       generation_manifest_sha256: $generation_manifest_sha256,

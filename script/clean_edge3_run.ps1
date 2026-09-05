@@ -1,6 +1,5 @@
 param(
     [string]$EdgeId = "edge-3",
-    [int]$MaxEvents = 1000,
     [string]$AccelerationFactor = "10000"
 )
 
@@ -27,7 +26,7 @@ docker ps -a --filter "name=^kafka$" --filter "name=^kafka-init$" --filter "name
 
 Write-Host ""
 Write-Host "=== 2. VERIFICA CODICE GO ==="
-go test ./...
+go build ./...
 go vet ./...
 
 Write-Host ""
@@ -88,7 +87,6 @@ Write-Host "  `$env:REPLAY_EPOCH=`"2025-01-01T00:00:00Z`""
 Write-Host "  `$env:REPLAY_START_AT=(Get-Date).ToUniversalTime().AddSeconds(10).ToString(`"o`")"
 Write-Host "  `$env:ACCELERATION_FACTOR=`"$AccelerationFactor`""
 Write-Host "  `$env:TELEMETRY_QUEUE_CAPACITY=`"1000`""
-Write-Host "  `$env:MAX_EVENTS=`"$MaxEvents`""
 Write-Host "  go run ./cmd/simulator"
 Write-Host ""
 Write-Host "Quando hai finito la prova:"

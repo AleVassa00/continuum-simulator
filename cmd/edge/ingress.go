@@ -30,6 +30,7 @@ type EdgeIngress struct {
 
 	telemetryCapacity int
 	telemetryQueued   int
+	maxDepthObserved  int
 
 	eosRegistered bool
 	closed        bool
@@ -76,6 +77,7 @@ func (
 	}
 
 	ingress.telemetryQueued++
+	ingress.maxDepthObserved = max(ingress.maxDepthObserved, ingress.telemetryQueued)
 
 	return TelemetryEnqueued
 }
@@ -135,6 +137,7 @@ func (
 	defer ingress.mu.Unlock()
 
 	return EdgeIngressQueueStats{
-		Capacity: ingress.telemetryCapacity,
+		Capacity:         ingress.telemetryCapacity,
+		MaxDepthObserved: ingress.maxDepthObserved,
 	}
 }

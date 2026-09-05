@@ -52,43 +52,24 @@ var (
 	)
 )
 
-func newWindowState(
-	start time.Time,
-	end time.Time,
-) *WindowState {
+func newWindowState(start time.Time, end time.Time) *WindowState {
 	return &WindowState{
 		Start: start,
 		End:   end,
 	}
 }
 
-func (
-	aggregator *WindowAggregator,
-) Add(
-	eventID string,
-	eventTime time.Time,
-	measurement EdgeMeasurement,
-) (*model.EdgeAggregate, error) {
-	windowStart := eventTime.Truncate(
-		aggregator.windowSize,
-	)
+func (aggregator *WindowAggregator) Add(eventID string, eventTime time.Time, measurement EdgeMeasurement) (*model.EdgeAggregate, error) {
+	windowStart := eventTime.Truncate(aggregator.windowSize)
 
-	windowEnd := windowStart.Add(
-		aggregator.windowSize,
-	)
+	windowEnd := windowStart.Add(aggregator.windowSize)
 
 	if aggregator.current == nil {
-		aggregator.current = newWindowState(
-			windowStart,
-			windowEnd,
-		)
+		aggregator.current = newWindowState(windowStart, windowEnd)
 	}
 
-	if windowStart.Before(
-		aggregator.current.Start,
-	) {
-		return nil, fmt.Errorf(
-			"%w: event_id=%s event_time=%s current_window=%s",
+	if windowStart.Before(aggregator.current.Start) {
+		return nil, fmt.Errorf("%w: event_id=%s event_time=%s current_window=%s",
 			errEdgeWindowClosed,
 			eventID,
 			eventTime.Format(time.RFC3339),
@@ -98,115 +79,69 @@ func (
 
 	var completedAggregate *model.EdgeAggregate
 
-	if !windowStart.Equal(
-		aggregator.current.Start,
-	) {
+	if !windowStart.Equal(aggregator.current.Start) {
 		completedAggregate = aggregator.Flush()
 
-		aggregator.current = newWindowState(
-			windowStart,
-			windowEnd,
-		)
+		aggregator.current = newWindowState(windowStart, windowEnd)
 	}
 
-	aggregator.current.Add(
-		measurement,
-	)
+	aggregator.current.Add(measurement)
 
 	return completedAggregate, nil
 }
 
-func (
-	window *WindowState,
-) Add(
-	measurement EdgeMeasurement,
-) {
+func (window *WindowState) Add(measurement EdgeMeasurement) {
 	window.Events++
 
-	window.Temperature.Add(
-		measurement.Temperature,
-	)
+	window.Temperature.Add(measurement.Temperature)
 
-	window.Humidity.Add(
-		measurement.Humidity,
-	)
+	window.Humidity.Add(measurement.Humidity)
 
-	window.Pressure.Add(
-		measurement.Pressure,
-	)
+	window.Pressure.Add(measurement.Pressure)
 }
 
-func (
-	metric *MetricState,
-) Add(
-	value MetricValue,
-) {
+func (metric *MetricState) Add(value MetricValue) {
 	if !value.Valid {
 		metric.Invalid++
-
 		return
 	}
-
 	if metric.Valid == 0 {
 		metric.Min = value.Value
 		metric.Max = value.Value
 	} else {
-		metric.Min = min(
-			metric.Min,
-			value.Value,
-		)
-
-		metric.Max = max(
-			metric.Max,
-			value.Value,
-		)
+		metric.Min = min(metric.Min, value.Value)
+		metric.Max = max(metric.Max, value.Value)
 	}
 
 	metric.Sum += value.Value
 	metric.Valid++
 }
 
-func (
-	aggregator *WindowAggregator,
-) currentAggregate() *model.EdgeAggregate {
+func (aggregator *WindowAggregator) currentAggregate() *model.EdgeAggregate {
 	if aggregator.current == nil {
 		return nil
 	}
-
 	if aggregator.current.Events == 0 {
 		return nil
 	}
-
-	aggregate := buildEdgeAggregate(
-		aggregator.edgeID,
-		aggregator.current,
-	)
-
+	aggregate := buildEdgeAggregate(aggregator.edgeID, aggregator.current)
 	return &aggregate
 }
 
-func (
-	aggregator *WindowAggregator,
-) Flush() *model.EdgeAggregate {
+func (aggregator *WindowAggregator) Flush() *model.EdgeAggregate {
 	aggregate := aggregator.currentAggregate()
-
 	aggregator.current = nil
 
 	return aggregate
 }
 
-func (
-	aggregator *WindowAggregator,
-) EndReplay() *model.EdgeAggregate {
-
+func (aggregator *WindowAggregator) EndReplay() *model.EdgeAggregate {
 	aggregate := aggregator.Flush()
 
 	return aggregate
 }
 
-func buildMetricAggregate(
-	state MetricState,
-) model.MetricAggregate {
+func buildMetricAggregate(state MetricState) model.MetricAggregate {
 	if state.Valid == 0 {
 		return model.MetricAggregate{
 			Valid:   0,
@@ -218,8 +153,7 @@ func buildMetricAggregate(
 		}
 	}
 
-	average := state.Sum /
-		float64(state.Valid)
+	average := state.Sum / float64(state.Valid)
 
 	minimum := state.Min
 	maximum := state.Max
@@ -234,53 +168,20 @@ func buildMetricAggregate(
 	}
 }
 
-func buildAggregateID(
-	edgeID string,
-	windowStart time.Time,
-	windowEnd time.Time,
-) string {
-	return fmt.Sprintf(
-		"%s:%s:%s",
-		edgeID,
-		windowStart.UTC().Format(
-			time.RFC3339,
-		),
-		windowEnd.UTC().Format(
-			time.RFC3339,
-		),
-	)
+func buildAggregateID(edgeID string, windowStart time.Time, windowEnd time.Time) string {
+	return fmt.Sprintf("%s:%s:%s", edgeID, windowStart.UTC().Format(time.RFC3339), windowEnd.UTC().Format(time.RFC3339))
 }
 
-func buildEdgeAggregate(
-	edgeID string,
-	window *WindowState,
-) model.EdgeAggregate {
+func buildEdgeAggregate(edgeID string, window *WindowState) model.EdgeAggregate {
 	return model.EdgeAggregate{
-		AggregateID: buildAggregateID(
-			edgeID,
-			window.Start,
-			window.End,
-		),
-
-		EdgeID: edgeID,
-
+		AggregateID: buildAggregateID(edgeID, window.Start, window.End),
+		EdgeID:      edgeID,
 		WindowStart: window.Start,
 		WindowEnd:   window.End,
-
-		Events: window.Events,
-
-		Temperature: buildMetricAggregate(
-			window.Temperature,
-		),
-
-		Humidity: buildMetricAggregate(
-			window.Humidity,
-		),
-
-		Pressure: buildMetricAggregate(
-			window.Pressure,
-		),
-
-		EmittedAt: time.Now().UTC(),
+		Events:      window.Events,
+		Temperature: buildMetricAggregate(window.Temperature),
+		Humidity:    buildMetricAggregate(window.Humidity),
+		Pressure:    buildMetricAggregate(window.Pressure),
+		EmittedAt:   time.Now().UTC(),
 	}
 }

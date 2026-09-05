@@ -71,7 +71,6 @@ type composeTemplateData struct {
 	EdgeWindowSize           string
 	EdgeIngressQueueCapacity int
 
-	MaxEvents              int
 	ReplayEpoch            string
 	ReplayStartAt          string
 	AccelerationFactor     string
@@ -93,7 +92,6 @@ type generatedCompose struct {
 }
 
 type composeGenerationManifest struct {
-	SchemaVersion      int               `json:"schema_version"`
 	ConfigSHA256       string            `json:"config_sha256"`
 	TopologySHA256     string            `json:"topology_sha256"`
 	ResolvedConfigYAML string            `json:"resolved_config_yaml"`
@@ -329,7 +327,6 @@ func buildComposeGenerationManifest(
 	}
 
 	payload, err := json.MarshalIndent(composeGenerationManifest{
-		SchemaVersion:      1,
 		ConfigSHA256:       configSHA256,
 		TopologySHA256:     hex.EncodeToString(topologyDigest[:]),
 		ResolvedConfigYAML: string(resolvedConfig),
@@ -350,7 +347,6 @@ func printExperimentSummary(
 	fmt.Fprintf(output, "Experiment: %s\n\n", config.Experiment.Name)
 	fmt.Fprintln(output, "Workload:")
 	fmt.Fprintf(output, "  acceleration factor: %s\n", formatFloat(config.Workload.AccelerationFactor))
-	fmt.Fprintf(output, "  max events: %d\n", config.Workload.MaxEvents)
 	fmt.Fprintf(output, "  replay start lead time: %s\n", config.Workload.StartLeadTime)
 	fmt.Fprintf(output, "  replay start at: %s\n\n", config.Workload.ReplayStartAt)
 	fmt.Fprintln(output, "Simulator:")
@@ -560,7 +556,6 @@ func buildCompose(
 		EdgeWindowSize:           config.Edge.WindowSize.String(),
 		EdgeIngressQueueCapacity: config.Edge.IngressQueueCapacity,
 
-		MaxEvents:              config.Workload.MaxEvents,
 		ReplayEpoch:            deploymentReplayEpoch,
 		ReplayStartAt:          config.Workload.ReplayStartAt,
 		AccelerationFactor:     formatFloat(config.Workload.AccelerationFactor),
@@ -594,7 +589,6 @@ func buildDistributedComposes(
 		EdgeWindowSize:           config.Edge.WindowSize.String(),
 		EdgeIngressQueueCapacity: config.Edge.IngressQueueCapacity,
 
-		MaxEvents:              config.Workload.MaxEvents,
 		ReplayEpoch:            deploymentReplayEpoch,
 		AccelerationFactor:     formatFloat(config.Workload.AccelerationFactor),
 		TelemetryQueueCapacity: config.Simulator.TelemetryQueueCapacity,

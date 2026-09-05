@@ -9,7 +9,6 @@ services:
       SITE_ID: "{{.EdgeID}}"
       MQTT_ENDPOINT: "tcp://${EDGE_HOST}:{{.MQTTPort}}"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/{{.EdgeID}}.csv"
-      MAX_EVENTS: "{{$.MaxEvents}}"
       REPLAY_EPOCH: "{{$.ReplayEpoch}}"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "{{$.AccelerationFactor}}"

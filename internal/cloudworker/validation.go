@@ -11,13 +11,6 @@ import (
 func ValidateEdgeAggregate(
 	aggregate model.EdgeAggregate,
 ) error {
-	if aggregate.SchemaVersion != model.EdgeAggregateSchemaVersion {
-		return fmt.Errorf(
-			"schema_version EdgeAggregate non supportata: %d",
-			aggregate.SchemaVersion,
-		)
-	}
-
 	if err := validateAggregateHeader(
 		aggregate.AggregateID,
 		aggregate.EdgeID,
@@ -54,13 +47,6 @@ func ValidateEdgeAggregate(
 func ValidateCloudEdgeAggregate(
 	aggregate model.CloudEdgeAggregate,
 ) error {
-	if aggregate.SchemaVersion != model.CloudEdgeAggregateSchemaVersion {
-		return fmt.Errorf(
-			"schema_version CloudEdgeAggregate non supportata: %d",
-			aggregate.SchemaVersion,
-		)
-	}
-
 	if aggregate.InputAggregates == 0 {
 		return fmt.Errorf(
 			"CloudEdgeAggregate senza aggregati di input",

@@ -195,35 +195,6 @@ func cloudEdgeAggregateMessage(
 	}, nil
 }
 
-func endOfReplayMessage(
-	record model.EndOfReplay,
-) (kafka.Message, error) {
-	if err := model.ValidateEndOfReplay(record); err != nil {
-		return kafka.Message{}, err
-	}
-
-	payload, err := json.Marshal(record)
-	if err != nil {
-		return kafka.Message{}, fmt.Errorf(
-			"serializzazione EndOfReplay edge=%s fallita: %w",
-			record.EdgeID,
-			err,
-		)
-	}
-
-	return kafka.Message{
-		Key:   []byte(record.EdgeID),
-		Value: payload,
-		Time:  record.EmittedAt,
-		Headers: []kafka.Header{
-			{
-				Key:   model.RecordTypeHeader,
-				Value: []byte(model.RecordTypeEndOfReplay),
-			},
-		},
-	}, nil
-}
-
 func writeKafkaMessage(
 	publish KafkaMessagePublisher,
 	message kafka.Message,
@@ -296,7 +267,6 @@ func newKafkaWriter(
 		Topic:        topic,
 		Balancer:     &kafka.Hash{},
 		RequiredAcks: kafka.RequireAll,
-		MaxAttempts:  1,
 		BatchSize:    1,
 		WriteTimeout: operationTimeout,
 		ReadTimeout:  operationTimeout,

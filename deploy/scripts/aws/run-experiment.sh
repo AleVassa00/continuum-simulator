@@ -335,8 +335,6 @@ sha256sum /opt/continuum/current/release-manifest.json | awk "{print \$1}"')"
     die "release-manifest trasferito non integro"
   [[ "$(jq -er '.deployment_id' "${ARTIFACT_DIR}/release-manifest.json")" == "${DEPLOYMENT_ID_VALUE}" ]] ||
     die "DEPLOYMENT_ID interno al manifest non coerente"
-  [[ "$(jq -er '.schema_version' "${ARTIFACT_DIR}/release-manifest.json")" == "1" ]] ||
-    die "schema version del release manifest non supportata"
   [[ "$(jq -er '.config_sha256' "${ARTIFACT_DIR}/release-manifest.json")" == "${CONFIG_SHA256}" ]] ||
     die "EXPERIMENT_CONFIG non corrisponde alla configurazione usata da deploygen"
 

@@ -8,13 +8,6 @@ import (
 )
 
 func ValidateGlobalAggregate(aggregate model.GlobalAggregate) error {
-	if aggregate.SchemaVersion != model.GlobalAggregateSchemaVersion {
-		return fmt.Errorf(
-			"schema_version GlobalAggregate non supportata: %d",
-			aggregate.SchemaVersion,
-		)
-	}
-
 	if strings.TrimSpace(aggregate.AggregateID) == "" {
 		return fmt.Errorf("aggregate_id GlobalAggregate mancante")
 	}

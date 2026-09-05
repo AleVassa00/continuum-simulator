@@ -22,10 +22,7 @@ func runEdgeLoop(ingress *EdgeIngress, aggregator *WindowAggregator, output chan
 
 			if finalAggregate != nil {
 				if err := emitEdgeOutput(output, egressStopped, EdgeOutputRecord{Kind: EdgeOutputAggregate, Aggregate: *finalAggregate}); err != nil {
-					return fmt.Errorf("flush finale Edge %s fallito: %w",
-						edgeID,
-						err,
-					)
+					return fmt.Errorf("flush finale Edge %s fallito: %w", edgeID, err)
 				}
 			}
 			return nil

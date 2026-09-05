@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"continuum/internal/cloudworker"
@@ -99,48 +100,38 @@ func (
 ) processEndOfReplay(
 	message kafka.Message,
 ) error {
-	record, err := kafkautil.DecodeEndOfReplay(message.Value)
-	if err != nil {
-		return err
-	}
-
-	if string(message.Key) != record.EdgeID {
-		return fmt.Errorf(
-			"EndOfReplay key Kafka=%q non coerente con edge_id=%q",
-			message.Key,
-			record.EdgeID,
-		)
+	edgeID := string(message.Key)
+	if strings.TrimSpace(edgeID) == "" {
+		return fmt.Errorf("key Kafka EOS mancante o vuota")
 	}
 
 	if processor.endedEdges == nil {
 		processor.endedEdges = make(map[string]bool)
 	}
-	if processor.endedEdges[record.EdgeID] {
+	if processor.endedEdges[edgeID] {
 		fmt.Printf(
 			"%s: EndOfReplay duplicato edge=%s ignorato\n",
 			processor.workerID,
-			record.EdgeID,
+			edgeID,
 		)
 		return nil
 	}
 
-	if output, found := processor.aggregator.FlushEdge(record.EdgeID); found {
+	if output, found := processor.aggregator.FlushEdge(edgeID); found {
 		if err := processor.publishCloudAggregate(*output, true); err != nil {
 			return fmt.Errorf(
 				"flush finale Cloud edge=%s fallito: %w",
-				record.EdgeID,
+				edgeID,
 				err,
 			)
 		}
 	}
 
-	forwarded := record
-	forwarded.EmittedAt = time.Now().UTC()
-	if err := processor.publishEndOfReplay(forwarded); err != nil {
+	if err := processor.publishEndOfReplay(edgeID); err != nil {
 		return err
 	}
 
-	processor.endedEdges[record.EdgeID] = true
+	processor.endedEdges[edgeID] = true
 
 	return nil
 }
@@ -181,11 +172,18 @@ func (
 func (
 	processor *CloudMessageProcessor,
 ) publishEndOfReplay(
-	record model.EndOfReplay,
+	edgeID string,
 ) error {
-	message, err := endOfReplayMessage(record)
-	if err != nil {
-		return err
+	message := kafka.Message{
+		Key:   []byte(edgeID),
+		Value: []byte{},
+		Time:  time.Now().UTC(),
+		Headers: []kafka.Header{
+			{
+				Key:   model.RecordTypeHeader,
+				Value: []byte(model.RecordTypeEndOfReplay),
+			},
+		},
 	}
 
 	if err := writeKafkaMessage(
@@ -194,7 +192,7 @@ func (
 	); err != nil {
 		return fmt.Errorf(
 			"pubblicazione Kafka EndOfReplay edge=%s topic=%s fallita: %w",
-			record.EdgeID,
+			edgeID,
 			processor.outputTopic,
 			err,
 		)

@@ -296,22 +296,23 @@ func (aggregator *Aggregator) watermarkCandidate(
 
 func (aggregator *Aggregator) EndReplay(
 	ctx context.Context,
-	record model.EndOfReplay,
+	edgeID string,
 ) (bool, error) {
-	if err := model.ValidateEndOfReplay(record); err != nil {
-		return false, err
+	if strings.TrimSpace(edgeID) == "" {
+		return false, fmt.Errorf("edge_id EOS mancante")
 	}
-	if _, found := aggregator.expectedEdges[record.EdgeID]; !found {
-		return false, fmt.Errorf("EndOfReplay da Edge non atteso %q", record.EdgeID)
+	if _, found := aggregator.expectedEdges[edgeID]; !found {
+		return false, fmt.Errorf("EndOfReplay da Edge non atteso %q", edgeID)
 	}
-	if _, duplicate := aggregator.endedEdges[record.EdgeID]; duplicate {
+	if _, duplicate := aggregator.endedEdges[edgeID]; duplicate {
 		return aggregator.complete, nil
 	}
 	if aggregator.complete {
 		return true, nil
 	}
 
-	aggregator.endedEdges[record.EdgeID] = struct{}{}
+	// EOS e solo controllo: non aggiorna attivita, progresso temporale o watermark.
+	aggregator.endedEdges[edgeID] = struct{}{}
 	if len(aggregator.endedEdges) != len(aggregator.expectedEdges) {
 		return false, nil
 	}
@@ -437,7 +438,6 @@ func (state *windowState) buildAggregate(
 	emittedAt time.Time,
 ) model.GlobalAggregate {
 	return model.GlobalAggregate{
-		SchemaVersion: model.GlobalAggregateSchemaVersion,
 		AggregateID:   buildGlobalAggregateID(state.start, state.end),
 		WindowStart:   state.start,
 		WindowEnd:     state.end,

@@ -2,12 +2,6 @@ package model
 
 import "time"
 
-const (
-	EdgeAggregateSchemaVersion      = 3
-	CloudEdgeAggregateSchemaVersion = 2
-	GlobalAggregateSchemaVersion    = 1
-)
-
 type MetricAggregate struct {
 	Valid   uint64  `json:"valid"`
 	Invalid uint64  `json:"invalid"`
@@ -36,8 +30,7 @@ type EdgeAggregate struct {
 }
 
 type CloudEdgeAggregate struct {
-	SchemaVersion int    `json:"schema_version"`
-	AggregateID   string `json:"aggregate_id"`
+	AggregateID string `json:"aggregate_id"`
 
 	EdgeID string `json:"edge_id"`
 
@@ -56,8 +49,7 @@ type CloudEdgeAggregate struct {
 }
 
 type GlobalAggregate struct {
-	SchemaVersion int    `json:"schema_version"`
-	AggregateID   string `json:"aggregate_id"`
+	AggregateID string `json:"aggregate_id"`
 
 	WindowStart time.Time `json:"window_start"`
 	WindowEnd   time.Time `json:"window_end"`

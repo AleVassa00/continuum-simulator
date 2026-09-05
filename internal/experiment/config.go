@@ -31,7 +31,6 @@ type ExperimentConfig struct {
 
 type WorkloadConfig struct {
 	AccelerationFactor float64  `yaml:"acceleration_factor"`
-	MaxEvents          int      `yaml:"max_events"`
 	StartLeadTime      Duration `yaml:"start_lead_time"`
 }
 
@@ -66,7 +65,6 @@ type EffectiveConfig struct {
 
 type EffectiveWorkloadConfig struct {
 	AccelerationFactor float64  `yaml:"acceleration_factor"`
-	MaxEvents          int      `yaml:"max_events"`
 	StartLeadTime      Duration `yaml:"start_lead_time"`
 	ReplayStartAt      string   `yaml:"replay_start_at"`
 }
@@ -144,9 +142,6 @@ func (config Config) Validate() error {
 	factor := config.Workload.AccelerationFactor
 	if factor <= 0 || math.IsNaN(factor) || math.IsInf(factor, 0) {
 		return fmt.Errorf("workload.acceleration_factor deve essere finito e maggiore di zero")
-	}
-	if config.Workload.MaxEvents < 0 {
-		return fmt.Errorf("workload.max_events non puo essere negativo")
 	}
 	if config.Workload.StartLeadTime.Duration() <= 0 {
 		return fmt.Errorf("workload.start_lead_time deve essere maggiore di zero")
@@ -232,7 +227,6 @@ func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
 		Experiment: config.Experiment,
 		Workload: EffectiveWorkloadConfig{
 			AccelerationFactor: config.Workload.AccelerationFactor,
-			MaxEvents:          config.Workload.MaxEvents,
 			StartLeadTime:      config.Workload.StartLeadTime,
 			ReplayStartAt:      replayStartAt.UTC().Format(time.RFC3339Nano),
 		},

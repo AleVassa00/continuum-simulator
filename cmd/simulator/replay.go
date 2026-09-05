@@ -80,12 +80,8 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 		return stats, err
 	}
 
-	if stats.ReachedEOF {
-		if stats.LastEventTime.IsZero() {
-			return stats, fmt.Errorf("replay %s ha raggiunto EOF senza eventi offerti", config.SiteID)
-		}
-		egress.EnqueueEndOfReplay()
-	}
+	// Il loop termina con successo solo a EOF reale, anche per uno shard vuoto.
+	egress.EnqueueEndOfReplay()
 
 	if err := closeEgress(); err != nil {
 		return stats, err
@@ -97,6 +93,9 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 // runReplayLoop legge gli eventi dal CSV, ne calcola la deadline accelerata e li offre alla replay egress rispettando il pacing del replay
 func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer, egress *ReplayEgress, stats *ReplayStats) error {
 	header, err := reader.Read()
+	if err == io.EOF {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -107,14 +106,8 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 	sequences := make(map[string]uint64)
 
 	for {
-		//teniamo il conto
-		if config.MaxEvents > 0 && stats.OfferedEvents >= config.MaxEvents {
-			break
-		}
-
 		row, err := reader.Read()
 		if err == io.EOF {
-			stats.ReachedEOF = true
 			break
 		}
 		if err != nil {
@@ -163,7 +156,6 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 		sequences[measurement.SensorID] = sequence
 
 		stats.RecordOffer(offeredAt, schedulingLag)
-		stats.LastEventTime = measurement.EventTime
 
 		if egress.TryEnqueueTelemetry(event) {
 			stats.TelemetryEnqueued++

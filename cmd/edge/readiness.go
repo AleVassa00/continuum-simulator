@@ -60,7 +60,7 @@ func startReadinessServer(readiness *ReadinessState, edgeID string) (*http.Serve
 	listener, err := net.Listen("tcp", readinessAddress)
 	if err != nil {
 		return nil,
-			fmt.Errorf("%s: avvio readiness server su %s fallito: %w",edgeID,readinessAddress,err)
+			fmt.Errorf("%s: avvio readiness server su %s fallito: %w", edgeID, readinessAddress, err)
 	}
 
 	mux := http.NewServeMux()
