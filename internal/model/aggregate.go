@@ -19,8 +19,7 @@ type MetricAggregate struct {
 }
 
 type EdgeAggregate struct {
-	SchemaVersion int    `json:"schema_version"`
-	AggregateID   string `json:"aggregate_id"`
+	AggregateID string `json:"aggregate_id"`
 
 	EdgeID string `json:"edge_id"`
 

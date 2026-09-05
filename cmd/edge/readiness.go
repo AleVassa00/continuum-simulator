@@ -56,29 +56,15 @@ func (
 	_, _ = response.Write([]byte("ready\n"))
 }
 
-func startReadinessServer(
-	readiness *ReadinessState,
-	edgeID string,
-) (*http.Server, error) {
-	listener, err := net.Listen(
-		"tcp",
-		readinessAddress,
-	)
+func startReadinessServer(readiness *ReadinessState, edgeID string) (*http.Server, error) {
+	listener, err := net.Listen("tcp", readinessAddress)
 	if err != nil {
 		return nil,
-			fmt.Errorf(
-				"%s: avvio readiness server su %s fallito: %w",
-				edgeID,
-				readinessAddress,
-				err,
-			)
+			fmt.Errorf("%s: avvio readiness server su %s fallito: %w",edgeID,readinessAddress,err)
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle(
-		"GET /readyz",
-		readiness,
-	)
+	mux.Handle("GET /readyz", readiness)
 
 	server := &http.Server{
 		Handler:           mux,
@@ -89,13 +75,8 @@ func startReadinessServer(
 
 	go func() {
 		err := server.Serve(listener)
-		if err != nil &&
-			!errors.Is(err, http.ErrServerClosed) {
-			fmt.Printf(
-				"%s: readiness server terminato: %v\n",
-				edgeID,
-				err,
-			)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fmt.Printf("%s: readiness server terminato: %v\n", edgeID, err)
 		}
 	}()
 

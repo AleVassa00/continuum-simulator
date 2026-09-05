@@ -20,136 +20,66 @@ const (
 	mqttSubscriptionBackoff  = 250 * time.Millisecond
 )
 
-func (
-	coordinator *SubscriptionCoordinator,
-) Begin() uint64 {
+func (coordinator *SubscriptionCoordinator) Begin() uint64 {
 	return coordinator.generation.Add(1)
 }
 
-func (
-	coordinator *SubscriptionCoordinator,
-) Invalidate() {
+func (coordinator *SubscriptionCoordinator) Invalidate() {
 	coordinator.generation.Add(1)
 }
 
-func (
-	coordinator *SubscriptionCoordinator,
-) IsCurrent(
-	generation uint64,
-) bool {
+func (coordinator *SubscriptionCoordinator) IsCurrent(generation uint64) bool {
 	return coordinator.generation.Load() == generation
 }
 
-func connectEdgeMQTTClient(
-	config EdgeConfig,
-	ingress *EdgeIngress,
-	stats *EdgeStats,
-	readiness *ReadinessState,
-	subscriptions *SubscriptionCoordinator,
-) (mqtt.Client, error) {
+func connectEdgeMQTTClient(config EdgeConfig, ingress *EdgeIngress, stats *EdgeStats, readiness *ReadinessState, subscriptions *SubscriptionCoordinator) (mqtt.Client, error) {
+
 	options := mqtt.NewClientOptions()
 
-	options.AddBroker(
-		config.MQTTBroker,
-	)
-
-	options.SetClientID(
-		"edge-consumer-" + config.EdgeID,
-	)
-
-	options.SetAutoReconnect(
-		true,
-	)
-
-	options.SetConnectTimeout(
-		5 * time.Second,
-	)
+	options.AddBroker(config.MQTTBroker)
+	options.SetClientID("edge-consumer-" + config.EdgeID)
+	options.SetAutoReconnect(true)
+	options.SetConnectTimeout(5 * time.Second)
 
 	options.SetOrderMatters(true)
+	options.SetOnConnectHandler(func(client mqtt.Client) {
+		readiness.MarkNotReady()
+		generation := subscriptions.Begin()
 
-	options.SetOnConnectHandler(
-		func(client mqtt.Client) {
-			readiness.MarkNotReady()
-			generation := subscriptions.Begin()
+		fmt.Printf("%s connesso al broker MQTT\n", config.EdgeID)
 
-			fmt.Printf(
-				"%s connesso al broker MQTT\n",
-				config.EdgeID,
-			)
-
-			subscribeToEdgeTopics(
-				client,
-				config.EdgeID,
-				ingress,
-				stats,
-				readiness,
-				subscriptions,
-				generation,
-			)
-		},
+		subscribeToEdgeTopics(client, config.EdgeID, ingress, stats, readiness, subscriptions, generation)
+	},
 	)
 
 	options.SetConnectionLostHandler(
-		func(
-			client mqtt.Client,
-			err error,
-		) {
+		func(client mqtt.Client, err error) {
 			subscriptions.Invalidate()
 			readiness.MarkNotReady()
-
-			fmt.Printf(
-				"%s ha perso la connessione MQTT: %v\n",
-				config.EdgeID,
-				err,
-			)
+			fmt.Printf("%s ha perso la connessione MQTT: %v\n", config.EdgeID, err)
 		},
 	)
 
-	client := mqtt.NewClient(
-		options,
-	)
+	client := mqtt.NewClient(options)
 
 	token := client.Connect()
 
-	if !token.WaitTimeout(
-		5 * time.Second,
-	) {
-		return nil,
-			fmt.Errorf(
-				"timeout connessione MQTT per %s",
-				config.EdgeID,
-			)
+	if !token.WaitTimeout(5 * time.Second) {
+		return nil, fmt.Errorf("timeout connessione MQTT per %s", config.EdgeID)
 	}
 
 	if token.Error() != nil {
-		return nil,
-			fmt.Errorf(
-				"connessione MQTT fallita per %s: %w",
-				config.EdgeID,
-				token.Error(),
-			)
+		return nil, fmt.Errorf("connessione MQTT fallita per %s: %w", config.EdgeID, token.Error())
 	}
 
 	return client, nil
 }
 
-func subscribeToEdgeTopics(
-	client mqtt.Client,
-	edgeID string,
-	ingress *EdgeIngress,
-	stats *EdgeStats,
-	readiness *ReadinessState,
-	coordinator *SubscriptionCoordinator,
-	generation uint64,
-) {
+func subscribeToEdgeTopics(client mqtt.Client, edgeID string, ingress *EdgeIngress, stats *EdgeStats, readiness *ReadinessState, coordinator *SubscriptionCoordinator, generation uint64) {
 	readiness.MarkNotReady()
 
 	topics := edgeSubscriptionTopics(edgeID)
-	handler := makeEdgeMessageHandler(
-		edgeID,
-		ingress,
-		stats,
-	)
+	handler := makeEdgeMessageHandler(edgeID, ingress, stats)
 
 	var lastErr error
 	for attempt := 1; attempt <= mqttSubscriptionAttempts; attempt++ {
@@ -168,12 +98,7 @@ func subscribeToEdgeTopics(
 			}
 
 			readiness.MarkReady()
-			fmt.Printf(
-				"%s sottoscritto a %s e %s\n\n",
-				edgeID,
-				mqtttopic.TelemetrySubscription,
-				mqtttopic.ReplayEnd(edgeID),
-			)
+			fmt.Printf("%s sottoscritto a %s e %s\n\n", edgeID, mqtttopic.TelemetrySubscription, mqtttopic.ReplayEnd(edgeID))
 			return
 		}
 
@@ -185,34 +110,20 @@ func subscribeToEdgeTopics(
 		}
 	}
 
-	fmt.Printf(
-		"%s: sottoscrizione MQTT non attiva dopo %d tentativi: %v\n",
-		edgeID,
-		mqttSubscriptionAttempts,
-		lastErr,
-	)
+	fmt.Printf("%s: sottoscrizione MQTT non attiva dopo %d tentativi: %v\n", edgeID, mqttSubscriptionAttempts, lastErr)
 }
 
-func edgeSubscriptionTopics(
-	edgeID string,
-) map[string]byte {
+func edgeSubscriptionTopics(edgeID string) map[string]byte {
 	return map[string]byte{
 		mqtttopic.TelemetrySubscription: 0,
 		mqtttopic.ReplayEnd(edgeID):     1,
 	}
 }
 
-func makeEdgeMessageHandler(
-	edgeID string,
-	ingress *EdgeIngress,
-	stats *EdgeStats,
-) mqtt.MessageHandler {
+func makeEdgeMessageHandler(edgeID string, ingress *EdgeIngress, stats *EdgeStats) mqtt.MessageHandler {
 	endTopic := mqtttopic.ReplayEnd(edgeID)
 
-	return func(
-		_ mqtt.Client,
-		message mqtt.Message,
-	) {
+	return func(_ mqtt.Client, message mqtt.Message) {
 		if message.Topic() == endTopic {
 			ingress.RegisterEndOfReplay()
 			return
