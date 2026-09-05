@@ -92,10 +92,12 @@ func (stats *ReplayStats) RecordOffer(offeredAt time.Time, schedulingLag time.Du
 	stats.SchedulingLagMax = max(stats.SchedulingLagMax, schedulingLag)
 }
 
-// recordTelemetryEgressStats trasferisce le statistiche finali della telemetry egress nelle statistiche complessive del replay
-func recordTelemetryEgressStats(stats *ReplayStats, egressStats TelemetryEgressStats) {
+// recordReplayEgressStats trasferisce le statistiche finali della replay egress nelle statistiche complessive del replay
+func recordReplayEgressStats(stats *ReplayStats, egressStats ReplayEgressStats) {
 	stats.MQTTPublishAttempts = egressStats.PublishAttempts
 	stats.MQTTPublishErrors = egressStats.PublishErrors
+	stats.EOSSuccesses = egressStats.EOSSuccesses
+	stats.EOSFailures = egressStats.EOSFailures
 }
 
 // printReplaySummary stampa le principali metriche raccolte durante l'esecuzione del replay

@@ -26,12 +26,9 @@ func TestReplayPacerScheduledTime(t *testing.T) {
 		AccelerationFactor: 10,
 	}
 
-	scheduled, err := pacer.ScheduledTime(
+	scheduled := pacer.ScheduledTime(
 		mustTime("2025-01-01T00:10:00Z"),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if want := mustTime("2026-08-28T20:01:00Z"); !scheduled.Equal(want) {
 		t.Fatalf("scheduled=%s, atteso %s", scheduled, want)
 	}
@@ -56,10 +53,7 @@ func TestReplayPacerPreservesFactorOneAndSupportsFractionalFactor(t *testing.T) 
 				StartAt:            start,
 				AccelerationFactor: test.factor,
 			}
-			got, err := pacer.ScheduledTime(epoch.Add(test.offset))
-			if err != nil {
-				t.Fatal(err)
-			}
+			got := pacer.ScheduledTime(epoch.Add(test.offset))
 			if want := start.Add(test.want); !got.Equal(want) {
 				t.Fatalf("scheduled=%s, atteso %s", got, want)
 			}
@@ -67,16 +61,16 @@ func TestReplayPacerPreservesFactorOneAndSupportsFractionalFactor(t *testing.T) 
 	}
 }
 
-func TestReplayPacerRejectsEventTimeBeforeEpoch(t *testing.T) {
+func TestReplayPacerTranslatesEventTimeRelativeToEpoch(t *testing.T) {
 	pacer := ReplayPacer{
 		Epoch:              mustTime("2025-01-01T00:00:00Z"),
 		StartAt:            mustTime("2026-08-28T20:00:00Z"),
 		AccelerationFactor: 10,
 	}
 
-	_, err := pacer.ScheduledTime(pacer.Epoch.Add(-time.Nanosecond))
-	if err == nil || !strings.Contains(err.Error(), "precedente") {
-		t.Fatalf("errore inatteso: %v", err)
+	scheduled := pacer.ScheduledTime(pacer.Epoch.Add(-10 * time.Second))
+	if !scheduled.Before(pacer.StartAt) {
+		t.Fatalf("scheduled=%s non prima di startAt=%s", scheduled, pacer.StartAt)
 	}
 }
 
@@ -88,15 +82,9 @@ func TestReplayPacerDoesNotUseFirstShardEventAsEpoch(t *testing.T) {
 	}
 	eventTime := pacer.Epoch.Add(10 * time.Minute)
 
-	first, err := pacer.ScheduledTime(eventTime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = pacer.ScheduledTime(pacer.Epoch.Add(2 * time.Hour))
-	second, err := pacer.ScheduledTime(eventTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := pacer.ScheduledTime(eventTime)
+	_ = pacer.ScheduledTime(pacer.Epoch.Add(2 * time.Hour))
+	second := pacer.ScheduledTime(eventTime)
 	if !first.Equal(second) {
 		t.Fatalf("deadline dipendente da eventi precedenti: %s != %s", first, second)
 	}
@@ -264,9 +252,9 @@ func TestMaxEventsTruncatesWithoutEndOfReplay(t *testing.T) {
 	runtime := testReplayRuntime(func(string, model.SensorEvent) error {
 		return nil
 	})
-	runtime.PublishEndOfReplay = func(string) (PublishResult, error) {
+	runtime.PublishEndOfReplay = func(string) error {
 		eosCalls++
-		return PublishResult{}, nil
+		return nil
 	}
 
 	stats, err := replaySite(
@@ -366,53 +354,32 @@ func TestReplayStatsClampNegativeSchedulingLag(t *testing.T) {
 	}
 }
 
-func TestNewTelemetryEgressRejectsNonPositiveCapacity(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		capacity int
-	}{
-		{name: "zero", capacity: 0},
-		{name: "negative", capacity: -1},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := newTelemetryEgress(
-				test.capacity,
-				func(string, model.SensorEvent) error { return nil },
-			)
-			if err == nil || !strings.Contains(err.Error(), "TELEMETRY_QUEUE_CAPACITY") {
-				t.Fatalf("errore inatteso: %v", err)
-			}
-		})
-	}
-}
-
 func TestTelemetryEgressDropsWithoutBlockingWhenQueueIsFull(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	egress, err := newTelemetryEgress(
+	egress := newReplayEgress(
+		"edge-3",
 		1,
 		func(_ string, _ model.SensorEvent) error {
 			once.Do(func() { close(started) })
 			<-release
 			return nil
 		},
+		func(string) error { return nil },
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	if !egress.TryEnqueue(testSensorEvent("1", 0, 1)) {
+	if !egress.TryEnqueueTelemetry(testSensorEvent("1", 0, 1)) {
 		t.Fatal("prima telemetry non accettata")
 	}
 	<-started
-	if !egress.TryEnqueue(testSensorEvent("1", 1, 2)) {
+	if !egress.TryEnqueueTelemetry(testSensorEvent("1", 1, 2)) {
 		t.Fatal("seconda telemetry non accettata nella coda libera")
 	}
 
 	enqueueResult := make(chan bool, 1)
 	go func() {
-		enqueueResult <- egress.TryEnqueue(testSensorEvent("1", 2, 3))
+		enqueueResult <- egress.TryEnqueueTelemetry(testSensorEvent("1", 2, 3))
 	}()
 	select {
 	case accepted := <-enqueueResult:
@@ -425,68 +392,21 @@ func TestTelemetryEgressDropsWithoutBlockingWhenQueueIsFull(t *testing.T) {
 	}
 
 	close(release)
-	stats := egress.CloseAndWait()
-	if stats.QueueCapacity != 1 ||
-		stats.CurrentQueueDepth != 0 ||
+	stats, err := egress.CloseAndWait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.CurrentQueueDepth != 0 ||
 		stats.PublishAttempts != 2 ||
 		stats.PublishErrors != 0 {
 		t.Fatalf("egress stats=%#v", stats)
 	}
 }
 
-func TestTelemetryEgressTracksCurrentQueueDepth(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	egress, err := newTelemetryEgress(
-		2,
-		func(_ string, _ model.SensorEvent) error {
-			once.Do(func() { close(started) })
-			<-release
-			return nil
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	initial := egress.Stats()
-	if initial.QueueCapacity != 2 ||
-		initial.CurrentQueueDepth != 0 {
-		t.Fatalf("stats iniziali=%#v", initial)
-	}
-
-	if !egress.TryEnqueue(testSensorEvent("1", 0, 1)) {
-		t.Fatal("prima telemetry non accettata")
-	}
-	<-started
-	if current := egress.Stats().CurrentQueueDepth; current != 0 {
-		t.Fatalf("depth dopo dequeue=%d, attesa 0", current)
-	}
-	if !egress.TryEnqueue(testSensorEvent("1", 1, 2)) ||
-		!egress.TryEnqueue(testSensorEvent("1", 2, 3)) {
-		t.Fatal("queue non riempita fino alla capacity")
-	}
-	if egress.TryEnqueue(testSensorEvent("1", 3, 4)) {
-		t.Fatal("enqueue su queue piena non scartata")
-	}
-
-	full := egress.Stats()
-	if full.CurrentQueueDepth != 2 {
-		t.Fatalf("stats queue piena=%#v", full)
-	}
-
-	close(release)
-	final := egress.CloseAndWait()
-	if final.CurrentQueueDepth != 0 ||
-		final.PublishAttempts != 3 {
-		t.Fatalf("stats finali=%#v", final)
-	}
-}
-
 func TestTelemetryEgressDrainsAndTracksPublishErrors(t *testing.T) {
 	published := make([]model.SensorEvent, 0, 2)
-	egress, err := newTelemetryEgress(
+	egress := newReplayEgress(
+		"edge-3",
 		2,
 		func(_ string, event model.SensorEvent) error {
 			published = append(published, event)
@@ -495,17 +415,18 @@ func TestTelemetryEgressDrainsAndTracksPublishErrors(t *testing.T) {
 			}
 			return nil
 		},
+		func(string) error { return nil },
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	if !egress.TryEnqueue(testSensorEvent("1", 0, 1)) ||
-		!egress.TryEnqueue(testSensorEvent("1", 1, 2)) {
+	if !egress.TryEnqueueTelemetry(testSensorEvent("1", 0, 1)) ||
+		!egress.TryEnqueueTelemetry(testSensorEvent("1", 1, 2)) {
 		t.Fatal("telemetry non accettata con spazio disponibile")
 	}
 
-	stats := egress.CloseAndWait()
+	stats, err := egress.CloseAndWait()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(published) != 2 ||
 		published[0].Sequence != 1 ||
 		published[1].Sequence != 2 ||
@@ -517,21 +438,21 @@ func TestTelemetryEgressDrainsAndTracksPublishErrors(t *testing.T) {
 }
 
 func TestTelemetryEgressConcurrentCloseIsSafe(t *testing.T) {
-	egress, err := newTelemetryEgress(
+	egress := newReplayEgress(
+		"edge-3",
 		1,
 		func(string, model.SensorEvent) error { return nil },
+		func(string) error { return nil },
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !egress.TryEnqueue(testSensorEvent("1", 0, 1)) {
+	if !egress.TryEnqueueTelemetry(testSensorEvent("1", 0, 1)) {
 		t.Fatal("telemetry non accettata con spazio disponibile")
 	}
 
-	results := make(chan TelemetryEgressStats, 2)
+	results := make(chan ReplayEgressStats, 2)
 	for range 2 {
 		go func() {
-			results <- egress.CloseAndWait()
+			stats, _ := egress.CloseAndWait()
+			results <- stats
 		}()
 	}
 
@@ -549,10 +470,9 @@ func TestTelemetryEgressConcurrentCloseIsSafe(t *testing.T) {
 
 func TestRunReplayLoopCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *testing.T) {
 	config := validSimulatorConfig()
-	egress := &TelemetryEgress{
-		queue: make(chan model.SensorEvent, 1),
+	egress := &ReplayEgress{
+		queue: make(chan ReplayEgressRecord, 1),
 	}
-	runtime := testReplayRuntime(func(string, model.SensorEvent) error { return nil })
 	pacer := ReplayPacer{
 		Epoch:              config.ReplayEpoch,
 		StartAt:            localReplayStart(time.Now(), config.ReplayStartAt),
@@ -566,7 +486,6 @@ func TestRunReplayLoopCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *tes
 			"503;BME280;5;45.0;9.0;2025-01-01T00:00:02Z;100000;20;50",
 		),
 		config,
-		runtime,
 		pacer,
 		egress,
 		&stats,
@@ -585,7 +504,6 @@ func TestRunReplayLoopCountsOffersAndKeepsLastEventTimeWhenLastEventDrops(t *tes
 
 func TestReplayDrainsLocalQueueBeforeEndOfReplay(t *testing.T) {
 	config := validSimulatorConfig()
-	endToken := newAwaitableToken(nil)
 	var mu sync.Mutex
 	order := make([]string, 0, 4)
 	runtime := testReplayRuntime(func(_ string, event model.SensorEvent) error {
@@ -594,21 +512,12 @@ func TestReplayDrainsLocalQueueBeforeEndOfReplay(t *testing.T) {
 		mu.Unlock()
 		return nil
 	})
-	runtime.PublishEndOfReplay = func(
-		_ string,
-	) (PublishResult, error) {
+	runtime.PublishEndOfReplay = func(_ string) error {
 		mu.Lock()
 		order = append(order, "publish-end")
+		order = append(order, "ack-end")
 		mu.Unlock()
-		endToken.onWait = func() {
-			mu.Lock()
-			order = append(order, "ack-end")
-			mu.Unlock()
-		}
-		return PublishResult{
-			Token:       endToken,
-			PublishedAt: time.Now(),
-		}, nil
+		return nil
 	}
 
 	stats, err := replaySite(
@@ -633,10 +542,9 @@ func TestReplayDrainsLocalQueueBeforeEndOfReplay(t *testing.T) {
 	got := append([]string(nil), order...)
 	mu.Unlock()
 	if strings.Join(got, ",") != strings.Join(want, ",") ||
-		endToken.waitCalls != 1 ||
 		stats.EOSSuccesses != 1 ||
 		stats.EOSFailures != 0 {
-		t.Fatalf("ordine=%v stats=%#v waits=%d", got, stats, endToken.waitCalls)
+		t.Fatalf("ordine=%v stats=%#v", got, stats)
 	}
 }
 
@@ -648,28 +556,22 @@ func TestReplayFailsOnEndOfReplayPublishErrorAndTimeout(t *testing.T) {
 	}{
 		{
 			name: "publish_error",
-			publisher: func(string) (PublishResult, error) {
-				return PublishResult{}, errors.New("publish end fallito")
+			publisher: func(string) error {
+				return errors.New("publish end fallito")
 			},
 			contains: "publish end fallito",
 		},
 		{
 			name: "ack_timeout",
-			publisher: func(string) (PublishResult, error) {
-				return PublishResult{
-					Token:       newTimeoutToken(),
-					PublishedAt: testPublishTime,
-				}, nil
+			publisher: func(string) error {
+				return errors.New("timeout PUBACK MQTT")
 			},
 			contains: "timeout PUBACK",
 		},
 		{
 			name: "ack_error",
-			publisher: func(string) (PublishResult, error) {
-				return PublishResult{
-					Token:       newAwaitableToken(errors.New("PUBACK fallito")),
-					PublishedAt: time.Now(),
-				}, nil
+			publisher: func(string) error {
+				return errors.New("PUBACK fallito")
 			},
 			contains: "PUBACK fallito",
 		},
@@ -744,7 +646,7 @@ func TestPublishEndOfReplayUsesQoSOneWithoutRetain(t *testing.T) {
 	var payload []byte
 	var payloadIsBytes bool
 
-	result, err := publishEndOfReplay(
+	err := publishEndOfReplay(
 		func(
 			_ string,
 			gotQoS byte,
@@ -762,14 +664,13 @@ func TestPublishEndOfReplayUsesQoSOneWithoutRetain(t *testing.T) {
 		t.Fatal(err)
 	}
 	if qos != 1 || retained || !payloadIsBytes || len(payload) != 0 ||
-		result.Token != token || token.waitCalls != 0 {
+		token.waitCalls != 1 {
 		t.Fatalf(
-			"qos=%d retained=%t payload=%#v payload_is_bytes=%t result=%#v waits=%d",
+			"qos=%d retained=%t payload=%#v payload_is_bytes=%t waits=%d",
 			qos,
 			retained,
 			payload,
 			payloadIsBytes,
-			result,
 			token.waitCalls,
 		)
 	}
@@ -847,8 +748,8 @@ func TestSharedMQTTTopics(t *testing.T) {
 	}
 }
 
-func TestTelemetryEgressUsesOneSenderGoroutine(t *testing.T) {
-	file := parseGoSource(t, "telemetry_egress.go")
+func TestReplayEgressUsesOneSenderGoroutine(t *testing.T) {
+	file := parseGoSource(t, "replay_egress.go")
 	goStatements := 0
 	ast.Inspect(file, func(node ast.Node) bool {
 		if _, ok := node.(*ast.GoStmt); ok {
@@ -857,7 +758,7 @@ func TestTelemetryEgressUsesOneSenderGoroutine(t *testing.T) {
 		return true
 	})
 	if goStatements != 1 {
-		t.Fatalf("goroutine nel telemetry egress=%d, attesa 1", goStatements)
+		t.Fatalf("goroutine nel replay egress=%d, attesa 1", goStatements)
 	}
 }
 
@@ -867,7 +768,7 @@ func TestSimulatorCreatesExactlyOneMQTTClientAndHasNoPendingQueue(t *testing.T) 
 		"config.go",
 		"replay.go",
 		"mqtt.go",
-		"telemetry_egress.go",
+		"replay_egress.go",
 	}
 
 	newClientCalls := 0
@@ -984,13 +885,8 @@ func testReplayRuntime(
 }
 
 func completedEndPublisher() EndOfReplayPublisher {
-	return func(
-		_ string,
-	) (PublishResult, error) {
-		return PublishResult{
-			Token:       newCompletedToken(nil),
-			PublishedAt: time.Now(),
-		}, nil
+	return func(string) error {
+		return nil
 	}
 }
 
@@ -1001,6 +897,7 @@ func validSimulatorConfig() SimulatorConfig {
 		ReplayStartAt:          time.Now().UTC().Add(-time.Second),
 		AccelerationFactor:     10,
 		TelemetryQueueCapacity: 10,
+		StartLateTolerance:     10 * time.Second,
 	}
 }
 
@@ -1081,3 +978,213 @@ func parseGoSource(t *testing.T, path string) *ast.File {
 }
 
 var testPublishTime = mustTime("2026-08-28T20:00:00Z")
+
+func TestReplayEgressSingleStreamOrder(t *testing.T) {
+	order := make([]string, 0, 4)
+	var mu sync.Mutex
+
+	egress := newReplayEgress(
+		"edge-3",
+		10,
+		func(_ string, event model.SensorEvent) error {
+			mu.Lock()
+			order = append(order, "T:"+event.EventID)
+			mu.Unlock()
+			return nil
+		},
+		func(topic string) error {
+			mu.Lock()
+			order = append(order, "EOS:"+topic)
+			mu.Unlock()
+			return nil
+		},
+	)
+
+	if !egress.TryEnqueueTelemetry(testSensorEvent("1", 0, 1)) ||
+		!egress.TryEnqueueTelemetry(testSensorEvent("1", 1, 2)) ||
+		!egress.TryEnqueueTelemetry(testSensorEvent("1", 2, 3)) {
+		t.Fatal("telemetrie non accettate con coda capiente")
+	}
+
+	egress.EnqueueEndOfReplay()
+
+	stats, err := egress.CloseAndWait()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	got := append([]string(nil), order...)
+	mu.Unlock()
+
+	want := []string{
+		"T:1-1",
+		"T:1-2",
+		"T:1-3",
+		"EOS:replay/edge-3/end",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("ordine errato: got=%v want=%v", got, want)
+	}
+	if stats.PublishAttempts != 3 || stats.EOSSuccesses != 1 || stats.EOSFailures != 0 {
+		t.Fatalf("stats inattese: %#v", stats)
+	}
+}
+
+func TestReplayEgressBlockingEndOfReplayDoesNotDropWhenQueueIsFull(t *testing.T) {
+	started := make(chan struct{})
+	consumerRelease := make(chan struct{})
+	var once sync.Once
+
+	eventsProcessed := make([]string, 0, 4)
+	var mu sync.Mutex
+
+	egress := newReplayEgress(
+		"edge-3",
+		2, // capacità 2
+		func(_ string, event model.SensorEvent) error {
+			once.Do(func() { close(started) })
+			<-consumerRelease
+			mu.Lock()
+			eventsProcessed = append(eventsProcessed, "T:"+event.EventID)
+			mu.Unlock()
+			return nil
+		},
+		func(topic string) error {
+			mu.Lock()
+			eventsProcessed = append(eventsProcessed, "EOS:"+topic)
+			mu.Unlock()
+			return nil
+		},
+	)
+
+	// Riempie la coda con 2 telemetrie (consumer bloccato su item 1)
+	if !egress.TryEnqueueTelemetry(testSensorEvent("1", 0, 1)) {
+		t.Fatal("T1 non accettata")
+	}
+	<-started // consumer ha prelevato T1 ed è bloccato prima del release
+	if !egress.TryEnqueueTelemetry(testSensorEvent("1", 1, 2)) {
+		t.Fatal("T2 non accettata nello slot 1")
+	}
+	if !egress.TryEnqueueTelemetry(testSensorEvent("1", 2, 3)) {
+		t.Fatal("T3 non accettata nello slot 2")
+	}
+
+	// Ora la coda è piena (2 elementi: T2 e T3). Una nuova telemetria viene droppata non-bloccante
+	if egress.TryEnqueueTelemetry(testSensorEvent("1", 3, 4)) {
+		t.Fatal("T4 accettata su coda piena!")
+	}
+
+	// EnqueueEndOfReplay deve BLOCCARE finché la coda non si libera
+	eosEnqueued := make(chan struct{})
+	go func() {
+		egress.EnqueueEndOfReplay()
+		close(eosEnqueued)
+	}()
+
+	// Verifica che EnqueueEndOfReplay stia effettivamente bloccando
+	select {
+	case <-eosEnqueued:
+		t.Fatal("EnqueueEndOfReplay non ha bloccato su coda piena")
+	case <-time.After(50 * time.Millisecond):
+		// Corretto: sta bloccando
+	}
+
+	// Sblocca il consumer per consumare tutto
+	close(consumerRelease)
+
+	// Ora EnqueueEndOfReplay deve sbloccarsi ed entrare in coda
+	select {
+	case <-eosEnqueued:
+		// Corretto
+	case <-time.After(time.Second):
+		t.Fatal("EnqueueEndOfReplay non si è sbloccato dopo il drenaggio")
+	}
+
+	stats, err := egress.CloseAndWait()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	got := append([]string(nil), eventsProcessed...)
+	mu.Unlock()
+
+	want := []string{
+		"T:1-1",
+		"T:1-2",
+		"T:1-3",
+		"EOS:replay/edge-3/end",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("sequenza elaborata inattesa: got=%v want=%v", got, want)
+	}
+	if stats.PublishAttempts != 3 || stats.EOSSuccesses != 1 || stats.EOSFailures != 0 {
+		t.Fatalf("stats inattese: %#v", stats)
+	}
+}
+
+func TestReplayEgressPreservesCompletedAtBeforeEOSDelay(t *testing.T) {
+	beforeDrain := time.Now()
+	eosDelay := 60 * time.Millisecond
+
+	egress := newReplayEgress(
+		"edge-3",
+		10,
+		func(string, model.SensorEvent) error {
+			return nil
+		},
+		func(string) error {
+			time.Sleep(eosDelay)
+			return nil
+		},
+	)
+
+	egress.TryEnqueueTelemetry(testSensorEvent("1", 0, 1))
+	egress.EnqueueEndOfReplay()
+
+	stats, err := egress.CloseAndWait()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	afterClose := time.Now()
+
+	// TelemetryDrainedAt deve essere registrato PRIMA del delay di pubblicazione dell'EOS
+	if stats.TelemetryDrainedAt.Before(beforeDrain) {
+		t.Fatalf("TelemetryDrainedAt=%s precedente a beforeDrain=%s", stats.TelemetryDrainedAt, beforeDrain)
+	}
+	elapsedSinceDrain := afterClose.Sub(stats.TelemetryDrainedAt)
+	if elapsedSinceDrain < eosDelay {
+		t.Fatalf("TelemetryDrainedAt include il tempo di attesa dell'EOS: elapsed=%s eosDelay=%s", elapsedSinceDrain, eosDelay)
+	}
+}
+
+func TestReplayEgressPropagatesEOSErrorToCloseAndWait(t *testing.T) {
+	expectedErr := errors.New("simulato errore PUBACK")
+
+	egress := newReplayEgress(
+		"edge-3",
+		10,
+		func(string, model.SensorEvent) error {
+			return nil
+		},
+		func(string) error {
+			return expectedErr
+		},
+	)
+
+	egress.TryEnqueueTelemetry(testSensorEvent("1", 0, 1))
+	egress.EnqueueEndOfReplay()
+
+	stats, err := egress.CloseAndWait()
+	if err == nil || !strings.Contains(err.Error(), "fallita") {
+		t.Fatalf("atteso errore di EOS da CloseAndWait, ottenuto: %v", err)
+	}
+	if stats.EOSFailures != 1 || stats.EOSSuccesses != 0 {
+		t.Fatalf("stats EOS errate: %#v", stats)
+	}
+	if stats.PublishAttempts != 1 {
+		t.Fatalf("publish telemetry tentate errate: %d", stats.PublishAttempts)
+	}
+}

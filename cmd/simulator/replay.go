@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"time"
-
-	"continuum/internal/mqtttopic"
 )
 
 type ReplayPacer struct {
@@ -42,57 +40,62 @@ func waitUntil(scheduledTime time.Time) {
 	}
 }
 
-// replaySite coordina l'intero replay di un sito: pacing degli eventi, telemetry egress, drain finale e pubblicazione dell'EndOfReplay
+// replaySite coordina l'intero replay di un sito: pacing degli eventi, replay egress (telemetria ed EndOfReplay) e drain finale
 func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntime) (stats ReplayStats, replayErr error) {
 	stats.QueueCapacity = config.TelemetryQueueCapacity
 
 	anchorNow := time.Now()
 
-	//costruzione del ReplayPacer
+	// Costruzione del ReplayPacer
 	pacer := ReplayPacer{
 		Epoch:              config.ReplayEpoch,
 		StartAt:            localReplayStart(anchorNow, config.ReplayStartAt),
 		AccelerationFactor: config.AccelerationFactor,
 	}
 
-	egress, err := newTelemetryEgress(config.TelemetryQueueCapacity, runtime.PublishTelemetry)
-	if err != nil {
-		return stats, err
-	}
+	egress := newReplayEgress(config.SiteID, config.TelemetryQueueCapacity, runtime.PublishTelemetry, runtime.PublishEndOfReplay)
+
 	egressClosed := false
 
-	closeEgress :=
-		func() {
-			if egressClosed {
-				return
-			}
-			recordTelemetryEgressStats(&stats, egress.CloseAndWait())
-			stats.CompletedAt = time.Now()
-			egressClosed = true
+	closeEgress := func() error {
+		if egressClosed {
+			return nil
 		}
+		egressClosed = true
+		egressStats, err := egress.CloseAndWait()
+		recordReplayEgressStats(&stats, egressStats)
+		if !egressStats.TelemetryDrainedAt.IsZero() {
+			stats.CompletedAt = egressStats.TelemetryDrainedAt
+		}
+		return err
+	}
 
-	defer closeEgress()
+	defer func() {
+		if err := closeEgress(); err != nil && replayErr == nil {
+			replayErr = err
+		}
+	}()
 
 	if err := runReplayLoop(reader, config, pacer, egress, &stats); err != nil {
 		return stats, err
 	}
 
-	// Prima dell'EndOfReplay devono essere processati tutti gli eventi telemetry già accettati nella coda
-	closeEgress()
-
-	if !stats.ReachedEOF {
-		return stats, nil
+	if stats.ReachedEOF {
+		if stats.LastEventTime.IsZero() {
+			return stats, fmt.Errorf("replay %s ha raggiunto EOF senza eventi offerti", config.SiteID)
+		}
+		egress.EnqueueEndOfReplay()
 	}
 
-	if err := publishReplayEnd(config, runtime.PublishEndOfReplay, &stats); err != nil {
+	if err := closeEgress(); err != nil {
 		return stats, err
 	}
 
 	return stats, nil
 }
 
-// runReplayLoop legge gli eventi dal CSV, ne calcola la deadline accelerata e li offre alla telemetry egress rispettando il pacing del replay
-func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer, egress *TelemetryEgress, stats *ReplayStats) error {
+// runReplayLoop legge gli eventi dal CSV, ne calcola la deadline accelerata e li offre alla replay egress rispettando il pacing del replay
+func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer, egress *ReplayEgress, stats *ReplayStats) error {
 	header, err := reader.Read()
 	if err != nil {
 		return err
@@ -162,7 +165,7 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 		stats.RecordOffer(offeredAt, schedulingLag)
 		stats.LastEventTime = measurement.EventTime
 
-		if egress.TryEnqueue(event) {
+		if egress.TryEnqueueTelemetry(event) {
 			stats.TelemetryEnqueued++
 		} else {
 			stats.TelemetryLocallyDropped++
@@ -180,27 +183,5 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 		}
 	}
 
-	return nil
-}
-
-// publishReplayEnd pubblica l'EndOfReplay solo dopo il raggiungimento dell'EOF e aggiorna le relative statistiche di successo o fallimento
-func publishReplayEnd(config SimulatorConfig, publishEndOfReplay EndOfReplayPublisher, stats *ReplayStats) error {
-	if stats.LastEventTime.IsZero() {
-		return fmt.Errorf("replay %s ha raggiunto EOF senza eventi offerti", config.SiteID)
-	}
-
-	if publishEndOfReplay == nil {
-		stats.EOSFailures++
-		return fmt.Errorf("publisher EndOfReplay non configurato per %s", config.SiteID)
-	}
-
-	endTopic := mqtttopic.ReplayEnd(config.SiteID)
-
-	if err := publishEndOfReplay(endTopic); err != nil {
-		stats.EOSFailures++
-		return fmt.Errorf("pubblicazione EndOfReplay MQTT edge=%s fallita: %w", config.SiteID, err)
-	}
-
-	stats.EOSSuccesses++
 	return nil
 }
