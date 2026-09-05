@@ -3,26 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
-	"math"
-	"strings"
-	"sync"
 	"time"
 
 	"continuum/internal/model"
 )
-
-type EdgeOutputKind byte
-
-const (
-	EdgeOutputAggregate EdgeOutputKind = iota
-	EdgeOutputEndOfReplay
-)
-
-type EdgeOutputRecord struct {
-	Kind        EdgeOutputKind
-	Aggregate   model.EdgeAggregate
-	EndOfReplay model.EndOfReplay
-}
 
 type MetricValue struct {
 	Value float64
@@ -56,15 +40,10 @@ type WindowState struct {
 }
 
 type WindowAggregator struct {
-	mu sync.Mutex
-
 	edgeID     string
 	windowSize time.Duration
 	current    *WindowState
 	ended      bool
-
-	output        chan<- EdgeOutputRecord
-	egressStopped <-chan struct{}
 }
 
 var (
@@ -72,110 +51,10 @@ var (
 	errEdgeReplayEnded  = errors.New("replay Edge gia terminato")
 )
 
-func newWindowState(
-	start time.Time,
-	end time.Time,
-) *WindowState {
+func newWindowState(start time.Time, end time.Time) *WindowState {
 	return &WindowState{
 		Start: start,
 		End:   end,
-	}
-}
-
-func validateSensorEvent(
-	event model.SensorEvent,
-) error {
-	if strings.TrimSpace(
-		event.EventID,
-	) == "" {
-		return fmt.Errorf(
-			"event_id mancante",
-		)
-	}
-
-	if strings.TrimSpace(
-		event.SensorID,
-	) == "" {
-		return fmt.Errorf(
-			"sensor_id mancante",
-		)
-	}
-
-	if event.EventTime.IsZero() {
-		return fmt.Errorf(
-			"event_time mancante",
-		)
-	}
-
-	return nil
-}
-
-func parseMeasurements(
-	event model.SensorEvent,
-) EdgeMeasurement {
-	return EdgeMeasurement{
-		Temperature: parseMetric(
-			event.Measurements,
-			"temperature",
-			-40,
-			85,
-		),
-
-		Humidity: parseMetric(
-			event.Measurements,
-			"humidity",
-			0,
-			100,
-		),
-
-		Pressure: parseMetric(
-			event.Measurements,
-			"pressure",
-			30000,
-			110000,
-		),
-	}
-}
-
-func parseMetric(
-	measurements map[string]model.NullableFloat64,
-	name string,
-	minValue float64,
-	maxValue float64,
-) MetricValue {
-	measurement, found := measurements[name]
-
-	if !found {
-		return MetricValue{
-			Valid: false,
-		}
-	}
-
-	if !measurement.Valid {
-		return MetricValue{
-			Valid: false,
-		}
-	}
-
-	value := measurement.Value
-
-	if math.IsNaN(value) ||
-		math.IsInf(value, 0) {
-		return MetricValue{
-			Valid: false,
-		}
-	}
-
-	if value < minValue ||
-		value > maxValue {
-		return MetricValue{
-			Valid: false,
-		}
-	}
-
-	return MetricValue{
-		Value: value,
-		Valid: true,
 	}
 }
 
@@ -185,12 +64,10 @@ func (
 	eventID string,
 	eventTime time.Time,
 	measurement EdgeMeasurement,
-) error {
-	aggregator.mu.Lock()
-	defer aggregator.mu.Unlock()
+) (*model.EdgeAggregate, error) {
 
 	if aggregator.ended {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%w: edge=%s event_id=%s",
 			errEdgeReplayEnded,
 			aggregator.edgeID,
@@ -216,7 +93,7 @@ func (
 	if windowStart.Before(
 		aggregator.current.Start,
 	) {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%w: event_id=%s event_time=%s current_window=%s",
 			errEdgeWindowClosed,
 			eventID,
@@ -225,13 +102,11 @@ func (
 		)
 	}
 
+	var aggregate *model.EdgeAggregate
 	if !windowStart.Equal(
 		aggregator.current.Start,
 	) {
-		err := aggregator.emitCurrentWindow()
-		if err != nil {
-			return err
-		}
+		aggregate = aggregator.Flush()
 
 		aggregator.current = newWindowState(
 			windowStart,
@@ -243,7 +118,7 @@ func (
 		measurement,
 	)
 
-	return nil
+	return aggregate, nil
 }
 
 func (
@@ -298,7 +173,7 @@ func (
 
 func (
 	aggregator *WindowAggregator,
-) emitCurrentWindow() error {
+) currentAggregate() *model.EdgeAggregate {
 	if aggregator.current == nil {
 		return nil
 	}
@@ -312,84 +187,29 @@ func (
 		aggregator.current,
 	)
 
-	select {
-	case aggregator.output <- EdgeOutputRecord{
-		Kind:      EdgeOutputAggregate,
-		Aggregate: aggregate,
-	}:
-		return nil
-	case <-aggregator.egressStopped:
-		return fmt.Errorf("Kafka egress terminato")
-	}
+	return &aggregate
 }
 
 func (
 	aggregator *WindowAggregator,
-) Flush() error {
-	aggregator.mu.Lock()
-	defer aggregator.mu.Unlock()
-
-	if err := aggregator.emitCurrentWindow(); err != nil {
-		return err
-	}
-
+) Flush() *model.EdgeAggregate {
+	aggregate := aggregator.currentAggregate()
 	aggregator.current = nil
 
-	return nil
+	return aggregate
 }
 
 func (
 	aggregator *WindowAggregator,
-) EndReplay(
-	record model.EndOfReplay,
-) error {
-	if err := model.ValidateEndOfReplay(record); err != nil {
-		return err
-	}
-
-	if record.EdgeID != aggregator.edgeID {
-		return fmt.Errorf(
-			"EndOfReplay edge_id=%s non coerente con Edge %s",
-			record.EdgeID,
-			aggregator.edgeID,
-		)
-	}
-
-	aggregator.mu.Lock()
-	defer aggregator.mu.Unlock()
-
+) EndReplay() (*model.EdgeAggregate, error) {
 	if aggregator.ended {
-		fmt.Printf(
-			"%s: EndOfReplay duplicato ignorato\n",
-			aggregator.edgeID,
-		)
-		return nil
+		return nil, errEdgeReplayEnded
 	}
 
-	if err := aggregator.emitCurrentWindow(); err != nil {
-		return fmt.Errorf(
-			"flush finestra finale Edge %s fallito: %w",
-			aggregator.edgeID,
-			err,
-		)
-	}
-	aggregator.current = nil
-
-	forwarded := record
-	forwarded.EmittedAt = forwarded.EmittedAt.UTC()
-
-	select {
-	case aggregator.output <- EdgeOutputRecord{
-		Kind:        EdgeOutputEndOfReplay,
-		EndOfReplay: forwarded,
-	}:
-	case <-aggregator.egressStopped:
-		return fmt.Errorf("Kafka egress terminato")
-	}
-
+	aggregate := aggregator.Flush()
 	aggregator.ended = true
 
-	return nil
+	return aggregate, nil
 }
 
 func buildMetricAggregate(

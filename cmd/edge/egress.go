@@ -18,6 +18,20 @@ type KafkaEgress struct {
 	stats  *EdgeStats
 }
 
+func newKafkaWriter(broker string, topic string) *kafka.Writer {
+	return &kafka.Writer{
+		Addr:         kafka.TCP(broker),
+		Topic:        topic,
+		Balancer:     &kafka.Hash{},
+		RequiredAcks: kafka.RequireAll,
+		MaxAttempts:  1,
+		BatchSize:    1,
+		WriteTimeout: 5 * time.Second,
+		ReadTimeout:  5 * time.Second,
+		Async:        false,
+	}
+}
+
 func (egress *KafkaEgress) Run() error {
 	for record := range egress.input {
 		switch record.Kind {
