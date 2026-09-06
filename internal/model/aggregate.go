@@ -3,65 +3,65 @@ package model
 import "time"
 
 type MetricAggregate struct {
-	Valid   uint64  `json:"valid"`
-	Invalid uint64  `json:"invalid"`
-	Sum     float64 `json:"sum"`
+	Valid   uint64
+	Invalid uint64
+	Sum     float64
 
-	Average *float64 `json:"average"`
-	Min     *float64 `json:"min"`
-	Max     *float64 `json:"max"`
+	Average *float64
+	Min     *float64
+	Max     *float64
 }
 
 type EdgeAggregate struct {
-	AggregateID string `json:"aggregate_id"`
+	AggregateID string
 
-	EdgeID string `json:"edge_id"`
+	EdgeID string
 
-	WindowStart time.Time `json:"window_start"`
-	WindowEnd   time.Time `json:"window_end"`
+	WindowStart time.Time
+	WindowEnd   time.Time
 
-	Events uint64 `json:"events"`
+	Events uint64
 
-	Temperature MetricAggregate `json:"temperature"`
-	Humidity    MetricAggregate `json:"humidity"`
-	Pressure    MetricAggregate `json:"pressure"`
+	Temperature MetricAggregate
+	Humidity    MetricAggregate
+	Pressure    MetricAggregate
 
-	EmittedAt time.Time `json:"emitted_at"`
+	EmittedAt time.Time
 }
 
 type CloudEdgeAggregate struct {
-	AggregateID string `json:"aggregate_id"`
+	AggregateID string
 
-	EdgeID string `json:"edge_id"`
+	EdgeID string
 
-	WindowStart time.Time `json:"window_start"`
-	WindowEnd   time.Time `json:"window_end"`
+	WindowStart time.Time
+	WindowEnd   time.Time
 
-	InputAggregates uint64 `json:"input_aggregates"`
+	InputAggregates uint64
 
-	Events uint64 `json:"events"`
+	Events uint64
 
-	Temperature MetricAggregate `json:"temperature"`
-	Humidity    MetricAggregate `json:"humidity"`
-	Pressure    MetricAggregate `json:"pressure"`
+	Temperature MetricAggregate
+	Humidity    MetricAggregate
+	Pressure    MetricAggregate
 
-	EmittedAt time.Time `json:"emitted_at"`
+	EmittedAt time.Time
 }
 
 type GlobalAggregate struct {
-	AggregateID string `json:"aggregate_id"`
+	AggregateID string
 
-	WindowStart time.Time `json:"window_start"`
-	WindowEnd   time.Time `json:"window_end"`
+	WindowStart time.Time
+	WindowEnd   time.Time
 
-	ExpectedEdges     uint64 `json:"expected_edges"`
-	ContributingEdges uint64 `json:"contributing_edges"`
+	ExpectedEdges     uint64
+	ContributingEdges uint64
 
-	Events uint64 `json:"events"`
+	Events uint64
 
-	Temperature MetricAggregate `json:"temperature"`
-	Humidity    MetricAggregate `json:"humidity"`
-	Pressure    MetricAggregate `json:"pressure"`
+	Temperature MetricAggregate
+	Humidity    MetricAggregate
+	Pressure    MetricAggregate
 
-	EmittedAt time.Time `json:"emitted_at"`
+	EmittedAt time.Time
 }

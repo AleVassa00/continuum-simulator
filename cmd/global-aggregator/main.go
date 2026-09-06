@@ -16,13 +16,19 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	fmt.Printf("Global sink: %s\n", config.SinkType)
+	sink, cleanup, err := newGlobalAggregateSink(context.Background(), config)
+	if err != nil {
+		panic(err)
+	}
+	defer cleanup()
 
 	aggregator, err := globalaggregator.New(
 		config.ExpectedEdgeIDs,
 		config.WindowSize,
 		config.WatermarkDelay,
 		config.EdgeIdleTimeout,
-		newJSONLogSink(os.Stdout),
+		sink,
 	)
 	if err != nil {
 		panic(err)

@@ -3,7 +3,7 @@
   "topology_sha256": "968ca2c43817ac51a5df9272255c7c3ccbb744ccf0093af21b00b25cf4156eed",
   "resolved_config_yaml": "experiment:\n    name: baseline\nworkload:\n    acceleration_factor: 10000\n    start_lead_time: 1m30s\nsimulator:\n    telemetry_queue_capacity: 1000\n    start_late_tolerance: 10s\nedge:\n    window_size: 5m0s\n    ingress_queue_capacity: 1000\ncloud:\n    workers: 1\n    window_size: 15m0s\nglobal:\n    watermark_delay: 15m0s\n    edge_idle_timeout: 5s\n",
   "compose_sha256": {
-    "cloud-core.generated.yml": "d80627034ef7e8eb41ca989d359fc872e622344af1fe70ce8ac2cc669e51fb81",
+    "cloud-core.generated.yml": "9d38e3017023dd6c88671a55abc3dbf918d2b994a5d1c18a2cd1cba63abfe541",
     "edge.generated.yml": "555d5b87f7c75a795c9af0ec84205c770b2e5d0d0bf135638a384b0b1595c9a4",
     "simulator.generated.yml": "9ec6576e9af760a7cbec2d9a371c8ac2523120be1f4fee8d395782cfb4ca0840",
     "workers.generated.yml": "91ae4ab4fec4df62b7b9bb9402bbda0311174dc91678c0a5f6ad7f189ee36a95"

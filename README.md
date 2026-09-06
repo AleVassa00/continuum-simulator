@@ -16,13 +16,13 @@ Replay globale di gennaio
   -> CloudEdgeAggregate 15m per edge_id
   -> Kafka topic cloud-edge-aggregates / Avro
   -> Global Aggregator
-  -> GlobalAggregate JSON nei log
+  -> GlobalAggregate: log JSON (default) oppure colonne PostgreSQL
 ```
 
 Non e presente un livello Fog. Le tredici zone Edge sono nodi logici derivati dal
 clustering geografico dei sensori e possono essere eseguite sullo stesso host con
 risorse container limitate. Il Global Aggregator combina i contributi degli Edge
-per finestra e scrive il risultato nei log.
+per finestra e scrive il risultato nel sink selezionato: log JSON o PostgreSQL.
 
 Lo stato dei requisiti della traccia e mantenuto in
 [`docs/traceability.md`](docs/traceability.md).
@@ -62,8 +62,8 @@ nei binari; producer e consumer utilizzano lo stesso contratto durante ogni run.
 Le nuove esecuzioni richiedono topic privi di aggregati JSON precedenti, che il
 decoder Avro non puo leggere.
 `internal/avrocodec` esegue il mapping, mentre la business logic continua a usare
-le struct di `internal/model`. MQTT e l'output finale `GlobalAggregate` restano
-JSON. Ogni metrica contiene:
+le struct di `internal/model`. MQTT e il sink finale `log` restano JSON; il sink
+`postgres` salva invece colonne tipizzate. Ogni metrica contiene:
 
 ```text
 valid, invalid, sum, average, min, max
@@ -282,7 +282,7 @@ impostare `cloud.workers` in `experiments/baseline.yaml`, rigenerare il Compose
 con `go run ./cmd/deploygen` e avviare i servizi generati.
 
 I topic degli aggregati contengono Avro binario e richiedono il relativo schema
-per la decodifica. I risultati finali restano leggibili in JSON nei log:
+per la decodifica. Con il sink predefinito, i risultati finali sono JSON nei log:
 
 ```powershell
 docker compose -f deploy/compose/continuum.generated.yml logs global-aggregator
@@ -292,10 +292,66 @@ Al completamento dei CSV, gli EOS attraversano l'intera pipeline dopo i relativi
 aggregati. Il Global Aggregator termina dopo gli EOS di tutti gli Edge attesi e
 il flush finale, registrando `GLOBAL_REPLAY_COMPLETED`.
 
+## Sink finale del Global Aggregator
+
+`GLOBAL_SINK_TYPE` ammette solo `log` e `postgres`. Il default `log` mantiene
+l'output `GLOBAL_AGGREGATE {...}` su stdout, con gli stessi nomi snake_case e
+valori nullable. Il Compose locale usa questo default e non richiede PostgreSQL.
+Il mapping JSON e privato al sink: `MetricAggregate`, `EdgeAggregate`,
+`CloudEdgeAggregate` e `GlobalAggregate` non hanno tag di serializzazione.
+`SensorEvent` e `NullableFloat64` conservano il contratto MQTT/JSON.
+
+Solo con `GLOBAL_SINK_TYPE=postgres` vengono caricate queste variabili:
+
+| Variabile | Regola |
+| --- | --- |
+| `GLOBAL_POSTGRES_HOST` | Obbligatoria |
+| `GLOBAL_POSTGRES_PORT` | Default `5432`, intero tra 1 e 65535 |
+| `GLOBAL_POSTGRES_DATABASE` | Obbligatoria |
+| `GLOBAL_POSTGRES_USER` | Obbligatoria |
+| `GLOBAL_POSTGRES_PASSWORD` | Obbligatoria; preservata esattamente e mai stampata |
+| `GLOBAL_POSTGRES_SSLMODE` | Default `verify-full`; ammessi anche `disable`, `allow`, `prefer`, `require`, `verify-ca` |
+
+La configurazione viene validata al caricamento. Un unico `pgxpool` viene creato
+all'avvio e verificato con `Ping`; un errore impedisce l'avvio del consumer Kafka.
+Il pool viene riutilizzato per le INSERT e chiuso all'uscita, anche in caso di
+errore. Ping e INSERT hanno timeout di 5 secondi. `verify-full` verifica anche
+il certificato e il nome del server; l'immagine include i certificati CA di sistema.
+
+Prima dell'avvio, creare la tabella nel database scelto applicando
+[`deploy/postgres/global_aggregates.sql`](deploy/postgres/global_aggregates.sql)
+con `psql` o con gli strumenti di amministrazione PostgreSQL. Ad esempio, con
+host, database e utente sostituiti ai segnaposto e password richiesta interattivamente:
+
+```text
+psql "host=HOST port=5432 dbname=DATABASE user=USER sslmode=verify-full" -W -v ON_ERROR_STOP=1 -f deploy/postgres/global_aggregates.sql
+```
+
+Il programma non crea la tabella. Le INSERT usano parametri SQL e
+`ON CONFLICT (aggregate_id) DO NOTHING`: un retry non aggiorna la riga esistente.
+I contatori oltre `MaxInt64` vengono rifiutati prima della query; i puntatori
+`*float64` nil diventano `NULL`. I timestamp sono `TIMESTAMPTZ`, con precisione
+PostgreSQL al microsecondo; la precisione e la logica in memoria/Avro restano invariate.
+Le metriche occupano colonne normali, utilizzabili direttamente nelle query:
+
+```sql
+SELECT window_start, temperature_average
+FROM global_aggregates
+WHERE temperature_average > 25
+ORDER BY window_start;
+```
+
+Il template distribuito `distributed-cloud-core.compose.tmpl` inoltra le variabili
+`GLOBAL_SINK_TYPE` e `GLOBAL_POSTGRES_*` dall'environment del processo Compose o
+dal suo file `.env`; non contiene credenziali. Dopo modifiche al template usare
+`go run ./cmd/deploygen -mode distributed`. PostgreSQL viene configurato esternamente;
+non e aggiunto alcun servizio database al deployment.
+
 ## Verifiche
 
 ```powershell
 gofmt -l cmd internal
+go test ./...
 go vet ./...
 go build ./...
 docker compose -f deploy/compose/continuum.generated.yml config
