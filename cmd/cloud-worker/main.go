@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
-	"time"
 
 	"continuum/internal/cloudworker"
-	"continuum/internal/envutil"
+
+	"github.com/segmentio/kafka-go"
 )
 
 func main() {
@@ -20,48 +19,42 @@ func main() {
 }
 
 func runCloudWorker() error {
-	kafkaBroker := envutil.Required("KAFKA_BROKER")
-
-	inputTopic := loadInputTopic()
-	outputTopic := envutil.OrDefault("KAFKA_OUTPUT_TOPIC", "cloud-edge-aggregates")
-	groupID := envutil.OrDefault("KAFKA_GROUP_ID", "cloud-workers")
-	workerID := loadWorkerID()
-	windowSize, err := loadCloudWindowSize()
+	config, err := loadCloudWorkerConfig()
 	if err != nil {
 		return err
 	}
 
 	aggregator, err := cloudworker.NewWindowAggregator(
-		windowSize,
+		config.WindowSize,
 	)
 	if err != nil {
 		return err
 	}
 
 	reader := newKafkaReader(
-		kafkaBroker,
-		inputTopic,
-		groupID,
+		config.KafkaBroker,
+		config.InputTopic,
+		config.GroupID,
 	)
 	defer func() {
 		if err := reader.Close(); err != nil {
 			fmt.Printf(
 				"%s: errore chiusura Kafka reader: %v\n",
-				workerID,
+				config.WorkerID,
 				err,
 			)
 		}
 	}()
 
 	writer := newKafkaWriter(
-		kafkaBroker,
-		outputTopic,
+		config.KafkaBroker,
+		config.OutputTopic,
 	)
 	defer func() {
 		if err := writer.Close(); err != nil {
 			fmt.Printf(
 				"%s: errore chiusura Kafka writer: %v\n",
-				workerID,
+				config.WorkerID,
 				err,
 			)
 		}
@@ -69,27 +62,27 @@ func runCloudWorker() error {
 
 	fmt.Printf(
 		"Avvio Cloud Worker %s\n",
-		workerID,
+		config.WorkerID,
 	)
 	fmt.Printf(
 		"Kafka broker: %s\n",
-		kafkaBroker,
+		config.KafkaBroker,
 	)
 	fmt.Printf(
 		"Input topic: %s\n",
-		inputTopic,
+		config.InputTopic,
 	)
 	fmt.Printf(
 		"Output topic: %s\n",
-		outputTopic,
+		config.OutputTopic,
 	)
 	fmt.Printf(
 		"Cloud window: %s\n",
-		windowSize,
+		config.WindowSize,
 	)
 	fmt.Printf(
 		"Consumer group: %s\n\n",
-		groupID,
+		config.GroupID,
 	)
 
 	ctx, stop := signal.NotifyContext(
@@ -99,12 +92,23 @@ func runCloudWorker() error {
 	)
 	defer stop()
 
+	processor := &CloudMessageProcessor{
+		aggregator:  aggregator,
+		outputTopic: writer.Topic,
+		workerID:    config.WorkerID,
+		publishMessage: func(
+			ctx context.Context,
+			message kafka.Message,
+		) error {
+			return writer.WriteMessages(ctx, message)
+		},
+		endedEdges: make(map[string]bool),
+	}
+
 	if err := consume(
 		ctx,
 		reader,
-		writer,
-		aggregator,
-		workerID,
+		processor,
 	); err != nil {
 		return err
 	}
@@ -112,81 +116,15 @@ func runCloudWorker() error {
 	if err := flushWindows(
 		writer,
 		aggregator,
-		workerID,
+		config.WorkerID,
 	); err != nil {
 		return err
 	}
 
 	fmt.Printf(
 		"\nArresto Cloud Worker %s\n",
-		workerID,
+		config.WorkerID,
 	)
 
 	return nil
-}
-
-func loadCloudWindowSize() (
-	time.Duration,
-	error,
-) {
-	value := envutil.OrDefault(
-		"CLOUD_WINDOW_SIZE",
-		"15m",
-	)
-
-	windowSize, err := time.ParseDuration(
-		value,
-	)
-	if err != nil {
-		return 0,
-			fmt.Errorf(
-				"CLOUD_WINDOW_SIZE non valida %q: %w",
-				value,
-				err,
-			)
-	}
-
-	if windowSize <= 0 {
-		return 0,
-			fmt.Errorf(
-				"CLOUD_WINDOW_SIZE deve essere maggiore di zero",
-			)
-	}
-
-	return windowSize, nil
-}
-
-func loadInputTopic() string {
-	if value := strings.TrimSpace(
-		os.Getenv("KAFKA_INPUT_TOPIC"),
-	); value != "" {
-		return value
-	}
-
-	if value := strings.TrimSpace(
-		os.Getenv("KAFKA_TOPIC"),
-	); value != "" {
-		fmt.Println(
-			"KAFKA_TOPIC e deprecata per il Cloud Worker; usare KAFKA_INPUT_TOPIC",
-		)
-
-		return value
-	}
-
-	return "edge-aggregates"
-}
-
-func loadWorkerID() string {
-	if value := strings.TrimSpace(
-		os.Getenv("WORKER_ID"),
-	); value != "" {
-		return value
-	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "cloud-worker"
-	}
-
-	return hostname
 }

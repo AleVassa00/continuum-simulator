@@ -2,69 +2,26 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
-	"continuum/internal/cloudworker"
-	"continuum/internal/envutil"
 	"continuum/internal/globalaggregator"
-	"continuum/internal/kafkautil"
-	"continuum/internal/model"
-
-	"github.com/segmentio/kafka-go"
 )
-
-const (
-	operationTimeout                 = 5 * time.Second
-	defaultGlobalEdgeIdleTimeout     = 5 * time.Second
-	maxWatermarkAdvanceCheckInterval = 1 * time.Second
-)
-
-type KafkaMessageCommitter func(kafka.Message) error
-
-type GlobalMessageProcessor struct {
-	aggregator *globalaggregator.Aggregator
-}
 
 func main() {
-	kafkaBroker := envutil.Required("KAFKA_BROKER")
-	inputTopic := envutil.OrDefault(
-		"KAFKA_INPUT_TOPIC",
-		"cloud-edge-aggregates",
-	)
-	groupID := envutil.OrDefault(
-		"KAFKA_GROUP_ID",
-		"global-aggregator",
-	)
-	windowSize, err := loadGlobalWindowSize()
-	if err != nil {
-		panic(err)
-	}
-	watermarkDelay, err := loadGlobalWatermarkDelay(windowSize)
-	if err != nil {
-		panic(err)
-	}
-	edgeIdleTimeout, err := loadGlobalEdgeIdleTimeout()
-	if err != nil {
-		panic(err)
-	}
-	expectedEdgeIDs, err := loadExpectedEdgeIDs()
+	config, err := loadGlobalAggregatorConfig()
 	if err != nil {
 		panic(err)
 	}
 
 	aggregator, err := globalaggregator.New(
-		expectedEdgeIDs,
-		windowSize,
-		watermarkDelay,
-		edgeIdleTimeout,
+		config.ExpectedEdgeIDs,
+		config.WindowSize,
+		config.WatermarkDelay,
+		config.EdgeIdleTimeout,
 		newJSONLogSink(os.Stdout),
 	)
 	if err != nil {
@@ -72,15 +29,7 @@ func main() {
 	}
 	processor := &GlobalMessageProcessor{aggregator: aggregator}
 
-	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     []string{kafkaBroker},
-		Topic:       inputTopic,
-		GroupID:     groupID,
-		StartOffset: kafka.FirstOffset,
-		MinBytes:    1,
-		MaxBytes:    10 * 1024 * 1024,
-		MaxWait:     500 * time.Millisecond,
-	})
+	reader := newKafkaReader(config.KafkaBroker, config.InputTopic, config.GroupID)
 	defer func() {
 		if err := reader.Close(); err != nil {
 			fmt.Printf("Global Aggregator: errore chiusura Kafka reader: %v\n", err)
@@ -88,13 +37,13 @@ func main() {
 	}()
 
 	fmt.Println("Avvio Global Aggregator")
-	fmt.Printf("Kafka broker: %s\n", kafkaBroker)
-	fmt.Printf("Input topic: %s\n", inputTopic)
-	fmt.Printf("Consumer group: %s\n", groupID)
-	fmt.Printf("Global window: %s\n", windowSize)
-	fmt.Printf("Watermark delay: %s\n", watermarkDelay)
-	fmt.Printf("Edge idle timeout: %s\n", edgeIdleTimeout)
-	fmt.Printf("Expected Edge: %s\n\n", strings.Join(expectedEdgeIDs, ","))
+	fmt.Printf("Kafka broker: %s\n", config.KafkaBroker)
+	fmt.Printf("Input topic: %s\n", config.InputTopic)
+	fmt.Printf("Consumer group: %s\n", config.GroupID)
+	fmt.Printf("Global window: %s\n", config.WindowSize)
+	fmt.Printf("Watermark delay: %s\n", config.WatermarkDelay)
+	fmt.Printf("Edge idle timeout: %s\n", config.EdgeIdleTimeout)
+	fmt.Printf("Expected Edge: %s\n\n", strings.Join(config.ExpectedEdgeIDs, ","))
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
@@ -107,7 +56,7 @@ func main() {
 		ctx,
 		reader,
 		processor,
-		watermarkAdvanceCheckInterval(edgeIdleTimeout),
+		watermarkAdvanceCheckInterval(config.EdgeIdleTimeout),
 	)
 	if err != nil {
 		panic(err)
@@ -117,226 +66,4 @@ func main() {
 		return
 	}
 	fmt.Println("Global Aggregator arrestato prima dell'EndOfReplay globale")
-}
-
-func consume(
-	ctx context.Context,
-	reader *kafka.Reader,
-	processor *GlobalMessageProcessor,
-	watermarkCheckInterval time.Duration,
-) (bool, error) {
-	for {
-		fetchContext, cancelFetch := context.WithTimeout(
-			ctx,
-			watermarkCheckInterval,
-		)
-		message, err := reader.FetchMessage(fetchContext)
-		cancelFetch()
-		if err != nil {
-			if ctx.Err() != nil {
-				return false, nil
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				if err := processor.aggregator.AdvanceWatermark(ctx); err != nil {
-					return false, fmt.Errorf(
-						"avanzamento watermark globale fallito: %w",
-						err,
-					)
-				}
-				continue
-			}
-			return false, fmt.Errorf("lettura Kafka globale fallita: %w", err)
-		}
-
-		completed, err := processAndCommitMessage(
-			ctx,
-			message,
-			processor,
-			func(message kafka.Message) error {
-				return kafkautil.CommitMessage(reader, message, operationTimeout)
-			},
-		)
-		if err != nil {
-			return false, fmt.Errorf(
-				"global partition=%d offset=%d: %w",
-				message.Partition,
-				message.Offset,
-				err,
-			)
-		}
-		if completed {
-			return true, nil
-		}
-	}
-}
-
-func processAndCommitMessage(
-	ctx context.Context,
-	message kafka.Message,
-	processor *GlobalMessageProcessor,
-	commit KafkaMessageCommitter,
-) (bool, error) {
-	completed, err := processor.Process(ctx, message)
-	if err != nil {
-		return false, err
-	}
-	if err := commit(message); err != nil {
-		return false, fmt.Errorf("commit Kafka globale fallito: %w", err)
-	}
-	return completed, nil
-}
-
-func (processor *GlobalMessageProcessor) Process(
-	ctx context.Context,
-	message kafka.Message,
-) (bool, error) {
-	recordType, err := kafkautil.ParseRecordType(message.Headers)
-	if err != nil {
-		return false, err
-	}
-
-	switch recordType {
-	case model.RecordTypeCloudEdgeAggregate:
-		input, err := decodeCloudEdgeAggregate(message.Value)
-		if err != nil {
-			return false, err
-		}
-		if string(message.Key) != input.EdgeID {
-			return false, fmt.Errorf(
-				"CloudEdgeAggregate key Kafka=%q non coerente con edge_id=%q",
-				message.Key,
-				input.EdgeID,
-			)
-		}
-		if err := processor.aggregator.Add(ctx, input); err != nil {
-			if errors.Is(err, globalaggregator.ErrClosedWindow) {
-				fmt.Printf("Global Aggregator: late aggregate scartato (%v)\n", err)
-				return false, nil
-			}
-			return false, err
-		}
-		return false, nil
-
-	case model.RecordTypeEndOfReplay:
-		return processor.aggregator.EndReplay(ctx, string(message.Key))
-
-	default:
-		return false, fmt.Errorf(
-			"record_type Kafka globale sconosciuto %q",
-			recordType,
-		)
-	}
-}
-
-func decodeCloudEdgeAggregate(payload []byte) (model.CloudEdgeAggregate, error) {
-	var aggregate model.CloudEdgeAggregate
-	if err := json.Unmarshal(payload, &aggregate); err != nil {
-		return model.CloudEdgeAggregate{}, fmt.Errorf(
-			"CloudEdgeAggregate JSON non valido: %w",
-			err,
-		)
-	}
-	if err := cloudworker.ValidateCloudEdgeAggregate(aggregate); err != nil {
-		return model.CloudEdgeAggregate{}, err
-	}
-	return aggregate, nil
-}
-
-func newJSONLogSink(writer io.Writer) globalaggregator.GlobalAggregateSink {
-	return func(
-		_ context.Context,
-		aggregate model.GlobalAggregate,
-	) error {
-		if err := globalaggregator.ValidateGlobalAggregate(aggregate); err != nil {
-			return err
-		}
-		payload, err := json.Marshal(aggregate)
-		if err != nil {
-			return fmt.Errorf(
-				"serializzazione GlobalAggregate %q fallita: %w",
-				aggregate.AggregateID,
-				err,
-			)
-		}
-		if _, err := fmt.Fprintf(writer, "GLOBAL_AGGREGATE %s\n", payload); err != nil {
-			return fmt.Errorf("scrittura log GlobalAggregate fallita: %w", err)
-		}
-		return nil
-	}
-}
-
-func loadGlobalWindowSize() (time.Duration, error) {
-	value := envutil.OrDefault("GLOBAL_WINDOW_SIZE", "15m")
-	windowSize, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf(
-			"GLOBAL_WINDOW_SIZE non valida %q: %w",
-			value,
-			err,
-		)
-	}
-	if windowSize <= 0 {
-		return 0, fmt.Errorf(
-			"GLOBAL_WINDOW_SIZE deve essere maggiore di zero",
-		)
-	}
-	return windowSize, nil
-}
-
-func loadGlobalWatermarkDelay(
-	defaultDelay time.Duration,
-) (time.Duration, error) {
-	value := strings.TrimSpace(os.Getenv("GLOBAL_WATERMARK_DELAY"))
-	if value == "" {
-		return defaultDelay, nil
-	}
-	delay, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf("GLOBAL_WATERMARK_DELAY non valida %q: %w", value, err)
-	}
-	if delay <= 0 {
-		return 0, fmt.Errorf("GLOBAL_WATERMARK_DELAY deve essere maggiore di zero")
-	}
-	return delay, nil
-}
-
-func loadGlobalEdgeIdleTimeout() (time.Duration, error) {
-	value := envutil.OrDefault(
-		"GLOBAL_EDGE_IDLE_TIMEOUT",
-		defaultGlobalEdgeIdleTimeout.String(),
-	)
-	timeout, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf(
-			"GLOBAL_EDGE_IDLE_TIMEOUT non valido %q: %w",
-			value,
-			err,
-		)
-	}
-	if timeout <= 0 {
-		return 0, fmt.Errorf(
-			"GLOBAL_EDGE_IDLE_TIMEOUT deve essere maggiore di zero",
-		)
-	}
-	return timeout, nil
-}
-
-func watermarkAdvanceCheckInterval(edgeIdleTimeout time.Duration) time.Duration {
-	if edgeIdleTimeout < maxWatermarkAdvanceCheckInterval {
-		return edgeIdleTimeout
-	}
-	return maxWatermarkAdvanceCheckInterval
-}
-
-func loadExpectedEdgeIDs() ([]string, error) {
-	value := strings.TrimSpace(os.Getenv("EXPECTED_EDGE_IDS"))
-	if value == "" {
-		return nil, fmt.Errorf("variabile EXPECTED_EDGE_IDS non impostata")
-	}
-	parts := strings.Split(value, ",")
-	edgeIDs := make([]string, len(parts))
-	for index, part := range parts {
-		edgeIDs[index] = strings.TrimSpace(part)
-	}
-	return edgeIDs, nil
 }

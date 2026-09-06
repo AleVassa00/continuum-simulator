@@ -3,9 +3,33 @@ package globalaggregator
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"continuum/internal/model"
 )
+
+func (aggregator *Aggregator) validateWindow(
+	input model.CloudEdgeAggregate,
+) error {
+	duration := input.WindowEnd.Sub(input.WindowStart)
+	if duration != aggregator.windowSize {
+		return fmt.Errorf(
+			"CloudEdgeAggregate %q ha finestra %s, attesa GLOBAL_WINDOW_SIZE %s",
+			input.AggregateID,
+			duration,
+			aggregator.windowSize,
+		)
+	}
+	start := input.WindowStart.UTC()
+	if !start.Equal(start.Truncate(aggregator.windowSize)) {
+		return fmt.Errorf(
+			"CloudEdgeAggregate %q non allineato a GLOBAL_WINDOW_SIZE %s",
+			input.AggregateID,
+			aggregator.windowSize,
+		)
+	}
+	return nil
+}
 
 func ValidateGlobalAggregate(aggregate model.GlobalAggregate) error {
 	if strings.TrimSpace(aggregate.AggregateID) == "" {

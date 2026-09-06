@@ -1,10 +1,9 @@
 package main
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"continuum/internal/cloudworker"
 	"continuum/internal/kafkautil"
@@ -12,11 +11,6 @@ import (
 
 	"github.com/segmentio/kafka-go"
 )
-
-type KafkaMessagePublisher func(
-	context.Context,
-	kafka.Message,
-) error
 
 type CloudMessageProcessor struct {
 	aggregator     *cloudworker.WindowAggregator
@@ -136,67 +130,27 @@ func (
 	return nil
 }
 
-func (
-	processor *CloudMessageProcessor,
-) publishCloudAggregate(
-	aggregate model.CloudEdgeAggregate,
-	partial bool,
-) error {
-	message, err := cloudEdgeAggregateMessage(aggregate)
-	if err != nil {
-		return err
-	}
+func decodeEdgeAggregate(
+	payload []byte,
+) (model.EdgeAggregate, error) {
+	var aggregate model.EdgeAggregate
 
-	if err := writeKafkaMessage(
-		processor.publishMessage,
-		message,
+	if err := json.Unmarshal(
+		payload,
+		&aggregate,
 	); err != nil {
-		return fmt.Errorf(
-			"pubblicazione Kafka aggregate_id=%s topic=%s fallita: %w",
-			aggregate.AggregateID,
-			processor.outputTopic,
-			err,
-		)
+		return model.EdgeAggregate{},
+			fmt.Errorf(
+				"EdgeAggregate JSON non valido: %w",
+				err,
+			)
 	}
 
-	logPublishedWindow(
-		processor.workerID,
-		processor.outputTopic,
+	if err := cloudworker.ValidateEdgeAggregate(
 		aggregate,
-		partial,
-	)
-
-	return nil
-}
-
-func (
-	processor *CloudMessageProcessor,
-) publishEndOfReplay(
-	edgeID string,
-) error {
-	message := kafka.Message{
-		Key:   []byte(edgeID),
-		Value: []byte{},
-		Time:  time.Now().UTC(),
-		Headers: []kafka.Header{
-			{
-				Key:   model.RecordTypeHeader,
-				Value: []byte(model.RecordTypeEndOfReplay),
-			},
-		},
-	}
-
-	if err := writeKafkaMessage(
-		processor.publishMessage,
-		message,
 	); err != nil {
-		return fmt.Errorf(
-			"pubblicazione Kafka EndOfReplay edge=%s topic=%s fallita: %w",
-			edgeID,
-			processor.outputTopic,
-			err,
-		)
+		return model.EdgeAggregate{}, err
 	}
 
-	return nil
+	return aggregate, nil
 }

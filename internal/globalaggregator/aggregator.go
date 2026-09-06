@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,31 +17,6 @@ type GlobalAggregateSink func(
 ) error
 
 var ErrClosedWindow = errors.New("finestra globale gia chiusa")
-
-type windowKey struct {
-	start int64
-	end   int64
-}
-
-type metricState struct {
-	valid   uint64
-	invalid uint64
-	sum     float64
-	min     float64
-	max     float64
-}
-
-type windowState struct {
-	start time.Time
-	end   time.Time
-
-	contributors map[string]string // edgeID -> AggregateID incorporato nella finestra
-	events       uint64
-
-	temperature metricState
-	humidity    metricState
-	pressure    metricState
-}
 
 type Aggregator struct {
 	expectedEdges   map[string]struct{}
@@ -123,10 +97,6 @@ func New(
 
 func (aggregator *Aggregator) LateAggregatesDropped() uint64 {
 	return aggregator.lateAggregatesDropped
-}
-
-func (aggregator *Aggregator) Watermark() time.Time {
-	return aggregator.watermark
 }
 
 func (aggregator *Aggregator) Add(
@@ -227,80 +197,6 @@ func (aggregator *Aggregator) Add(
 	return aggregator.advanceWatermarkAt(ctx, now)
 }
 
-func (aggregator *Aggregator) AdvanceWatermark(ctx context.Context) error {
-	if aggregator.complete {
-		return nil
-	}
-
-	return aggregator.advanceWatermarkAt(ctx, time.Now().UTC())
-}
-
-func (aggregator *Aggregator) advanceWatermarkAt(
-	ctx context.Context,
-	now time.Time,
-) error {
-	candidate, available := aggregator.watermarkCandidate(now)
-	if available && candidate.After(aggregator.watermark) {
-		aggregator.watermark = candidate
-	}
-
-	if aggregator.watermark.IsZero() {
-		return nil
-	}
-	for _, key := range aggregator.sortedOpenWindowKeys() {
-		state := aggregator.windows[key]
-		if state == nil || aggregator.watermark.Before(state.end) {
-			continue
-		}
-		if err := aggregator.emit(ctx, state); err != nil {
-			return err
-		}
-		delete(aggregator.windows, key)
-		aggregator.closedWindows[key] = struct{}{}
-	}
-
-	return nil
-}
-
-func (aggregator *Aggregator) watermarkCandidate(
-	now time.Time,
-) (time.Time, bool) {
-	if aggregator.firstAggregateAt.IsZero() {
-		return time.Time{}, false
-	}
-
-	var candidate time.Time
-	activeEdges := 0
-	startupGraceElapsed := now.Sub(aggregator.firstAggregateAt) >=
-		aggregator.edgeIdleTimeout
-
-	for edgeID := range aggregator.expectedEdges {
-		lastActivity, seen := aggregator.lastActivityByEdge[edgeID]
-		if !seen {
-			if !startupGraceElapsed {
-				return time.Time{}, false
-			}
-			continue
-		}
-
-		if now.Sub(lastActivity) >= aggregator.edgeIdleTimeout {
-			continue
-		}
-
-		activeEdges++
-		maxWindowEnd := aggregator.maxWindowEndByEdge[edgeID]
-		if maxWindowEnd.IsZero() {
-			return time.Time{}, false
-		}
-		edgeWatermark := maxWindowEnd.Add(-aggregator.watermarkDelay)
-		if candidate.IsZero() || edgeWatermark.Before(candidate) {
-			candidate = edgeWatermark
-		}
-	}
-
-	return candidate, activeEdges > 0
-}
-
 func (aggregator *Aggregator) EndReplay(
 	ctx context.Context,
 	edgeID string,
@@ -348,29 +244,6 @@ func (aggregator *Aggregator) IsComplete() bool {
 	return aggregator.complete
 }
 
-func (aggregator *Aggregator) validateWindow(
-	input model.CloudEdgeAggregate,
-) error {
-	duration := input.WindowEnd.Sub(input.WindowStart)
-	if duration != aggregator.windowSize {
-		return fmt.Errorf(
-			"CloudEdgeAggregate %q ha finestra %s, attesa GLOBAL_WINDOW_SIZE %s",
-			input.AggregateID,
-			duration,
-			aggregator.windowSize,
-		)
-	}
-	start := input.WindowStart.UTC()
-	if !start.Equal(start.Truncate(aggregator.windowSize)) {
-		return fmt.Errorf(
-			"CloudEdgeAggregate %q non allineato a GLOBAL_WINDOW_SIZE %s",
-			input.AggregateID,
-			aggregator.windowSize,
-		)
-	}
-	return nil
-}
-
 func (aggregator *Aggregator) emit(
 	ctx context.Context,
 	state *windowState,
@@ -394,98 +267,4 @@ func (aggregator *Aggregator) emit(
 		)
 	}
 	return nil
-}
-
-func (aggregator *Aggregator) sortedOpenWindowKeys() []windowKey {
-	keys := make([]windowKey, 0, len(aggregator.windows))
-	for key := range aggregator.windows {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i int, j int) bool {
-		if keys[i].start == keys[j].start {
-			return keys[i].end < keys[j].end
-		}
-		return keys[i].start < keys[j].start
-	})
-	return keys
-}
-
-func makeWindowKey(start time.Time, end time.Time) windowKey {
-	return windowKey{
-		start: start.UTC().UnixNano(),
-		end:   end.UTC().UnixNano(),
-	}
-}
-
-func (state *windowState) add(input model.CloudEdgeAggregate) {
-	state.contributors[input.EdgeID] = input.AggregateID
-	state.events += input.Events
-	state.temperature.add(input.Temperature)
-	state.humidity.add(input.Humidity)
-	state.pressure.add(input.Pressure)
-}
-
-func (state *metricState) add(input model.MetricAggregate) {
-	if input.Valid > 0 {
-		if state.valid == 0 {
-			state.min = *input.Min
-			state.max = *input.Max
-		} else {
-			state.min = min(state.min, *input.Min)
-			state.max = max(state.max, *input.Max)
-		}
-	}
-	state.valid += input.Valid
-	state.invalid += input.Invalid
-	state.sum += input.Sum
-}
-
-func (state *windowState) buildAggregate(
-	expectedEdges uint64,
-	emittedAt time.Time,
-) model.GlobalAggregate {
-	return model.GlobalAggregate{
-		AggregateID:   buildGlobalAggregateID(state.start, state.end),
-		WindowStart:   state.start,
-		WindowEnd:     state.end,
-		ExpectedEdges: expectedEdges,
-		ContributingEdges: uint64(
-			len(state.contributors),
-		),
-		Events:      state.events,
-		Temperature: state.temperature.buildAggregate(),
-		Humidity:    state.humidity.buildAggregate(),
-		Pressure:    state.pressure.buildAggregate(),
-		EmittedAt:   emittedAt,
-	}
-}
-
-func (state metricState) buildAggregate() model.MetricAggregate {
-	if state.valid == 0 {
-		return model.MetricAggregate{
-			Valid:   0,
-			Invalid: state.invalid,
-			Sum:     0,
-		}
-	}
-
-	average := state.sum / float64(state.valid)
-	minimum := state.min
-	maximum := state.max
-	return model.MetricAggregate{
-		Valid:   state.valid,
-		Invalid: state.invalid,
-		Sum:     state.sum,
-		Average: &average,
-		Min:     &minimum,
-		Max:     &maximum,
-	}
-}
-
-func buildGlobalAggregateID(start time.Time, end time.Time) string {
-	return fmt.Sprintf(
-		"global:%s:%s",
-		start.UTC().Format(time.RFC3339),
-		end.UTC().Format(time.RFC3339),
-	)
 }
