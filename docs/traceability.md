@@ -36,10 +36,15 @@ non attestano una run distribuita con broker reali o misure di scalabilità.
 
 ## Vincoli sperimentali correnti
 
-Lo stato delle finestre dei Cloud Worker risiede in RAM. Durante ciascun replay
-il numero di Worker resta fisso: un crash o un rebalance puo perdere lo stato
-parziale. State store, exactly-once, transazioni Kafka e recovery avanzato sono
-fuori dal requisito di scalabilita scelto e non sono implementati.
+Lo stato delle finestre dei Cloud Worker e del Global Aggregator risiede
+esclusivamente in RAM. Gli offset Kafka vengono committati dopo l'elaborazione
+di ciascun record, ma non esiste un checkpoint coordinato tra offset e stato
+applicativo. Di conseguenza un crash durante una finestra aperta puo perdere
+stato derivato da record il cui offset e gia stato committato: al riavvio tali
+record non vengono riconsumati e la finestra parziale non e ricostruibile
+automaticamente. State store, exactly-once, transazioni Kafka e recovery
+avanzato sono fuori dal requisito di scalabilita scelto e non sono implementati.
+Questa e una limitazione architetturale accettata, non un bug.
 
 Cloud Worker e Global Aggregator deduplicano gli input nelle rispettive finestre
 in memoria. Nel Global Aggregator, stesso Edge e stesso `AggregateID` nella

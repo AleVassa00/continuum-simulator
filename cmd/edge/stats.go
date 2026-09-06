@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"sync/atomic"
 )
 
@@ -35,7 +37,7 @@ type EdgeStatsSnapshot struct {
 }
 
 func (
-stats *EdgeStats,
+	stats *EdgeStats,
 ) Snapshot() EdgeStatsSnapshot {
 	return EdgeStatsSnapshot{
 		TelemetryReceived: stats.telemetryReceived.Load(),
@@ -104,4 +106,40 @@ func printEdgeSummary(edgeID string, stats EdgeStatsSnapshot) {
 	fmt.Printf("Aggregate Kafka emessi: %d\n", stats.AggregatesEmitted)
 
 	fmt.Printf("EndOfReplay processati: %d\n", stats.EndOfReplayProcessed)
+}
+
+type edgeStatsJSON struct {
+	EdgeID                        string  `json:"edge_id"`
+	TelemetryReceived             uint64  `json:"telemetry_received"`
+	IngressQueueCapacity          int     `json:"ingress_queue_capacity"`
+	MaxIngressQueueDepth          int     `json:"max_ingress_queue_depth"`
+	MaxIngressQueueUtilizationPct float64 `json:"max_ingress_queue_utilization_pct"`
+	IngressAccepted               uint64  `json:"ingress_accepted"`
+	IngressQueueDropped           uint64  `json:"ingress_queue_dropped"`
+	InvalidTelemetry              uint64  `json:"invalid_telemetry"`
+	OutOfOrderDropped             uint64  `json:"out_of_order_dropped"`
+	PostEOSDropped                uint64  `json:"post_eos_dropped"`
+	Processed                     uint64  `json:"processed"`
+	AggregatesEmitted             uint64  `json:"aggregates_emitted"`
+	EndOfReplayProcessed          uint64  `json:"end_of_replay_processed"`
+}
+
+func printEdgeStatsJSON(edgeID string, stats EdgeStatsSnapshot) {
+	payload := edgeStatsJSON{
+		EdgeID:                        edgeID,
+		TelemetryReceived:             stats.TelemetryReceived,
+		IngressQueueCapacity:          stats.IngressQueueCapacity,
+		MaxIngressQueueDepth:          stats.MaxIngressQueueDepthObserved,
+		MaxIngressQueueUtilizationPct: stats.MaxIngressQueueUtilization(),
+		IngressAccepted:               stats.IngressAccepted,
+		IngressQueueDropped:           stats.IngressQueueDropped,
+		InvalidTelemetry:              stats.InvalidTelemetry,
+		OutOfOrderDropped:             stats.OutOfOrderDropped,
+		PostEOSDropped:                stats.PostEOSDropped,
+		Processed:                     stats.Processed,
+		AggregatesEmitted:             stats.AggregatesEmitted,
+		EndOfReplayProcessed:          stats.EndOfReplayProcessed,
+	}
+	fmt.Print("EDGE_STATS ")
+	json.NewEncoder(os.Stdout).Encode(payload)
 }

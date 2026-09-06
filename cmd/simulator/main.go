@@ -60,6 +60,7 @@ func runSimulator() error {
 	stats, replayErr := replaySite(reader, config, replayRuntime)
 
 	printReplaySummary(config.SiteID, stats, replayErr)
+	printSimulatorStatsJSON(config.SiteID, stats, replayErr)
 
 	if replayErr != nil {
 		return fmt.Errorf("replay %s fallito: %w", config.SiteID, replayErr)

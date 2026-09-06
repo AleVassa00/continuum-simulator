@@ -41,7 +41,24 @@ func (aggregator *Aggregator) advanceWatermarkAt(
 		aggregator.closedWindows[key] = struct{}{}
 	}
 
+	aggregator.pruneClosedWindows()
+
 	return nil
+}
+
+// pruneClosedWindows rimuove da closedWindows le entry il cui WindowEnd è già
+// coperto dal watermark corrente. Da quel momento il watermark impedisce la
+// riapertura, rendendo ridondante la presenza esplicita nella mappa.
+func (aggregator *Aggregator) pruneClosedWindows() {
+	if aggregator.watermark.IsZero() {
+		return
+	}
+	wm := aggregator.watermark.UnixNano()
+	for key := range aggregator.closedWindows {
+		if key.end <= wm {
+			delete(aggregator.closedWindows, key)
+		}
+	}
 }
 
 func (aggregator *Aggregator) watermarkCandidate(

@@ -1,11 +1,11 @@
 experiment:
     name: baseline
 workload:
-    acceleration_factor: 50000
+    acceleration_factor: 30000
     start_lead_time: 30s
-    replay_start_at: "2026-09-06T19:34:16.0617994Z"
+    replay_start_at: "2026-09-06T19:20:29.7861792Z"
 simulator:
-    telemetry_queue_capacity: 5000
+    telemetry_queue_capacity: 1000
     start_late_tolerance: 10s
 edge:
     window_size: 5m0s

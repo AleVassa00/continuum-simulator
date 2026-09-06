@@ -17,6 +17,14 @@ type GlobalAggregateSink func(
 
 var ErrClosedWindow = errors.New("finestra globale gia chiusa")
 
+// Aggregator sincronizza i contributi di tutti gli Edge attesi in finestre
+// temporali globali, gestendo late arrival tramite watermark.
+//
+// Limitazione architetturale: lo stato delle finestre e del watermark vive
+// esclusivamente in RAM, mentre gli offset Kafka vengono committati dopo
+// l'elaborazione di ciascun record. Un crash può perdere stato derivato da
+// record già committati, rendendo impossibile la ricostruzione automatica
+// delle finestre parziali al riavvio.
 type Aggregator struct {
 	expectedEdges   map[string]struct{}
 	endedEdges      map[string]struct{}
@@ -226,9 +234,9 @@ func (aggregator *Aggregator) EndReplay(
 	}
 	for _, key := range keys {
 		delete(aggregator.windows, key)
-		aggregator.closedWindows[key] = struct{}{}
 	}
 	aggregator.complete = true
+	clear(aggregator.closedWindows)
 
 	return true, nil
 }

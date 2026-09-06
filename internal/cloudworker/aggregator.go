@@ -8,6 +8,14 @@ import (
 	"continuum/internal/model"
 )
 
+// WindowAggregator aggrega EdgeAggregate in finestre Cloud per singolo Edge.
+//
+// Limitazione architetturale: lo stato delle finestre vive esclusivamente in
+// RAM, mentre gli offset Kafka vengono committati dopo l'elaborazione di ciascun
+// record. Un crash del processo può quindi perdere stato derivato da record il
+// cui offset è già stato committato: al riavvio tali record non vengono
+// riconsumati e la finestra parziale non è ricostruibile. Una soluzione completa
+// richiederebbe un checkpoint coordinato tra offset e stato applicativo.
 type WindowAggregator struct {
 	windowSize time.Duration
 	states     map[string]*cloudWindowState

@@ -164,9 +164,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-0:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-0.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -230,9 +230,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-1:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-1.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -296,9 +296,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-2:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-2.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -362,9 +362,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-3:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-3.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -428,9 +428,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-4:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-4.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -494,9 +494,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-5:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-5.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -560,9 +560,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-6:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-6.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -626,9 +626,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-7:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-7.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -692,9 +692,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-8:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-8.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -758,9 +758,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-9:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-9.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -824,9 +824,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-10:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-10.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -890,9 +890,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-11:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-11.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro
@@ -956,9 +956,9 @@ services:
       MQTT_ENDPOINT: "tcp://mqtt-edge-12:1883"
       REPLAY_FILE: "/app/dataset/derived/replay_by_edge/edge-12.csv"
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
-      REPLAY_START_AT: "2026-09-03T16:12:17.7324928Z"
-      ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      REPLAY_START_AT: "2026-09-06T19:34:16.0617994Z"
+      ACCELERATION_FACTOR: "50000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../dataset:/app/dataset:ro

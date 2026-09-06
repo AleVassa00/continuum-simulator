@@ -76,5 +76,6 @@ func runEdge() error {
 	}
 
 	printEdgeSummary(config.EdgeID, stats.SnapshotWithQueue(ingress))
+	printEdgeStatsJSON(config.EdgeID, stats.SnapshotWithQueue(ingress))
 	return pipelineErr
 }

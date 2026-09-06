@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -118,4 +120,52 @@ func printReplaySummary(siteID string, stats ReplayStats, replayErr error) {
 	fmt.Printf("Throughput workload offerto: %.2f eventi/s\n", stats.Throughput())
 	fmt.Printf("EOS successi: %d\n", stats.EOSSuccesses)
 	fmt.Printf("EOS fallimenti: %d\n", stats.EOSFailures)
+}
+
+type simulatorStatsJSON struct {
+	EdgeID                  string  `json:"edge_id"`
+	Status                  string  `json:"status"`
+	OfferedEvents           int     `json:"offered_events"`
+	TelemetryEnqueued       int     `json:"telemetry_enqueued"`
+	TelemetryLocallyDropped int     `json:"telemetry_locally_dropped"`
+	QueueCapacity           int     `json:"queue_capacity"`
+	MQTTPublishAttempts     uint64  `json:"mqtt_publish_attempts"`
+	MQTTPublishErrors       uint64  `json:"mqtt_publish_errors"`
+	AvgSchedulingLagMs      float64 `json:"avg_scheduling_lag_ms"`
+	MaxSchedulingLagMs      float64 `json:"max_scheduling_lag_ms"`
+	OfferDurationS          float64 `json:"offer_duration_s"`
+	DrainDurationS          float64 `json:"drain_duration_s"`
+	ThroughputEPS           float64 `json:"throughput_eps"`
+	EOSSuccesses            int     `json:"eos_successes"`
+	EOSFailures             int     `json:"eos_failures"`
+}
+
+func printSimulatorStatsJSON(siteID string, stats ReplayStats, replayErr error) {
+	status := "completato"
+	if replayErr != nil {
+		status = "fallito"
+	}
+	payload := simulatorStatsJSON{
+		EdgeID:                  siteID,
+		Status:                  status,
+		OfferedEvents:           stats.OfferedEvents,
+		TelemetryEnqueued:       stats.TelemetryEnqueued,
+		TelemetryLocallyDropped: stats.TelemetryLocallyDropped,
+		QueueCapacity:           stats.QueueCapacity,
+		MQTTPublishAttempts:     stats.MQTTPublishAttempts,
+		MQTTPublishErrors:       stats.MQTTPublishErrors,
+		AvgSchedulingLagMs:      durationMs(stats.AverageSchedulingLag()),
+		MaxSchedulingLagMs:      durationMs(stats.SchedulingLagMax),
+		OfferDurationS:          stats.OfferDuration().Seconds(),
+		DrainDurationS:          stats.DrainDuration().Seconds(),
+		ThroughputEPS:           stats.Throughput(),
+		EOSSuccesses:            stats.EOSSuccesses,
+		EOSFailures:             stats.EOSFailures,
+	}
+	fmt.Print("SIMULATOR_STATS ")
+	json.NewEncoder(os.Stdout).Encode(payload)
+}
+
+func durationMs(d time.Duration) float64 {
+	return float64(d.Nanoseconds()) / 1e6
 }

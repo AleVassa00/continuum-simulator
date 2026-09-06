@@ -126,11 +126,15 @@ consumer effettua commit esplicito dopo avere incorporato l'input e dopo
 l'eventuale pubblicazione dell'output. I normali retry Kafka restano attivi;
 la deduplica degli `EdgeAggregate` e responsabilita del Cloud Worker.
 
-Lo stato del roll-up Cloud e in memoria. Kafka offre consegna at-least-once, ma
-questo incremento non garantisce at-least-once end-to-end in presenza di crash o
-rebalance: un Worker puo perdere una finestra non ancora emessa. Il numero di
-repliche deve quindi essere fissato prima del replay e mantenuto invariato durante
-il singolo esperimento. La fault tolerance non e il requisito individuale scelto.
+Lo stato delle finestre dei Cloud Worker e del Global Aggregator risiede
+esclusivamente in RAM. Gli offset Kafka vengono committati dopo l'elaborazione
+di ciascun record, ma non esiste un checkpoint coordinato tra offset e stato
+applicativo. Di conseguenza un crash durante una finestra aperta puo perdere
+stato derivato da record il cui offset e gia stato committato: al riavvio tali
+record non vengono riconsumati e la finestra parziale non e ricostruibile
+automaticamente. Il numero di repliche deve quindi essere fissato prima del replay
+e mantenuto invariato durante il singolo esperimento. La fault tolerance non e il
+requisito individuale scelto ed e documentata come limitazione architetturale nota.
 
 Le finestre Edge e Cloud vengono chiuse dall'arrivo di un input appartenente alla
 finestra successiva. Su EOS, l'Edge pubblica l'ultima finestra prima del marker
