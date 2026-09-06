@@ -82,35 +82,6 @@ func (
 	return nil
 }
 
-func publishCloudEdgeAggregate(
-	writer *kafka.Writer,
-	aggregate model.CloudEdgeAggregate,
-) error {
-	message, err := cloudEdgeAggregateMessage(aggregate)
-	if err != nil {
-		return err
-	}
-
-	if err := writeKafkaMessage(
-		func(
-			ctx context.Context,
-			message kafka.Message,
-		) error {
-			return writer.WriteMessages(ctx, message)
-		},
-		message,
-	); err != nil {
-		return fmt.Errorf(
-			"pubblicazione Kafka aggregate_id=%s topic=%s fallita: %w",
-			aggregate.AggregateID,
-			writer.Topic,
-			err,
-		)
-	}
-
-	return nil
-}
-
 func cloudEdgeAggregateMessage(
 	aggregate model.CloudEdgeAggregate,
 ) (kafka.Message, error) {
@@ -160,14 +131,12 @@ func writeKafkaMessage(
 }
 
 func flushWindows(
-	writer *kafka.Writer,
-	aggregator *cloudworker.WindowAggregator,
-	workerID string,
+	processor *CloudMessageProcessor,
 ) error {
-	for _, output := range aggregator.Flush() {
-		if err := publishCloudEdgeAggregate(
-			writer,
+	for _, output := range processor.aggregator.Flush() {
+		if err := processor.publishCloudAggregate(
 			output,
+			true,
 		); err != nil {
 			return fmt.Errorf(
 				"flush finestra edge=%s fallito: %w",
@@ -175,13 +144,6 @@ func flushWindows(
 				err,
 			)
 		}
-
-		logPublishedWindow(
-			workerID,
-			writer.Topic,
-			output,
-			true,
-		)
 	}
 
 	return nil

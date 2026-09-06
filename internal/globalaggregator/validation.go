@@ -3,7 +3,6 @@ package globalaggregator
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"continuum/internal/model"
 )

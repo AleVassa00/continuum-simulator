@@ -114,9 +114,7 @@ func runCloudWorker() error {
 	}
 
 	if err := flushWindows(
-		writer,
-		aggregator,
-		config.WorkerID,
+		processor,
 	); err != nil {
 		return err
 	}
