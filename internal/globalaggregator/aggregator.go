@@ -36,7 +36,7 @@ type windowState struct {
 	start time.Time
 	end   time.Time
 
-	contributors map[string]struct{}
+	contributors map[string]string // edgeID -> AggregateID incorporato nella finestra
 	events       uint64
 
 	temperature metricState
@@ -160,6 +160,23 @@ func (aggregator *Aggregator) Add(
 		return err
 	}
 
+	key := makeWindowKey(input.WindowStart, input.WindowEnd)
+	state := aggregator.windows[key]
+	if state != nil {
+		if aggregateID, found := state.contributors[input.EdgeID]; found {
+			// Un retry dello stesso contributo non rappresenta nuova attivita.
+			if aggregateID == input.AggregateID {
+				return nil
+			}
+			return fmt.Errorf(
+				"violazione strutturale: edge=%s ha contribuito piu volte alla finestra globale [%s,%s)",
+				input.EdgeID,
+				state.start.Format(time.RFC3339),
+				state.end.Format(time.RFC3339),
+			)
+		}
+	}
+
 	now := time.Now().UTC()
 	if aggregator.firstAggregateAt.IsZero() {
 		aggregator.firstAggregateAt = now
@@ -168,7 +185,6 @@ func (aggregator *Aggregator) Add(
 	aggregator.lastActivityByEdge[input.EdgeID] = now
 
 	// Il record e late soltanto rispetto al watermark valido prima del suo arrivo.
-	key := makeWindowKey(input.WindowStart, input.WindowEnd)
 	_, explicitlyClosed := aggregator.closedWindows[key]
 	closedByWatermark := !aggregator.watermark.IsZero() &&
 		!input.WindowEnd.After(aggregator.watermark)
@@ -183,22 +199,13 @@ func (aggregator *Aggregator) Add(
 		)
 	}
 
-	state := aggregator.windows[key]
 	if state == nil {
 		state = &windowState{
 			start:        input.WindowStart.UTC(),
 			end:          input.WindowEnd.UTC(),
-			contributors: make(map[string]struct{}),
+			contributors: make(map[string]string),
 		}
 		aggregator.windows[key] = state
-	}
-	if _, duplicate := state.contributors[input.EdgeID]; duplicate {
-		return fmt.Errorf(
-			"violazione strutturale: edge=%s ha contribuito piu volte alla finestra globale [%s,%s)",
-			input.EdgeID,
-			state.start.Format(time.RFC3339),
-			state.end.Format(time.RFC3339),
-		)
 	}
 
 	if input.WindowEnd.After(aggregator.maxWindowEndByEdge[input.EdgeID]) {
@@ -411,7 +418,7 @@ func makeWindowKey(start time.Time, end time.Time) windowKey {
 }
 
 func (state *windowState) add(input model.CloudEdgeAggregate) {
-	state.contributors[input.EdgeID] = struct{}{}
+	state.contributors[input.EdgeID] = input.AggregateID
 	state.events += input.Events
 	state.temperature.add(input.Temperature)
 	state.humidity.add(input.Humidity)

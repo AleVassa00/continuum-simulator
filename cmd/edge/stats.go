@@ -35,7 +35,7 @@ type EdgeStatsSnapshot struct {
 }
 
 func (
-	stats *EdgeStats,
+stats *EdgeStats,
 ) Snapshot() EdgeStatsSnapshot {
 	return EdgeStatsSnapshot{
 		TelemetryReceived: stats.telemetryReceived.Load(),
@@ -58,106 +58,50 @@ func (
 	}
 }
 
-func (
-	stats *EdgeStats,
-) SnapshotWithQueue(
-	ingress *EdgeIngress,
-) EdgeStatsSnapshot {
+func (stats *EdgeStats) SnapshotWithQueue(ingress *EdgeIngress) EdgeStatsSnapshot {
 	snapshot := stats.Snapshot()
 
 	queueStats := ingress.Stats()
 
-	snapshot.IngressQueueCapacity =
-		queueStats.Capacity
+	snapshot.IngressQueueCapacity = queueStats.Capacity
 
-	snapshot.MaxIngressQueueDepthObserved =
-		queueStats.MaxDepthObserved
+	snapshot.MaxIngressQueueDepthObserved = queueStats.MaxDepthObserved
 
 	return snapshot
 }
 
-func (
-	stats EdgeStatsSnapshot,
-) MaxIngressQueueUtilization() float64 {
+func (stats EdgeStatsSnapshot) MaxIngressQueueUtilization() float64 {
 	if stats.IngressQueueCapacity <= 0 {
 		return 0
 	}
 
-	return float64(
-		stats.MaxIngressQueueDepthObserved,
-	) /
-		float64(
-			stats.IngressQueueCapacity,
-		) *
-		100
+	return float64(stats.MaxIngressQueueDepthObserved) / float64(stats.IngressQueueCapacity) * 100
 }
 
-func printEdgeSummary(
-	edgeID string,
-	stats EdgeStatsSnapshot,
-) {
-	fmt.Printf(
-		"\nEdge %s summary\n",
-		edgeID,
-	)
+func printEdgeSummary(edgeID string, stats EdgeStatsSnapshot) {
+	fmt.Printf("\nEdge %s summary\n", edgeID)
 
-	fmt.Printf(
-		"MQTT telemetry ricevuta: %d\n",
-		stats.TelemetryReceived,
-	)
+	fmt.Printf("MQTT telemetry ricevuta: %d\n", stats.TelemetryReceived)
 
-	fmt.Printf(
-		"Ingress queue capacity: %d\n",
-		stats.IngressQueueCapacity,
-	)
+	fmt.Printf("Ingress queue capacity: %d\n", stats.IngressQueueCapacity)
 
-	fmt.Printf(
-		"Max ingress queue depth: %d\n",
-		stats.MaxIngressQueueDepthObserved,
-	)
+	fmt.Printf("Max ingress queue depth: %d\n", stats.MaxIngressQueueDepthObserved)
 
-	fmt.Printf(
-		"Max ingress queue utilization: %.1f%%\n",
-		stats.MaxIngressQueueUtilization(),
-	)
+	fmt.Printf("Max ingress queue utilization: %.1f%%\n", stats.MaxIngressQueueUtilization())
 
-	fmt.Printf(
-		"Ingress accettata: %d\n",
-		stats.IngressAccepted,
-	)
+	fmt.Printf("Ingress accettata: %d\n", stats.IngressAccepted)
 
-	fmt.Printf(
-		"Ingress queue drop: %d\n",
-		stats.IngressQueueDropped,
-	)
+	fmt.Printf("Ingress queue drop: %d\n", stats.IngressQueueDropped)
 
-	fmt.Printf(
-		"Telemetry invalida scartata: %d\n",
-		stats.InvalidTelemetry,
-	)
+	fmt.Printf("Telemetry invalida scartata: %d\n", stats.InvalidTelemetry)
 
-	fmt.Printf(
-		"Finestre chiuse/out-of-order scartati: %d\n",
-		stats.OutOfOrderDropped,
-	)
+	fmt.Printf("Finestre chiuse/out-of-order scartati: %d\n", stats.OutOfOrderDropped)
 
-	fmt.Printf(
-		"Telemetry post-EOS scartata: %d\n",
-		stats.PostEOSDropped,
-	)
+	fmt.Printf("Telemetry post-EOS scartata: %d\n", stats.PostEOSDropped)
 
-	fmt.Printf(
-		"Telemetry processata: %d\n",
-		stats.Processed,
-	)
+	fmt.Printf("Telemetry processata: %d\n", stats.Processed)
 
-	fmt.Printf(
-		"Aggregate Kafka emessi: %d\n",
-		stats.AggregatesEmitted,
-	)
+	fmt.Printf("Aggregate Kafka emessi: %d\n", stats.AggregatesEmitted)
 
-	fmt.Printf(
-		"EndOfReplay processati: %d\n",
-		stats.EndOfReplayProcessed,
-	)
+	fmt.Printf("EndOfReplay processati: %d\n", stats.EndOfReplayProcessed)
 }

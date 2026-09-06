@@ -46,7 +46,6 @@ type ReplayEgress struct {
 
 // ReplayEgressStats aggrega le metriche operative raccolte durante il ciclo di vita della egress.
 type ReplayEgressStats struct {
-	CurrentQueueDepth  int
 	PublishAttempts    uint64
 	PublishErrors      uint64
 	EOSSuccesses       int
@@ -98,7 +97,6 @@ func (egress *ReplayEgress) CloseAndWait() (ReplayEgressStats, error) {
 	<-egress.done
 
 	return ReplayEgressStats{
-		CurrentQueueDepth:  len(egress.queue),
 		PublishAttempts:    egress.publishAttempts,
 		PublishErrors:      egress.publishErrors,
 		EOSSuccesses:       egress.eosSuccesses,
