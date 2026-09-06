@@ -41,32 +41,12 @@ func runEdge() error {
 		}
 	}()
 
-	output := make(chan EdgeOutputRecord)
-	egressStopped := make(chan struct{})
-
 	aggregator := &WindowAggregator{
 		edgeID:     config.EdgeID,
 		windowSize: config.WindowSize,
 	}
 
-	kafkaEgress := &KafkaEgress{
-		edgeID: config.EdgeID,
-		writer: kafkaWriter,
-		input:  output,
-		stats:  stats,
-	}
-
-	kafkaDone := make(chan error, 1)
-	go func() {
-		err := kafkaEgress.Run()
-		close(egressStopped)
-		kafkaDone <- err
-	}()
-
-	processorDone := make(chan error, 1)
-	go func() {
-		processorDone <- runEdgeLoop(ingress, aggregator, output, egressStopped, stats)
-	}()
+	pipeline := startEdgePipeline(ingress, aggregator, kafkaWriter, stats)
 
 	fmt.Printf("Avvio Edge %s\n", config.EdgeID)
 	fmt.Printf("Broker MQTT: %s\n", config.MQTTBroker)
@@ -80,77 +60,21 @@ func runEdge() error {
 
 	subscriptions := &SubscriptionCoordinator{}
 
-	client, err := connectEdgeMQTTClient(config, ingress, stats, readiness, subscriptions)
-	if err != nil {
-		readiness.MarkNotReady()
-		subscriptions.Invalidate()
-		ingress.Close()
+	client, connectErr := connectEdgeMQTTClient(config, ingress, stats, readiness, subscriptions)
+	if connectErr == nil {
+		shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
 
-		processorErr := <-processorDone
-		kafkaErr := <-kafkaDone
-
-		if processorErr != nil {
-			fmt.Printf("%s: processing fallito durante startup: %v\n", config.EdgeID, processorErr)
-		}
-
-		if kafkaErr != nil {
-			fmt.Printf("%s: Kafka egress fallito durante startup: %v\n", config.EdgeID, kafkaErr)
-		}
-
-		return err
+		pipeline.waitForTermination(shutdownContext)
+		fmt.Printf("\nArresto %s...\n", config.EdgeID)
 	}
 
-	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	var processorErr error
-	var kafkaErr error
-
-	processorFinished := false
-	kafkaFinished := false
-
-	select {
-	case <-shutdownContext.Done():
-
-	case processorErr = <-processorDone:
-		processorFinished = true
-
-	case kafkaErr = <-kafkaDone:
-		kafkaFinished = true
-	}
-
-	fmt.Printf("\nArresto %s...\n", config.EdgeID)
-
-	readiness.MarkNotReady()
-	subscriptions.Invalidate()
-
-	client.Disconnect(250)
-
-	// Da questo momento non accettiamo più ingress.
-	// runEdgeLoop drena ciò che era già stato accettato.
-	ingress.Close()
-
-	if !processorFinished {
-		processorErr = <-processorDone
-	}
-
-	if !kafkaFinished {
-		kafkaErr = <-kafkaDone
-	}
-
-	if processorErr != nil {
-		fmt.Printf("%s: processing fallito: %v\n", config.EdgeID, processorErr)
-	}
-
-	if kafkaErr != nil {
-		fmt.Printf("%s: Kafka egress fallito: %v\n", config.EdgeID, kafkaErr)
+	stopEdgeIngress(ingress, client, readiness, subscriptions)
+	pipelineErr := pipeline.drain(config.EdgeID, connectErr != nil)
+	if connectErr != nil {
+		return connectErr
 	}
 
 	printEdgeSummary(config.EdgeID, stats.SnapshotWithQueue(ingress))
-
-	if processorErr != nil {
-		return processorErr
-	}
-
-	return kafkaErr
+	return pipelineErr
 }
