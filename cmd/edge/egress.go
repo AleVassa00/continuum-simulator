@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"continuum/internal/avrocodec"
 	"continuum/internal/model"
 
 	"github.com/segmentio/kafka-go"
@@ -63,7 +63,7 @@ func (egress *KafkaEgress) Run() error {
 }
 
 func (egress *KafkaEgress) publishAggregate(aggregate model.EdgeAggregate) error {
-	payload, err := json.Marshal(aggregate)
+	payload, err := avrocodec.EncodeEdgeAggregate(aggregate)
 	if err != nil {
 		return fmt.Errorf("serializzazione EdgeAggregate fallita: %w", err)
 	}

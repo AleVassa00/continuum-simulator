@@ -8,9 +8,7 @@ import (
 	"continuum/internal/model"
 )
 
-func ValidateEdgeAggregate(
-	aggregate model.EdgeAggregate,
-) error {
+func ValidateEdgeAggregate(aggregate model.EdgeAggregate) error {
 	if err := validateAggregateHeader(
 		aggregate.AggregateID,
 		aggregate.EdgeID,
@@ -44,13 +42,9 @@ func ValidateEdgeAggregate(
 	)
 }
 
-func ValidateCloudEdgeAggregate(
-	aggregate model.CloudEdgeAggregate,
-) error {
+func ValidateCloudEdgeAggregate(aggregate model.CloudEdgeAggregate) error {
 	if aggregate.InputAggregates == 0 {
-		return fmt.Errorf(
-			"CloudEdgeAggregate senza aggregati di input",
-		)
+		return fmt.Errorf("CloudEdgeAggregate senza aggregati di input")
 	}
 
 	if err := validateAggregateHeader(
@@ -63,36 +57,27 @@ func ValidateCloudEdgeAggregate(
 		return err
 	}
 
-	if err := model.ValidateMetricAggregate(
-		"temperature",
+	if err := model.ValidateMetricAggregate("temperature",
 		aggregate.Events,
 		aggregate.Temperature,
 	); err != nil {
 		return err
 	}
 
-	if err := model.ValidateMetricAggregate(
-		"humidity",
+	if err := model.ValidateMetricAggregate("humidity",
 		aggregate.Events,
 		aggregate.Humidity,
 	); err != nil {
 		return err
 	}
 
-	return model.ValidateMetricAggregate(
-		"pressure",
+	return model.ValidateMetricAggregate("pressure",
 		aggregate.Events,
 		aggregate.Pressure,
 	)
 }
 
-func validateAggregateHeader(
-	aggregateID string,
-	edgeID string,
-	windowStart time.Time,
-	windowEnd time.Time,
-	events uint64,
-) error {
+func validateAggregateHeader(aggregateID string, edgeID string, windowStart time.Time, windowEnd time.Time, events uint64) error {
 	if strings.TrimSpace(aggregateID) == "" {
 		return fmt.Errorf("aggregate_id mancante")
 	}
@@ -110,8 +95,7 @@ func validateAggregateHeader(
 	}
 
 	if !windowEnd.After(windowStart) {
-		return fmt.Errorf(
-			"finestra non valida: start=%s end=%s",
+		return fmt.Errorf("finestra non valida: start=%s end=%s",
 			windowStart.Format(time.RFC3339),
 			windowEnd.Format(time.RFC3339),
 		)

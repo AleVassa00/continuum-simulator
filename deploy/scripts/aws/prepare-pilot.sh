@@ -343,6 +343,7 @@ stage_role() {
     cloud-core)
       copy_internal_packages \
         "${destination}" \
+        avrocodec \
         model \
         cloudworker \
         envutil \
@@ -355,6 +356,7 @@ stage_role() {
     workers)
       copy_internal_packages \
         "${destination}" \
+        avrocodec \
         model \
         cloudworker \
         envutil \
@@ -364,7 +366,7 @@ stage_role() {
       cp "${REPO_ROOT}/deploy/compose/distributed/workers.generated.yml" "${destination}/deploy/compose/distributed/"
       ;;
     edge)
-      copy_internal_packages "${destination}" model mqtttopic
+      copy_internal_packages "${destination}" avrocodec model mqtttopic
       cp -R "${REPO_ROOT}/cmd/edge" "${destination}/cmd/edge"
       cp "${REPO_ROOT}/deploy/docker/edge.Dockerfile" "${destination}/deploy/docker/"
       cp "${REPO_ROOT}/deploy/compose/distributed/edge.generated.yml" "${destination}/deploy/compose/distributed/"

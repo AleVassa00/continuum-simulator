@@ -1,0 +1,93 @@
+{
+  "type": "record",
+  "name": "EdgeAggregate",
+  "namespace": "continuum",
+  "fields": [
+    {
+      "name": "aggregate_id",
+      "type": "string"
+    },
+    {
+      "name": "edge_id",
+      "type": "string"
+    },
+    {
+      "name": "window_start",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-nanos"
+      }
+    },
+    {
+      "name": "window_end",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-nanos"
+      }
+    },
+    {
+      "name": "events",
+      "type": "long"
+    },
+    {
+      "name": "temperature",
+      "type": {
+        "type": "record",
+        "name": "MetricAggregate",
+        "fields": [
+          {
+            "name": "valid",
+            "type": "long"
+          },
+          {
+            "name": "invalid",
+            "type": "long"
+          },
+          {
+            "name": "sum",
+            "type": "double"
+          },
+          {
+            "name": "average",
+            "type": [
+              "null",
+              "double"
+            ],
+            "default": null
+          },
+          {
+            "name": "min",
+            "type": [
+              "null",
+              "double"
+            ],
+            "default": null
+          },
+          {
+            "name": "max",
+            "type": [
+              "null",
+              "double"
+            ],
+            "default": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "humidity",
+      "type": "MetricAggregate"
+    },
+    {
+      "name": "pressure",
+      "type": "MetricAggregate"
+    },
+    {
+      "name": "emitted_at",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-nanos"
+      }
+    }
+  ]
+}

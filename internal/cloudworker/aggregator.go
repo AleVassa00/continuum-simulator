@@ -13,40 +13,16 @@ type WindowAggregator struct {
 	states     map[string]*cloudWindowState
 }
 
-func NewWindowAggregator(
-	windowSize time.Duration,
-) (*WindowAggregator, error) {
-	if windowSize <= 0 {
-		return nil,
-			fmt.Errorf(
-				"dimensione finestra Cloud deve essere maggiore di zero",
-			)
-	}
-
+func NewWindowAggregator(windowSize time.Duration) *WindowAggregator {
 	return &WindowAggregator{
 		windowSize: windowSize,
-		states: make(
-			map[string]*cloudWindowState,
-		),
-	}, nil
+		states:     make(map[string]*cloudWindowState),
+	}
 }
 
-func (
-	aggregator *WindowAggregator,
-) Add(
-	input model.EdgeAggregate,
-) (*model.CloudEdgeAggregate, error) {
-	if err := ValidateEdgeAggregate(input); err != nil {
-		return nil,
-			fmt.Errorf(
-				"EdgeAggregate %q non valido: %w",
-				input.AggregateID,
-				err,
-			)
-	}
-
-	windowStart, windowEnd, err :=
-		aggregator.cloudWindowFor(input)
+// Add incorpora un EdgeAggregate già validato al confine Kafka.
+func (aggregator *WindowAggregator) Add(input model.EdgeAggregate) (*model.CloudEdgeAggregate, error) {
+	windowStart, windowEnd, err := aggregator.cloudWindowFor(input)
 	if err != nil {
 		return nil, err
 	}
@@ -59,28 +35,14 @@ func (
 	}
 
 	if current == nil {
-		current = newCloudWindowState(
-			input.EdgeID,
-			windowStart,
-			windowEnd,
-		)
-
+		current = newCloudWindowState(input.EdgeID, windowStart, windowEnd)
 		aggregator.states[input.EdgeID] = current
-
 		current.add(input)
-
 		return nil, nil
 	}
 
 	if windowStart.Before(current.start) {
-		return nil,
-			fmt.Errorf(
-				"EdgeAggregate fuori ordine: edge_id=%s aggregate_id=%s window_start=%s current_window=%s",
-				input.EdgeID,
-				input.AggregateID,
-				windowStart.Format(time.RFC3339),
-				current.start.Format(time.RFC3339),
-			)
+		return nil, fmt.Errorf("EdgeAggregate fuori ordine: edge_id=%s aggregate_id=%s window_start=%s current_window=%s", input.EdgeID, input.AggregateID, windowStart.Format(time.RFC3339), current.start.Format(time.RFC3339))
 	}
 
 	if windowStart.Equal(current.start) {
@@ -89,15 +51,9 @@ func (
 		return nil, nil
 	}
 
-	emitted := current.buildAggregate(
-		time.Now().UTC(),
-	)
+	emitted := current.buildAggregate(time.Now().UTC())
 
-	next := newCloudWindowState(
-		input.EdgeID,
-		windowStart,
-		windowEnd,
-	)
+	next := newCloudWindowState(input.EdgeID, windowStart, windowEnd)
 
 	next.add(input)
 
@@ -106,30 +62,17 @@ func (
 	return &emitted, nil
 }
 
-func (
-	aggregator *WindowAggregator,
-) Flush() []model.CloudEdgeAggregate {
-	edgeIDs := make(
-		[]string,
-		0,
-		len(aggregator.states),
-	)
+func (aggregator *WindowAggregator) Flush() []model.CloudEdgeAggregate {
+	edgeIDs := make([]string, 0, len(aggregator.states))
 
 	for edgeID := range aggregator.states {
-		edgeIDs = append(
-			edgeIDs,
-			edgeID,
-		)
+		edgeIDs = append(edgeIDs, edgeID)
 	}
 
 	sort.Strings(edgeIDs)
 
 	emittedAt := time.Now().UTC()
-	outputs := make(
-		[]model.CloudEdgeAggregate,
-		0,
-		len(edgeIDs),
-	)
+	outputs := make([]model.CloudEdgeAggregate, 0, len(edgeIDs))
 
 	for _, edgeID := range edgeIDs {
 		state := aggregator.states[edgeID]
@@ -138,10 +81,7 @@ func (
 			continue
 		}
 
-		outputs = append(
-			outputs,
-			state.buildAggregate(emittedAt),
-		)
+		outputs = append(outputs, state.buildAggregate(emittedAt))
 	}
 
 	clear(aggregator.states)
@@ -149,11 +89,7 @@ func (
 	return outputs
 }
 
-func (
-	aggregator *WindowAggregator,
-) FlushEdge(
-	edgeID string,
-) (*model.CloudEdgeAggregate, bool) {
+func (aggregator *WindowAggregator) FlushEdge(edgeID string) (*model.CloudEdgeAggregate, bool) {
 	state, found := aggregator.states[edgeID]
 	if !found {
 		return nil, false
@@ -164,9 +100,7 @@ func (
 		return nil, false
 	}
 
-	output := state.buildAggregate(
-		time.Now().UTC(),
-	)
+	output := state.buildAggregate(time.Now().UTC())
 
 	return &output, true
 }

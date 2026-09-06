@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
+	"continuum/internal/avrocodec"
 	"continuum/internal/cloudworker"
 	"continuum/internal/globalaggregator"
 	"continuum/internal/kafkautil"
@@ -61,10 +61,10 @@ func (processor *GlobalMessageProcessor) Process(
 }
 
 func decodeCloudEdgeAggregate(payload []byte) (model.CloudEdgeAggregate, error) {
-	var aggregate model.CloudEdgeAggregate
-	if err := json.Unmarshal(payload, &aggregate); err != nil {
+	aggregate, err := avrocodec.DecodeCloudEdgeAggregate(payload)
+	if err != nil {
 		return model.CloudEdgeAggregate{}, fmt.Errorf(
-			"CloudEdgeAggregate JSON non valido: %w",
+			"CloudEdgeAggregate Avro non valido: %w",
 			err,
 		)
 	}

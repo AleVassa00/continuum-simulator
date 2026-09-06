@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"continuum/internal/avrocodec"
 	"continuum/internal/cloudworker"
 	"continuum/internal/model"
 
@@ -95,7 +95,7 @@ func cloudEdgeAggregateMessage(
 		)
 	}
 
-	payload, err := json.Marshal(aggregate)
+	payload, err := avrocodec.EncodeCloudEdgeAggregate(aggregate)
 	if err != nil {
 		return kafka.Message{}, fmt.Errorf(
 			"serializzazione CloudEdgeAggregate %q fallita: %w",

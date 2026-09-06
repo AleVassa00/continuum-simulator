@@ -5,14 +5,9 @@ import (
 	"math"
 )
 
-func ValidateMetricAggregate(
-	name string,
-	events uint64,
-	metric MetricAggregate,
-) error {
+func ValidateMetricAggregate(name string, events uint64, metric MetricAggregate) error {
 	if metric.Valid+metric.Invalid != events {
-		return fmt.Errorf(
-			"%s: valid(%d) + invalid(%d) != events(%d)",
+		return fmt.Errorf("%s: valid(%d) + invalid(%d) != events(%d)",
 			name,
 			metric.Valid,
 			metric.Invalid,
@@ -26,16 +21,14 @@ func ValidateMetricAggregate(
 
 	if metric.Valid == 0 {
 		if metric.Sum != 0 {
-			return fmt.Errorf(
-				"%s: sum %.6f presente senza misure valide",
+			return fmt.Errorf("%s: sum %.6f presente senza misure valide",
 				name,
 				metric.Sum,
 			)
 		}
 
 		if metric.Average != nil || metric.Min != nil || metric.Max != nil {
-			return fmt.Errorf(
-				"%s: statistiche presenti senza misure valide",
+			return fmt.Errorf("%s: statistiche presenti senza misure valide",
 				name,
 			)
 		}
@@ -44,37 +37,27 @@ func ValidateMetricAggregate(
 	}
 
 	if metric.Average == nil || metric.Min == nil || metric.Max == nil {
-		return fmt.Errorf(
-			"%s: statistiche mancanti con %d misure valide",
+		return fmt.Errorf("%s: statistiche mancanti con %d misure valide",
 			name,
 			metric.Valid,
 		)
 	}
 
-	if !isFinite(*metric.Average) ||
-		!isFinite(*metric.Min) ||
-		!isFinite(*metric.Max) {
+	if !isFinite(*metric.Average) || !isFinite(*metric.Min) || !isFinite(*metric.Max) {
 		return fmt.Errorf("%s: statistiche non finite", name)
 	}
 
 	if *metric.Min > *metric.Max {
-		return fmt.Errorf(
-			"%s: min %.6f maggiore di max %.6f",
+		return fmt.Errorf("%s: min %.6f maggiore di max %.6f",
 			name,
 			*metric.Min,
 			*metric.Max,
 		)
 	}
 
-	tolerance := floatTolerance(
-		*metric.Average,
-		*metric.Min,
-		*metric.Max,
-	)
-	if *metric.Average < *metric.Min-tolerance ||
-		*metric.Average > *metric.Max+tolerance {
-		return fmt.Errorf(
-			"%s: average %.6f fuori dal range [%.6f, %.6f]",
+	tolerance := floatTolerance(*metric.Average, *metric.Min, *metric.Max)
+	if (*metric.Average < *metric.Min-tolerance) || (*metric.Average > *metric.Max+tolerance) {
+		return fmt.Errorf("%s: average %.6f fuori dal range [%.6f, %.6f]",
 			name,
 			*metric.Average,
 			*metric.Min,
@@ -83,10 +66,8 @@ func ValidateMetricAggregate(
 	}
 
 	expectedAverage := metric.Sum / float64(metric.Valid)
-	if math.Abs(*metric.Average-expectedAverage) >
-		floatTolerance(*metric.Average, expectedAverage) {
-		return fmt.Errorf(
-			"%s: average %.12f diversa da sum/valid %.12f",
+	if (math.Abs(*metric.Average - expectedAverage)) > (floatTolerance(*metric.Average, expectedAverage)) {
+		return fmt.Errorf("%s: average %.12f diversa da sum/valid %.12f",
 			name,
 			*metric.Average,
 			expectedAverage,

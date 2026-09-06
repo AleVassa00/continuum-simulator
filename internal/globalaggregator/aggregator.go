@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"continuum/internal/cloudworker"
 	"continuum/internal/model"
 )
 
@@ -99,17 +98,11 @@ func (aggregator *Aggregator) LateAggregatesDropped() uint64 {
 	return aggregator.lateAggregatesDropped
 }
 
+// Add incorpora un CloudEdgeAggregate già validato al confine Kafka.
 func (aggregator *Aggregator) Add(
 	ctx context.Context,
 	input model.CloudEdgeAggregate,
 ) error {
-	if err := cloudworker.ValidateCloudEdgeAggregate(input); err != nil {
-		return fmt.Errorf(
-			"CloudEdgeAggregate %q non valido: %w",
-			input.AggregateID,
-			err,
-		)
-	}
 	if _, found := aggregator.expectedEdges[input.EdgeID]; !found {
 		return fmt.Errorf("CloudEdgeAggregate da Edge non atteso %q", input.EdgeID)
 	}

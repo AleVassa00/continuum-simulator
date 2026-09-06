@@ -11,12 +11,12 @@ Replay globale di gennaio
   -> Mosquitto x 13
   -> Edge Gateway x 13
   -> EdgeAggregate 5m per edge_id
-  -> Kafka topic edge-aggregates
+  -> Kafka topic edge-aggregates / Avro
   -> Cloud Worker x N, stesso consumer group
   -> CloudEdgeAggregate 15m per edge_id
-  -> Kafka topic cloud-edge-aggregates
+  -> Kafka topic cloud-edge-aggregates / Avro
   -> Global Aggregator
-  -> GlobalAggregate nei log
+  -> GlobalAggregate JSON nei log
 ```
 
 Non e presente un livello Fog. Le tredici zone Edge sono nodi logici derivati dal
@@ -54,12 +54,35 @@ Lo stato dei requisiti della traccia e mantenuto in
 
 ## Contratti Kafka
 
-`EdgeAggregate`, `CloudEdgeAggregate` e `GlobalAggregate` sono record JSON senza
-campo di versione applicativa. Ogni metrica contiene:
+I payload di `EdgeAggregate` su `edge-aggregates` e di `CloudEdgeAggregate` su
+`cloud-edge-aggregates` sono singoli record Apache Avro binari, senza prefissi
+aggiuntivi. Gli schema statici sono in
+[`internal/avrocodec/schemas`](internal/avrocodec/schemas) e vengono incorporati
+nei binari; producer e consumer utilizzano lo stesso contratto durante ogni run.
+Le nuove esecuzioni richiedono topic privi di aggregati JSON precedenti, che il
+decoder Avro non puo leggere.
+`internal/avrocodec` esegue il mapping, mentre la business logic continua a usare
+le struct di `internal/model`. MQTT e l'output finale `GlobalAggregate` restano
+JSON. Ogni metrica contiene:
 
 ```text
 valid, invalid, sum, average, min, max
 ```
+
+Ogni schema definisce `MetricAggregate` una sola volta e lo riutilizza per le tre
+misure; la definizione e identica nei due schema. `average`, `min` e `max` usano
+union `["null", "double"]`, con default `null`.
+
+I timestamp usano `long` con logical type `timestamp-nanos`: il mapping esplicito
+conserva i nanosecondi di `time.Time`, inclusi eventuali confini di finestre
+inferiori al millisecondo, e restituisce istanti UTC. Il codec rifiuta timestamp
+fuori dall'intervallo rappresentabile come nanosecondi Unix signed a 64 bit
+(circa 1677-2262), anziche troncarli o produrre overflow.
+I contatori rimangono `uint64` nel dominio Go: vengono convertiti in Avro `long`
+solo se non superano `9223372036854775807`; in lettura sono rifiutati i negativi.
+Il decoder verifica la struttura Avro e l'assenza di byte residui. Il consumer
+valida una volta gli identificatori, le finestre e le metriche prima di passare
+il record all'aggregatore; deduplica e vincoli sullo stato restano nell'aggregatore.
 
 La somma rende componibili gli aggregati: il Worker calcola la media come
 `sum(valid values) / valid`, senza effettuare una media delle medie.
@@ -258,10 +281,11 @@ prima del replay:
 impostare `cloud.workers` in `experiments/baseline.yaml`, rigenerare il Compose
 con `go run ./cmd/deploygen` e avviare i servizi generati.
 
-Il topic di output puo essere ispezionato con:
+I topic degli aggregati contengono Avro binario e richiedono il relativo schema
+per la decodifica. I risultati finali restano leggibili in JSON nei log:
 
 ```powershell
-docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:29092 --topic cloud-edge-aggregates --from-beginning
+docker compose -f deploy/compose/continuum.generated.yml logs global-aggregator
 ```
 
 Al completamento dei CSV, gli EOS attraversano l'intera pipeline dopo i relativi
