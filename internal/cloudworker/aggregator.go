@@ -10,12 +10,7 @@ import (
 
 // WindowAggregator aggrega EdgeAggregate in finestre Cloud per singolo Edge.
 //
-// Limitazione architetturale: lo stato delle finestre vive esclusivamente in
-// RAM, mentre gli offset Kafka vengono committati dopo l'elaborazione di ciascun
-// record. Un crash del processo può quindi perdere stato derivato da record il
-// cui offset è già stato committato: al riavvio tali record non vengono
-// riconsumati e la finestra parziale non è ricostruibile. Una soluzione completa
-// richiederebbe un checkpoint coordinato tra offset e stato applicativo.
+// Limitazione architetturale: lo stato delle finestre vive esclusivamente in RAM
 type WindowAggregator struct {
 	windowSize time.Duration
 	states     map[string]*cloudWindowState
@@ -30,6 +25,7 @@ func NewWindowAggregator(windowSize time.Duration) *WindowAggregator {
 
 // Add incorpora un EdgeAggregate già validato al confine Kafka.
 func (aggregator *WindowAggregator) Add(input model.EdgeAggregate) (*model.CloudEdgeAggregate, error) {
+	// Determiniamo a quale finestra Cloud appartiene l'aggregato Edge
 	windowStart, windowEnd, err := aggregator.cloudWindowFor(input)
 	if err != nil {
 		return nil, err
@@ -37,14 +33,17 @@ func (aggregator *WindowAggregator) Add(input model.EdgeAggregate) (*model.Cloud
 
 	current := aggregator.states[input.EdgeID]
 	if current != nil {
+		// Verifico se l'aggregato è già stato elaborato, dato il delivery at-least-once
 		if _, seen := current.seenAggregateIDs[input.AggregateID]; seen {
 			return nil, nil
 		}
 	}
-
+	// se ancora non ho uno stato per quell'edge lo creo
 	if current == nil {
 		current = newCloudWindowState(input.EdgeID, windowStart, windowEnd)
+		// salvo lo stato nella mappa
 		aggregator.states[input.EdgeID] = current
+		// aggiungo l'aggregato appena arrivato
 		current.add(input)
 		return nil, nil
 	}
@@ -58,7 +57,7 @@ func (aggregator *WindowAggregator) Add(input model.EdgeAggregate) (*model.Cloud
 
 		return nil, nil
 	}
-
+	// Se l'aggregato appartiene a una finestra Cloud successiva, emetto l'aggregato costruito dalla finestra corrente e apro il nuovo stato
 	emitted := current.buildAggregate(time.Now().UTC())
 
 	next := newCloudWindowState(input.EdgeID, windowStart, windowEnd)
@@ -97,18 +96,15 @@ func (aggregator *WindowAggregator) Flush() []model.CloudEdgeAggregate {
 	return outputs
 }
 
-func (aggregator *WindowAggregator) FlushEdge(edgeID string) (*model.CloudEdgeAggregate, bool) {
-	state, found := aggregator.states[edgeID]
-	if !found {
-		return nil, false
+func (aggregator *WindowAggregator) FlushEdge(edgeID string) *model.CloudEdgeAggregate {
+	state := aggregator.states[edgeID]
+	if state == nil {
+		return nil
 	}
 
 	delete(aggregator.states, edgeID)
-	if state.inputAggregates == 0 {
-		return nil, false
-	}
 
 	output := state.buildAggregate(time.Now().UTC())
 
-	return &output, true
+	return &output
 }

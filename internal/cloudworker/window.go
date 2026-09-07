@@ -29,82 +29,47 @@ type metricState struct {
 	max     float64
 }
 
-func (
-	aggregator *WindowAggregator,
-) cloudWindowFor(
-	input model.EdgeAggregate,
-) (
-	time.Time,
-	time.Time,
-	error,
-) {
-	edgeWindowSize := input.WindowEnd.Sub(
-		input.WindowStart,
-	)
+func (aggregator *WindowAggregator) cloudWindowFor(input model.EdgeAggregate) (time.Time, time.Time, error) {
+	edgeWindowSize := input.WindowEnd.Sub(input.WindowStart)
 
 	if edgeWindowSize <= 0 {
-		return time.Time{},
-			time.Time{},
-			fmt.Errorf(
-				"EdgeAggregate %q ha una finestra non valida",
-				input.AggregateID,
-			)
+		return time.Time{}, time.Time{}, fmt.Errorf("EdgeAggregate %q ha una finestra non valida", input.AggregateID)
 	}
 
 	if aggregator.windowSize%edgeWindowSize != 0 {
-		return time.Time{},
-			time.Time{},
-			fmt.Errorf(
-				"finestra Cloud %s non multipla della finestra Edge %s per aggregate_id=%s",
-				aggregator.windowSize,
-				edgeWindowSize,
-				input.AggregateID,
-			)
+		return time.Time{}, time.Time{}, fmt.Errorf("finestra Cloud %s non multipla della finestra Edge %s per aggregate_id=%s",
+			aggregator.windowSize,
+			edgeWindowSize,
+			input.AggregateID,
+		)
 	}
 
-	windowStart := input.WindowStart.Truncate(
-		aggregator.windowSize,
-	)
+	cloudWindowStart := input.WindowStart.Truncate(aggregator.windowSize)
+	cloudWindowEnd := cloudWindowStart.Add(aggregator.windowSize)
 
-	windowEnd := windowStart.Add(
-		aggregator.windowSize,
-	)
-
-	if input.WindowStart.Before(windowStart) ||
-		input.WindowEnd.After(windowEnd) {
-		return time.Time{},
-			time.Time{},
-			fmt.Errorf(
-				"finestra Edge [%s,%s) attraversa il confine della finestra Cloud [%s,%s)",
-				input.WindowStart.Format(time.RFC3339),
-				input.WindowEnd.Format(time.RFC3339),
-				windowStart.Format(time.RFC3339),
-				windowEnd.Format(time.RFC3339),
-			)
+	if input.WindowStart.Before(cloudWindowStart) || input.WindowEnd.After(cloudWindowEnd) {
+		return time.Time{}, time.Time{}, fmt.Errorf("finestra Edge [%s,%s) attraversa il confine della finestra Cloud [%s,%s)",
+			input.WindowStart.Format(time.RFC3339),
+			input.WindowEnd.Format(time.RFC3339),
+			cloudWindowStart.Format(time.RFC3339),
+			cloudWindowEnd.Format(time.RFC3339),
+		)
 	}
 
-	return windowStart, windowEnd, nil
+	return cloudWindowStart, cloudWindowEnd, nil
 }
 
-func newCloudWindowState(
-	edgeID string,
-	start time.Time,
-	end time.Time,
-) *cloudWindowState {
+func newCloudWindowState(edgeID string, start time.Time, end time.Time) *cloudWindowState {
 	return &cloudWindowState{
 		edgeID: edgeID,
 		start:  start,
 		end:    end,
-		// Gli ID vivono quanto la finestra: sostituzione e flush liberano il set.
+		// Gli ID vivono quanto la finestra: sostituzione e flush liberano il set
 		seenAggregateIDs: make(map[string]struct{}),
 	}
 }
 
-func (
-	state *cloudWindowState,
-) add(
-	input model.EdgeAggregate,
-) {
+func (state *cloudWindowState) add(input model.EdgeAggregate) {
 	state.seenAggregateIDs[input.AggregateID] = struct{}{}
 	state.inputAggregates++
 	state.events += input.Events
@@ -114,25 +79,15 @@ func (
 	state.pressure.add(input.Pressure)
 }
 
-func (
-	state *metricState,
-) add(
-	input model.MetricAggregate,
-) {
+func (state *metricState) add(input model.MetricAggregate) {
 	if input.Valid > 0 {
 		if state.valid == 0 {
 			state.min = *input.Min
 			state.max = *input.Max
 		} else {
-			state.min = min(
-				state.min,
-				*input.Min,
-			)
+			state.min = min(state.min, *input.Min)
 
-			state.max = max(
-				state.max,
-				*input.Max,
-			)
+			state.max = max(state.max, *input.Max)
 		}
 	}
 
@@ -141,17 +96,9 @@ func (
 	state.sum += input.Sum
 }
 
-func (
-	state *cloudWindowState,
-) buildAggregate(
-	emittedAt time.Time,
-) model.CloudEdgeAggregate {
+func (state *cloudWindowState) buildAggregate(emittedAt time.Time) model.CloudEdgeAggregate {
 	return model.CloudEdgeAggregate{
-		AggregateID: buildCloudAggregateID(
-			state.edgeID,
-			state.start,
-			state.end,
-		),
+		AggregateID:     buildCloudAggregateID(state.edgeID, state.start, state.end),
 		EdgeID:          state.edgeID,
 		WindowStart:     state.start,
 		WindowEnd:       state.end,
@@ -164,9 +111,7 @@ func (
 	}
 }
 
-func (
-	state metricState,
-) buildAggregate() model.MetricAggregate {
+func (state metricState) buildAggregate() model.MetricAggregate {
 	if state.valid == 0 {
 		return model.MetricAggregate{
 			Valid:   0,
@@ -178,8 +123,7 @@ func (
 		}
 	}
 
-	average := state.sum /
-		float64(state.valid)
+	average := state.sum / float64(state.valid)
 
 	minimum := state.min
 	maximum := state.max
@@ -194,13 +138,8 @@ func (
 	}
 }
 
-func buildCloudAggregateID(
-	edgeID string,
-	windowStart time.Time,
-	windowEnd time.Time,
-) string {
-	return fmt.Sprintf(
-		"cloud:%s:%s:%s",
+func buildCloudAggregateID(edgeID string, windowStart time.Time, windowEnd time.Time) string {
+	return fmt.Sprintf("cloud:%s:%s:%s",
 		edgeID,
 		windowStart.UTC().Format(time.RFC3339),
 		windowEnd.UTC().Format(time.RFC3339),

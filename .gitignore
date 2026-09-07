@@ -2,6 +2,10 @@
 .gomodcache/
 .gocache/
 
+# Python validation caches (not release inputs)
+__pycache__/
+*.pyc
+
 # IDE
 .idea/
 

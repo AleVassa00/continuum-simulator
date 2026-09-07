@@ -282,8 +282,22 @@ DNS privati senza modificare il programma Go.
 Per confrontare un diverso numero di Worker, avviare una configurazione nuova
 prima del replay:
 
-impostare `cloud.workers` in `experiments/baseline.yaml`, rigenerare il Compose
-con `go run ./cmd/deploygen` e avviare i servizi generati.
+usare YAML separati, senza ritoccare `experiments/baseline.yaml` a ogni prova.
+I file `cloud-scale-w1.yaml`, `cloud-scale-w2.yaml`, `cloud-scale-w4.yaml` (e
+`cloud-scale-w6.yaml` opzionale) mantengono lo stesso workload locale e cambiano
+soltanto nome esperimento e numero di Worker. Dopo la calibrazione eseguire
+almeno tre ripetizioni per configurazione, conservando gli artefatti grezzi:
+
+```powershell
+.\script\run-local-experiment.ps1 -Experiment experiments\cloud-scale-w1.yaml -KeepRawArtifacts
+# Nelle ripetizioni successive, se le immagini non sono cambiate: -SkipBuild
+```
+
+Il runner crea directory diverse per run. Non considerare valide per il confronto
+le run con drop, misure mancanti o post-processing fallito, anche se il replay
+risulta completato. Per EC2 usare il pilot separato `calibration-aws.yaml` e la
+[guida AWS](deploy/scripts/aws/README.md): risorse vincolate e carico iniziale
+diversi richiedono una nuova calibrazione prima delle serie definitive.
 
 I topic degli aggregati contengono Avro binario e richiedono il relativo schema
 per la decodifica. Con il sink predefinito, i risultati finali sono JSON nei log:

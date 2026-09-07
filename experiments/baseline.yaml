@@ -2,11 +2,11 @@ experiment:
   name: baseline
 
 workload:
-  acceleration_factor: 50000
+  acceleration_factor: 20000
   start_lead_time: 30s
 
 simulator:
-  telemetry_queue_capacity: 5000
+  telemetry_queue_capacity: 1000
   start_late_tolerance: 10s
 
 edge:

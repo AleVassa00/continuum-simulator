@@ -1,0 +1,23 @@
+﻿experiment:
+  name: calibration-cloud
+
+workload:
+  acceleration_factor: 40000
+  start_lead_time: 30s
+
+simulator:
+  telemetry_queue_capacity: 5000
+  start_late_tolerance: 10s
+
+edge:
+  window_size: 5m
+  ingress_queue_capacity: 5000
+
+cloud:
+  workers: 2
+  window_size: 15m
+
+global:
+  watermark_delay: 15m
+  edge_idle_timeout: 5s
+

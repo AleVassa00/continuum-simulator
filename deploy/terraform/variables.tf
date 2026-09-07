@@ -72,7 +72,7 @@ variable "edge_instance_type" {
 variable "cloud_core_instance_type" {
   description = "EC2 instance type for the Cloud Core host."
   type        = string
-  default     = "t3.small"
+  default     = "t3.medium"
 }
 
 variable "worker_instance_type" {

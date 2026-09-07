@@ -6,9 +6,9 @@ sufficiente per la consegna.
 
 Le evidenze distinguono codice implementato, configurazione disponibile e prove
 eseguite. `artifacts/experiments/baseline/effective-config.yaml` documenta i
-parametri di una run, ma non ne dimostra l'esito: nel repository corrente non
-sono presenti risultati sperimentali end-to-end che attestino il deployment AWS
-o il confronto tra numeri diversi di Worker.
+parametri di una run, ma non ne dimostra l'esito. Il worktree contiene prove
+locali preliminari con diversi numeri di Worker; non sono evidenza di un
+deployment AWS né sostituiscono serie ripetute a parità di carico e senza perdite.
 
 | Requisito | Stato | Evidenza / lavoro rimanente |
 |---|---|---|
@@ -20,7 +20,7 @@ o il confronto tra numeri diversi di Worker.
 | Deployment automatizzato e configurabile | Parziale | `cmd/deploygen` genera Compose locali e distribuiti dalla topologia e dalla configurazione YAML. `prepare-pilot.sh` prepara le release multi-host; `run-experiment.sh` orchestra readiness, avvio comune, completamento EOS e raccolta degli artefatti. La verifica sperimentale su EC2 resta da documentare. |
 | Docker Compose su EC2 | Parziale | Implementati Terraform e bootstrap Docker per quattro host (Simulator, Edge, Cloud Core, Workers), Compose distribuiti e script AWS in `deploy/`. La presenza di questo codice non dimostra una run EC2 end-to-end completata. |
 | Simulazione rete con tc-netem | Da implementare | La futura valutazione riguardera entrambi i confini: Simulator-Edge Site ed Edge-Cloud/Kafka. Non e ancora implementata. |
-| Valutazione sperimentale | Parziale | Implementati riepiloghi di replay/drop e collector di risorse host/container nello script AWS, con salvataggio di configurazioni e log. Restano da eseguire e analizzare esperimenti riproducibili su throughput, latenza e consumer lag con carico e repliche controllati. |
+| Valutazione sperimentale | Parziale | Runner AWS con quote CPU/RAM, preflight capacità, hash di provenienza, collector host/container e lag Kafka, esportazione CSV e controlli di completezza/perdite. Test offline di parser, Bash e Compose in `deploy/scripts/aws/tests`. Restano pilot EC2, calibrazione, controllo crediti T3 e serie ripetute; il ritardo di pubblicazione delle finestre non equivale alla latenza per evento. |
 | Codice, relazione e README | Parziale | Codice e guide in sviluppo; relazione finale massimo 8 pagine. |
 
 ## Regola di avanzamento

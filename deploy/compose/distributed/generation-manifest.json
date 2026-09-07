@@ -1,11 +1,11 @@
 {
-  "config_sha256": "5081c6f0be84b7e63891d6cce5787e28fd8463b418af3023c8f4d116a29e0d94",
+  "config_sha256": "adb9af71c4b1ca8d7a1c5cb18d0843c1a69ab8a4c494f971c0dc11fb32ffac2f",
   "topology_sha256": "968ca2c43817ac51a5df9272255c7c3ccbb744ccf0093af21b00b25cf4156eed",
-  "resolved_config_yaml": "experiment:\n    name: baseline\nworkload:\n    acceleration_factor: 10000\n    start_lead_time: 1m30s\nsimulator:\n    telemetry_queue_capacity: 1000\n    start_late_tolerance: 10s\nedge:\n    window_size: 5m0s\n    ingress_queue_capacity: 1000\ncloud:\n    workers: 1\n    window_size: 15m0s\nglobal:\n    watermark_delay: 15m0s\n    edge_idle_timeout: 5s\n",
+  "resolved_config_yaml": "experiment:\n    name: calibration-aws\nworkload:\n    acceleration_factor: 10000\n    start_lead_time: 1m0s\nsimulator:\n    telemetry_queue_capacity: 5000\n    start_late_tolerance: 10s\nedge:\n    window_size: 5m0s\n    ingress_queue_capacity: 5000\ncloud:\n    workers: 1\n    window_size: 15m0s\nglobal:\n    watermark_delay: 15m0s\n    edge_idle_timeout: 5s\n",
   "compose_sha256": {
-    "cloud-core.generated.yml": "9d38e3017023dd6c88671a55abc3dbf918d2b994a5d1c18a2cd1cba63abfe541",
-    "edge.generated.yml": "555d5b87f7c75a795c9af0ec84205c770b2e5d0d0bf135638a384b0b1595c9a4",
-    "simulator.generated.yml": "9ec6576e9af760a7cbec2d9a371c8ac2523120be1f4fee8d395782cfb4ca0840",
-    "workers.generated.yml": "91ae4ab4fec4df62b7b9bb9402bbda0311174dc91678c0a5f6ad7f189ee36a95"
+    "cloud-core.generated.yml": "f2e0c635a0be10f6d31b69c3827673f7b87b622d8249e4cf4fa1e4d89f19be98",
+    "edge.generated.yml": "083a27c03a39a35c32da7884872834e4e46504b5fc55e0bb084f2fccf5b4e436",
+    "simulator.generated.yml": "3601059cc4554c727727490b71badc4971ec5fe0d87383fcaae71bd77527b08a",
+    "workers.generated.yml": "9b347351fb17c4f26ff745472e004a66327171cefe7d6f726b74678f82955df4"
   }
 }

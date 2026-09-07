@@ -3,6 +3,9 @@ services:
 {{range .CloudWorkers}}  {{.WorkerID}}:
     image: "continuum-cloud-worker:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: {{.WorkerID}}
+    cpus: "${CLOUD_WORKER_CPUS:?resource profile is required}"
+    mem_limit: "${CLOUD_WORKER_MEMORY:?resource profile is required}"
+    memswap_limit: "${CLOUD_WORKER_MEMORY:?resource profile is required}"
 
     environment:
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"

@@ -1,0 +1,17 @@
+﻿===== group: cloud-workers =====
+
+GROUP           TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID                                                                                    HOST            CLIENT-ID
+cloud-workers   edge-aggregates 3          16250           16250           0               cloud-worker@5b4e98d33ed7 (github.com/segmentio/kafka-go)-377fe181-cb48-4c51-ab1f-25f8c0c48fc3 /172.27.0.14    cloud-worker@5b4e98d33ed7 (github.com/segmentio/kafka-go)
+cloud-workers   edge-aggregates 4          16250           16250           0               cloud-worker@5b4e98d33ed7 (github.com/segmentio/kafka-go)-377fe181-cb48-4c51-ab1f-25f8c0c48fc3 /172.27.0.14    cloud-worker@5b4e98d33ed7 (github.com/segmentio/kafka-go)
+cloud-workers   edge-aggregates 5          8125            8125            0               cloud-worker@5b4e98d33ed7 (github.com/segmentio/kafka-go)-377fe181-cb48-4c51-ab1f-25f8c0c48fc3 /172.27.0.14    cloud-worker@5b4e98d33ed7 (github.com/segmentio/kafka-go)
+cloud-workers   edge-aggregates 0          16250           16250           0               cloud-worker@2bea5ca995a1 (github.com/segmentio/kafka-go)-b3e1637c-73d7-4a6f-93c8-deda15e34dd3 /172.27.0.15    cloud-worker@2bea5ca995a1 (github.com/segmentio/kafka-go)
+cloud-workers   edge-aggregates 1          24371           24371           0               cloud-worker@2bea5ca995a1 (github.com/segmentio/kafka-go)-b3e1637c-73d7-4a6f-93c8-deda15e34dd3 /172.27.0.15    cloud-worker@2bea5ca995a1 (github.com/segmentio/kafka-go)
+cloud-workers   edge-aggregates 2          24375           24375           0               cloud-worker@2bea5ca995a1 (github.com/segmentio/kafka-go)-b3e1637c-73d7-4a6f-93c8-deda15e34dd3 /172.27.0.15    cloud-worker@2bea5ca995a1 (github.com/segmentio/kafka-go)
+
+===== group: global-aggregator =====
+System.Management.Automation.RemoteException
+Consumer group 'global-aggregator' has no active members.
+
+GROUP             TOPIC                 PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID     HOST            CLIENT-ID
+global-aggregator cloud-edge-aggregates 0          35243           35243           0               -               -               -
+

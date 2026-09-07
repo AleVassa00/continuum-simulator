@@ -34,10 +34,7 @@ func (processor *CloudMessageProcessor) Process(message kafka.Message) error {
 		return processor.processEndOfReplay(message)
 
 	default:
-		return fmt.Errorf(
-			"record_type Kafka sconosciuto %q",
-			recordType,
-		)
+		return fmt.Errorf("record_type Kafka sconosciuto %q", recordType)
 	}
 }
 
@@ -65,7 +62,7 @@ func (processor *CloudMessageProcessor) processEdgeAggregate(message kafka.Messa
 	if output == nil {
 		return nil
 	}
-
+	// Un output viene prodotto quando l'arrivo di un aggregato appartenente a una finestra successiva fa emettere quella corrente
 	return processor.publishCloudAggregate(*output, false)
 }
 
@@ -75,20 +72,31 @@ func (processor *CloudMessageProcessor) processEndOfReplay(message kafka.Message
 		return fmt.Errorf("key Kafka EOS mancante o vuota")
 	}
 
+	// Inizializzo la mappa degli Edge terminati se necessario
 	if processor.endedEdges == nil {
 		processor.endedEdges = make(map[string]bool)
 	}
+	// se già arrivato EOS per quell'edge allora duplicato e lo ignoro
 	if processor.endedEdges[edgeID] {
 		fmt.Printf("%s: EndOfReplay duplicato edge=%s ignorato\n", processor.workerID, edgeID)
 		return nil
 	}
 
-	if output, found := processor.aggregator.FlushEdge(edgeID); found {
-		if err := processor.publishCloudAggregate(*output, true); err != nil {
-			return fmt.Errorf("flush finale Cloud edge=%s fallito: %w", edgeID, err)
-		}
+	// Propago l'EndOfReplay verso l'aggregatore globale
+	output := processor.aggregator.FlushEdge(edgeID)
+	if output == nil {
+		return fmt.Errorf("nessuna finestra Cloud attiva per edge=%s al ricevimento dell'EndOfReplay", edgeID)
+	}
+	// invio l'ultima finestra
+	if err := processor.publishCloudAggregate(*output, true); err != nil {
+		return fmt.Errorf(
+			"flush finale Cloud edge=%s fallito: %w",
+			edgeID,
+			err,
+		)
 	}
 
+	// genero un nuovo segnarle per l'aggregatoreGlobale
 	if err := processor.publishEndOfReplay(edgeID); err != nil {
 		return err
 	}

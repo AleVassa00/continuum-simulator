@@ -4,6 +4,9 @@ services:
   {{.SimulatorService}}:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: {{.SimulatorService}}
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "{{.EdgeID}}"

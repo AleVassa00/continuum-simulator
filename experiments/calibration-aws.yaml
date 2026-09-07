@@ -1,0 +1,23 @@
+# Initial EC2 pilot only; freeze a calibrated load before the scaling campaign.
+experiment:
+  name: calibration-aws
+
+workload:
+  acceleration_factor: 10000
+  start_lead_time: 60s
+
+simulator:
+  telemetry_queue_capacity: 5000
+  start_late_tolerance: 10s
+
+edge:
+  window_size: 5m
+  ingress_queue_capacity: 5000
+
+cloud:
+  workers: 1
+  window_size: 15m
+
+global:
+  watermark_delay: 15m
+  edge_idle_timeout: 5s

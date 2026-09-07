@@ -12,6 +12,7 @@ readonly EDGE_READY_TIMEOUT_SECONDS="${EDGE_READY_TIMEOUT_SECONDS:-300}"
 readonly RUN_COMPLETION_TIMEOUT_SECONDS="${RUN_COMPLETION_TIMEOUT_SECONDS:-3600}"
 readonly POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-2}"
 readonly METRICS_INTERVAL_SECONDS="${METRICS_INTERVAL_SECONDS:-5}"
+readonly PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 declare -A METRICS_PIDS
 
@@ -33,6 +34,7 @@ RUN_FINISHED_AT=""
 RUN_STATUS="failed"
 ADDRESSES_LOADED="false"
 METRICS_STARTED="false"
+KAFKA_METRICS_STARTED="false"
 
 validate_positive_integer() {
   local name="$1"
@@ -86,6 +88,7 @@ initialize_artifacts() {
   trap finalize_run EXIT
 
   cp "${EXPERIMENT_CONFIG_PATH}" "${ARTIFACT_DIR}/experiment.yaml"
+  cp "${RESOURCE_PROFILE_PATH}" "${ARTIFACT_DIR}/resource-profile.env"
 
   public_json="$(terraform_output public_ips)"
   private_json="$(terraform_output private_ips)"
@@ -197,6 +200,8 @@ write_run_metadata() {
     --arg deployment_id "${DEPLOYMENT_ID_VALUE}" \
     --arg git_commit_sha "${DEPLOYED_GIT_COMMIT_SHA}" \
     --arg config_sha256 "${CONFIG_SHA256}" \
+    --arg source_sha256 "${SOURCE_SHA256}" \
+    --arg resource_profile_sha256 "${RESOURCE_PROFILE_SHA256}" \
     --arg orchestration_started_at "${ORCHESTRATION_STARTED_AT}" \
     --arg clock_verified_at "${CLOCK_VERIFIED_AT}" \
     --arg replay_start_at "${REPLAY_START_AT}" \
@@ -213,6 +218,8 @@ write_run_metadata() {
       deployment_id: $deployment_id,
       git_commit_sha: $git_commit_sha,
       config_sha256: $config_sha256,
+      source_sha256: $source_sha256,
+      resource_profile_sha256: $resource_profile_sha256,
       workers: $workers,
       orchestration_started_at: $orchestration_started_at,
       clock_verified_at: $clock_verified_at,
@@ -222,7 +229,9 @@ write_run_metadata() {
       orchestrator_exit_code: $exit_code,
       metrics: {
         interval_seconds: $metrics_interval_seconds,
-        files: "metrics/{simulator,edge,cloud-core,workers}.log"
+        files: "metrics/{simulator,edge,cloud-core,workers}.log",
+        kafka_lag: "metrics/kafka-lag.log",
+        kafka_lag_final: "kafka-consumer-groups-final.txt"
       },
       ec2: $instance_identities,
       cpu_credits: {
@@ -255,6 +264,11 @@ if [[ -f "${pidfile}" ]]; then
   kill "$(cat "${pidfile}")" 2>/dev/null || true
   rm -f "${pidfile}"
 fi
+lag_pidfile="/tmp/continuum-kafka-lag-$1.pid"
+if [[ -f "${lag_pidfile}" ]]; then
+  kill "$(cat "${lag_pidfile}")" 2>/dev/null || true
+  rm -f "${lag_pidfile}"
+fi
 REMOTE
   done
   for role in "${!METRICS_PIDS[@]}"; do
@@ -270,15 +284,31 @@ REMOTE
 
 finalize_run() {
   local exit_code="$?"
+  local postprocess_exit
 
   trap - EXIT
   set +e
   stop_metric_collectors
   if [[ -n "${ARTIFACT_DIR}" ]]; then
+    if [[ "${KAFKA_METRICS_STARTED}" == "true" ]]; then
+      ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" once \
+        <"${SCRIPT_DIR}/collect-kafka-lag.sh" >"${ARTIFACT_DIR}/kafka-consumer-groups-final.txt" 2>&1
+    fi
     capture_container_states final
     collect_host_logs
     write_run_metadata "${exit_code}"
+    "${PYTHON_BIN}" "${SCRIPT_DIR}/summarize-run.py" "${ARTIFACT_DIR}"
+    postprocess_exit="$?"
+    if ! jq --argjson result "${postprocess_exit}" \
+      '. + {postprocess_exit_code: $result, postprocess_status: (if $result == 0 then "success" elif $result == 2 then "quality_failed" else "failed" end)}' \
+      "${ARTIFACT_DIR}/run-metadata.json" >"${ARTIFACT_DIR}/run-metadata.json.tmp"; then
+      log "impossibile aggiornare i metadata del post-processing"
+      [[ "${postprocess_exit}" != "0" ]] || postprocess_exit=1
+    elif ! mv "${ARTIFACT_DIR}/run-metadata.json.tmp" "${ARTIFACT_DIR}/run-metadata.json"; then
+      [[ "${postprocess_exit}" != "0" ]] || postprocess_exit=1
+    fi
     log "artefatti run: ${ARTIFACT_DIR}"
+    [[ "${exit_code}" != "0" ]] || exit_code="${postprocess_exit}"
   fi
   exit "${exit_code}"
 }
@@ -345,10 +375,20 @@ sha256sum /opt/continuum/current/release-manifest.json | awk "{print \$1}"')"
   [[ "${local_git_commit_sha}" == "${DEPLOYED_GIT_COMMIT_SHA}" ]] ||
     die "il checkout dell'orchestratore (${local_git_commit_sha}) non corrisponde alla release (${DEPLOYED_GIT_COMMIT_SHA})"
   source_status="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=all)"
-  [[ -z "${source_status}" ]] ||
-    die "l'orchestratore richiede un worktree Git pulito per rendere significativa la commit SHA"
+  [[ -z "${source_status}" || "${ALLOW_DIRTY_WORKTREE}" == "1" ]] ||
+    die "worktree modificato: usare ALLOW_DIRTY_WORKTREE=1 per verificare i sorgenti tramite SHA256"
+  SOURCE_SHA256="$(calculate_source_sha256)"
+  [[ "$(jq -er '.source_sha256' "${ARTIFACT_DIR}/release-manifest.json")" == "${SOURCE_SHA256}" ]] ||
+    die "sorgenti diversi dalla release preparata; ripetere prepare-pilot.sh"
+  [[ "$(jq -er '.resource_profile_sha256' "${ARTIFACT_DIR}/release-manifest.json")" == "${RESOURCE_PROFILE_SHA256}" ]] ||
+    die "resource profile diverso dalla release preparata"
 
   for role in "${ROLES[@]}"; do
+    expected_compose_sha256="$(jq -er --arg role "${role}" '.runtime_env_sha256[$role]' "${ARTIFACT_DIR}/release-manifest.json")"
+    actual_compose_sha256="$(ssh_run "${PUBLIC_IPS["${role}"]}" \
+      "sha256sum /opt/continuum/current/.env | awk '{print \$1}'")"
+    [[ "${actual_compose_sha256}" == "${expected_compose_sha256}" ]] ||
+      die "environment runtime modificato su ${role}; ripetere prepare-pilot.sh"
     case "${role}" in
       cloud-core) filename="cloud-core.generated.yml" ;;
       workers) filename="workers.generated.yml" ;;
@@ -479,6 +519,13 @@ REMOTE
   done
 }
 
+start_kafka_metrics() {
+  ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" \
+    <"${SCRIPT_DIR}/collect-kafka-lag.sh" >"${ARTIFACT_DIR}/metrics/kafka-lag.log" 2>&1 &
+  METRICS_PIDS[kafka-lag]="$!"
+  KAFKA_METRICS_STARTED="true"
+}
+
 verify_metric_collectors() {
   local role
   local pid
@@ -490,6 +537,8 @@ verify_metric_collectors() {
     [[ -s "${ARTIFACT_DIR}/metrics/${role}.log" ]] ||
       die "nessun campione metrico raccolto per ${role}"
   done
+  [[ "${KAFKA_METRICS_STARTED}" == "true" ]] && kill -0 "${METRICS_PIDS[kafka-lag]}" 2>/dev/null ||
+    die "collector Kafka lag terminato prematuramente"
 }
 
 collect_normalized_compose() {
@@ -510,7 +559,7 @@ collect_normalized_compose() {
   esac
 
   ssh_run "${PUBLIC_IPS["${role}"]}" bash -s -- \
-    "${env_file}" "${compose_file}" "${profile}" <<'REMOTE' \
+    "${env_file}" "${compose_file}" "${profile}" "${REPLAY_START_AT:-1970-01-01T00:00:00Z}" <<'REMOTE' \
     >"${ARTIFACT_DIR}/compose/${role}.normalized.yml"
 set -euo pipefail
 env_file="$1"
@@ -522,8 +571,32 @@ if [[ -n "${profile}" ]]; then
   args+=(--profile "${profile}")
 fi
 args+=(-f "deploy/compose/distributed/${compose_file}" config)
-"${args[@]}"
+REPLAY_START_AT="$4" "${args[@]}"
 REMOTE
+  ssh_run "${PUBLIC_IPS["${role}"]}" bash -s -- \
+    "${env_file}" "${compose_file}" "${profile}" "${REPLAY_START_AT:-1970-01-01T00:00:00Z}" <<'REMOTE' \
+    >"${ARTIFACT_DIR}/compose/${role}.normalized.json"
+set -euo pipefail
+cd /opt/continuum/current
+args=(docker compose --env-file "$1")
+[[ -z "$3" ]] || args+=(--profile "$3")
+REPLAY_START_AT="$4" "${args[@]}" -f "deploy/compose/distributed/$2" config --format json
+REMOTE
+}
+
+check_host_budgets() {
+  local role
+  for role in "${ROLES[@]}"; do
+    collect_normalized_compose "${role}"
+    ssh_run "${PUBLIC_IPS["${role}"]}" bash -s <<'REMOTE' >"${ARTIFACT_DIR}/capacity-${role}.json"
+set -euo pipefail
+printf '{"cpus":%s,"memory_bytes":%s}\n' \
+  "$(nproc)" "$(awk '/MemTotal:/ {printf "%.0f", $2 * 1024}' /proc/meminfo)"
+REMOTE
+    "${PYTHON_BIN}" "${SCRIPT_DIR}/check-resource-budget.py" \
+      "${ARTIFACT_DIR}/compose/${role}.normalized.json" "${ARTIFACT_DIR}/capacity-${role}.json" \
+      >"${ARTIFACT_DIR}/resource-budget-${role}.json" || die "budget container incompatibile con host ${role}"
+  done
 }
 
 write_compose_checksums() {
@@ -963,6 +1036,8 @@ REMOTE
 }
 
 main_run() {
+  require_command "${PYTHON_BIN}"
+  "${PYTHON_BIN}" -c 'import sys; assert sys.version_info >= (3, 9), "Python >= 3.9 required"'
   require_command "${TERRAFORM_BIN}"
   require_command go
   require_command git
@@ -984,6 +1059,7 @@ main_run() {
   initialize_artifacts
   verify_prepared_releases
   collect_instance_identities
+  check_host_budgets
 
   log "run=${RUN_ID_VALUE} experiment=${EXPERIMENT_NAME} deployment=${DEPLOYMENT_ID_VALUE}"
   reset_previous_run
@@ -994,6 +1070,7 @@ main_run() {
   verify_kafka_tcp_from_role workers
   start_workers
   wait_for_worker_group "${KAFKA_READY_TIMEOUT_SECONDS}"
+  start_kafka_metrics
   start_edges
   wait_for_edges
   verify_all_clocks
@@ -1010,4 +1087,6 @@ main_run() {
   log "run completata correttamente"
 }
 
-main_run "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main_run "$@"
+fi

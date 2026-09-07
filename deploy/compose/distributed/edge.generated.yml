@@ -4,6 +4,9 @@ services:
   mqtt-edge-0:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-0
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18830:1883"
     volumes:
@@ -20,11 +23,14 @@ services:
   edge-0:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-0
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-0"
       MQTT_BROKER: "tcp://mqtt-edge-0:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -43,6 +49,9 @@ services:
   mqtt-edge-1:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-1
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18831:1883"
     volumes:
@@ -59,11 +68,14 @@ services:
   edge-1:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-1
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-1"
       MQTT_BROKER: "tcp://mqtt-edge-1:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -82,6 +94,9 @@ services:
   mqtt-edge-2:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-2
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18832:1883"
     volumes:
@@ -98,11 +113,14 @@ services:
   edge-2:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-2
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-2"
       MQTT_BROKER: "tcp://mqtt-edge-2:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -121,6 +139,9 @@ services:
   mqtt-edge-3:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-3
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18833:1883"
     volumes:
@@ -137,11 +158,14 @@ services:
   edge-3:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-3
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-3"
       MQTT_BROKER: "tcp://mqtt-edge-3:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -160,6 +184,9 @@ services:
   mqtt-edge-4:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-4
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18834:1883"
     volumes:
@@ -176,11 +203,14 @@ services:
   edge-4:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-4
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-4"
       MQTT_BROKER: "tcp://mqtt-edge-4:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -199,6 +229,9 @@ services:
   mqtt-edge-5:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-5
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18835:1883"
     volumes:
@@ -215,11 +248,14 @@ services:
   edge-5:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-5
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-5"
       MQTT_BROKER: "tcp://mqtt-edge-5:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -238,6 +274,9 @@ services:
   mqtt-edge-6:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-6
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18836:1883"
     volumes:
@@ -254,11 +293,14 @@ services:
   edge-6:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-6
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-6"
       MQTT_BROKER: "tcp://mqtt-edge-6:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -277,6 +319,9 @@ services:
   mqtt-edge-7:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-7
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18837:1883"
     volumes:
@@ -293,11 +338,14 @@ services:
   edge-7:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-7
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-7"
       MQTT_BROKER: "tcp://mqtt-edge-7:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -316,6 +364,9 @@ services:
   mqtt-edge-8:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-8
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18838:1883"
     volumes:
@@ -332,11 +383,14 @@ services:
   edge-8:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-8
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-8"
       MQTT_BROKER: "tcp://mqtt-edge-8:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -355,6 +409,9 @@ services:
   mqtt-edge-9:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-9
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18839:1883"
     volumes:
@@ -371,11 +428,14 @@ services:
   edge-9:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-9
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-9"
       MQTT_BROKER: "tcp://mqtt-edge-9:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -394,6 +454,9 @@ services:
   mqtt-edge-10:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-10
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18840:1883"
     volumes:
@@ -410,11 +473,14 @@ services:
   edge-10:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-10
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-10"
       MQTT_BROKER: "tcp://mqtt-edge-10:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -433,6 +499,9 @@ services:
   mqtt-edge-11:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-11
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18841:1883"
     volumes:
@@ -449,11 +518,14 @@ services:
   edge-11:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-11
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-11"
       MQTT_BROKER: "tcp://mqtt-edge-11:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:
@@ -472,6 +544,9 @@ services:
   mqtt-edge-12:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: mqtt-edge-12
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "18842:1883"
     volumes:
@@ -488,11 +563,14 @@ services:
   edge-12:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: edge-12
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "edge-12"
       MQTT_BROKER: "tcp://mqtt-edge-12:1883"
       WINDOW_SIZE: "5m0s"
-      EDGE_INGRESS_QUEUE_CAPACITY: "1000"
+      EDGE_INGRESS_QUEUE_CAPACITY: "5000"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
     depends_on:

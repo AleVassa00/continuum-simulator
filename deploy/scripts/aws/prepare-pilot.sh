@@ -15,6 +15,8 @@ readonly SSH_WAIT_INTERVAL_SECONDS="${SSH_WAIT_INTERVAL_SECONDS:-5}"
 readonly TIME_SYNC_ATTEMPTS="${TIME_SYNC_ATTEMPTS:-24}"
 readonly DEPLOYMENT_ID="${DEPLOYMENT_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 readonly LOG_PREFIX="${AWS_SCRIPT_LOG_PREFIX:-prepare-pilot}"
+readonly RESOURCE_PROFILE_INPUT="${RESOURCE_PROFILE:-${REPO_ROOT}/deploy/resources/aws-pilot.env}"
+readonly ALLOW_DIRTY_WORKTREE="${ALLOW_DIRTY_WORKTREE:-0}"
 
 readonly -a ROLES=(simulator edge cloud-core workers)
 
@@ -30,6 +32,12 @@ GENERATION_MANIFEST_SHA256=""
 REPLAY_SHARD_SHA256='{}'
 IMAGES_BY_ROLE='{}'
 RELEASE_MANIFEST_PATH=""
+SOURCE_SHA256=""
+SOURCE_DIRTY="false"
+RESOURCE_PROFILE_PATH=""
+RESOURCE_PROFILE_SHA256=""
+RESOURCE_PROFILE_VALUES=""
+RUNTIME_ENV_SHA256='{}'
 
 log() {
   printf '[%s] %s\n' "${LOG_PREFIX}" "$*"
@@ -66,7 +74,59 @@ resolve_file() {
   printf '%s/%s\n' "${directory}" "${filename}"
 }
 
+# Only deployment/build inputs enter this fingerprint. Run artifacts and datasets
+# have their own manifests and must not invalidate an otherwise identical build.
+calculate_source_sha256() {
+  (
+    cd "${REPO_ROOT}"
+    git ls-files --cached --others --exclude-standard -z -- \
+      go.mod go.sum cmd internal deploy/docker deploy/mosquitto deploy/scripts |
+      sort -zu |
+      while IFS= read -r -d '' filename; do
+        [[ -f "${filename}" ]] || continue
+        sha256sum "${filename}"
+      done
+  ) | sha256sum | awk '{print $1}'
+}
+
+load_resource_profile() {
+  local line key value prefix suffix
+  local -a prefixes=(SIMULATOR EDGE MQTT CLOUD_WORKER KAFKA KAFKA_INIT GLOBAL)
+  declare -A values=()
+  RESOURCE_PROFILE_PATH="$(resolve_file "${RESOURCE_PROFILE_INPUT}")" ||
+    die "resource profile non trovato: ${RESOURCE_PROFILE_INPUT}"
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "${line}" || "${line}" == \#* ]] && continue
+    [[ "${line}" =~ ^(SIMULATOR|EDGE|MQTT|CLOUD_WORKER|KAFKA|KAFKA_INIT|GLOBAL)_(CPUS|MEMORY)=([0-9.mMgG]+)$ ]] ||
+      die "resource profile: ammesse solo assegnazioni numeriche CPUS/MEMORY note"
+    key="${line%%=*}"
+    value="${line#*=}"
+    [[ -z "${values[${key}]:-}" ]] || die "resource profile: chiave duplicata ${key}"
+    if [[ "${key}" == *_CPUS ]]; then
+      [[ "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]] &&
+        awk -v value="${value}" 'BEGIN { exit !(value > 0) }' ||
+        die "CPU non valide per ${key}"
+    else
+      [[ "${value}" =~ ^[1-9][0-9]*[mMgG]$ ]] || die "memoria non valida per ${key} (usare m o g)"
+    fi
+    values["${key}"]="${value}"
+  done <"${RESOURCE_PROFILE_PATH}"
+  RESOURCE_PROFILE_VALUES=""
+  for prefix in "${prefixes[@]}"; do
+    for suffix in CPUS MEMORY; do
+      key="${prefix}_${suffix}"
+      [[ -n "${values[${key}]:-}" ]] || die "resource profile: manca ${key}"
+      RESOURCE_PROFILE_VALUES+="${key}=${values[${key}]}"$'\n'
+    done
+  done
+  RESOURCE_PROFILE_SHA256="$(sha256sum "${RESOURCE_PROFILE_PATH}" | awk '{print $1}')"
+}
+
 validate_inputs() {
+  [[ "${ALLOW_DIRTY_WORKTREE}" == "0" || "${ALLOW_DIRTY_WORKTREE}" == "1" ]] ||
+    die "ALLOW_DIRTY_WORKTREE deve essere 0 oppure 1"
+  load_resource_profile
   [[ -n "${SSH_USER}" ]] ||
     die "SSH_USER e obbligatorio (per esempio ubuntu oppure ec2-user)"
   [[ "${SSH_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]] ||
@@ -133,8 +193,12 @@ validate_release_source() {
   GIT_COMMIT_SHA="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD)" ||
     die "impossibile determinare il commit Git"
   source_status="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=all)"
-  [[ -z "${source_status}" ]] ||
-    die "il deployment richiede un worktree Git pulito affinche il commit identifichi integralmente il codice"
+  if [[ -n "${source_status}" ]]; then
+    [[ "${ALLOW_DIRTY_WORKTREE}" == "1" ]] ||
+      die "worktree modificato: usare ALLOW_DIRTY_WORKTREE=1 per identificare i sorgenti tramite SHA256 senza commit"
+    SOURCE_DIRTY="true"
+  fi
+  SOURCE_SHA256="$(calculate_source_sha256)"
 
   GENERATION_MANIFEST_SHA256="$(sha256sum "${GENERATION_MANIFEST_PATH}" | awk '{print $1}')"
 }
@@ -326,6 +390,11 @@ write_runtime_environment() {
   esac
 
   chmod 0644 "${destination}/.env"
+  printf '%s' "${RESOURCE_PROFILE_VALUES}" >>"${destination}/.env"
+  cp "${RESOURCE_PROFILE_PATH}" "${destination}/resource-profile.env"
+  RUNTIME_ENV_SHA256="$(jq -cn --argjson current "${RUNTIME_ENV_SHA256}" \
+    --arg role "${role}" --arg digest "$(sha256sum "${destination}/.env" | awk '{print $1}')" \
+    '$current + {($role): $digest}')"
 }
 
 stage_role() {
@@ -509,6 +578,10 @@ create_release_manifest() {
   jq -n \
     --arg deployment_id "${DEPLOYMENT_ID}" \
     --arg git_commit_sha "${GIT_COMMIT_SHA}" \
+    --arg source_sha256 "${SOURCE_SHA256}" \
+    --argjson source_dirty "${SOURCE_DIRTY}" \
+    --arg resource_profile_sha256 "${RESOURCE_PROFILE_SHA256}" \
+    --argjson runtime_env_sha256 "${RUNTIME_ENV_SHA256}" \
     --arg generation_manifest_sha256 "${GENERATION_MANIFEST_SHA256}" \
     --argjson generation_manifest "$(<"${GENERATION_MANIFEST_PATH}")" \
     --argjson replay_shard_sha256 "${REPLAY_SHARD_SHA256}" \
@@ -516,6 +589,10 @@ create_release_manifest() {
     '{
       deployment_id: $deployment_id,
       git_commit_sha: $git_commit_sha,
+      source_sha256: $source_sha256,
+      source_dirty: $source_dirty,
+      resource_profile_sha256: $resource_profile_sha256,
+      runtime_env_sha256: $runtime_env_sha256,
       generation_manifest_sha256: $generation_manifest_sha256,
       config_sha256: $generation_manifest.config_sha256,
       topology_sha256: $generation_manifest.topology_sha256,
@@ -635,6 +712,8 @@ main() {
   for role in "${ROLES[@]}"; do
     stage_role "${role}"
   done
+  [[ "$(calculate_source_sha256)" == "${SOURCE_SHA256}" ]] ||
+    die "sorgenti cambiati durante lo staging; ripetere la preparazione"
   for role in "${ROLES[@]}"; do
     upload_and_build_role "${role}"
   done

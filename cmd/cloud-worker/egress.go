@@ -12,49 +12,27 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-type KafkaMessagePublisher func(
-	context.Context,
-	kafka.Message,
-) error
+type KafkaMessagePublisher func(context.Context, kafka.Message) error
 
-func (
-	processor *CloudMessageProcessor,
-) publishCloudAggregate(
-	aggregate model.CloudEdgeAggregate,
-	partial bool,
-) error {
+func (processor *CloudMessageProcessor) publishCloudAggregate(aggregate model.CloudEdgeAggregate, partial bool) error {
+	//trasro
 	message, err := cloudEdgeAggregateMessage(aggregate)
 	if err != nil {
 		return err
 	}
 
-	if err := writeKafkaMessage(
-		processor.publishMessage,
-		message,
-	); err != nil {
-		return fmt.Errorf(
-			"pubblicazione Kafka aggregate_id=%s topic=%s fallita: %w",
+	if err := writeKafkaMessage(processor.publishMessage, message); err != nil {
+		return fmt.Errorf("pubblicazione Kafka aggregate_id=%s topic=%s fallita: %w",
 			aggregate.AggregateID,
 			processor.outputTopic,
 			err,
 		)
 	}
-
-	logPublishedWindow(
-		processor.workerID,
-		processor.outputTopic,
-		aggregate,
-		partial,
-	)
-
+	logPublishedWindow(processor.workerID, processor.outputTopic, aggregate, partial)
 	return nil
 }
 
-func (
-	processor *CloudMessageProcessor,
-) publishEndOfReplay(
-	edgeID string,
-) error {
+func (processor *CloudMessageProcessor) publishEndOfReplay(edgeID string) error {
 	message := kafka.Message{
 		Key:   []byte(edgeID),
 		Value: []byte{},
@@ -67,12 +45,8 @@ func (
 		},
 	}
 
-	if err := writeKafkaMessage(
-		processor.publishMessage,
-		message,
-	); err != nil {
-		return fmt.Errorf(
-			"pubblicazione Kafka EndOfReplay edge=%s topic=%s fallita: %w",
+	if err := writeKafkaMessage(processor.publishMessage, message); err != nil {
+		return fmt.Errorf("pubblicazione Kafka EndOfReplay edge=%s topic=%s fallita: %w",
 			edgeID,
 			processor.outputTopic,
 			err,
@@ -82,14 +56,9 @@ func (
 	return nil
 }
 
-func cloudEdgeAggregateMessage(
-	aggregate model.CloudEdgeAggregate,
-) (kafka.Message, error) {
-	if err := cloudworker.ValidateCloudEdgeAggregate(
-		aggregate,
-	); err != nil {
-		return kafka.Message{}, fmt.Errorf(
-			"CloudEdgeAggregate %q non valido: %w",
+func cloudEdgeAggregateMessage(aggregate model.CloudEdgeAggregate) (kafka.Message, error) {
+	if err := cloudworker.ValidateCloudEdgeAggregate(aggregate); err != nil {
+		return kafka.Message{}, fmt.Errorf("CloudEdgeAggregate %q non valido: %w",
 			aggregate.AggregateID,
 			err,
 		)
@@ -97,8 +66,7 @@ func cloudEdgeAggregateMessage(
 
 	payload, err := avrocodec.EncodeCloudEdgeAggregate(aggregate)
 	if err != nil {
-		return kafka.Message{}, fmt.Errorf(
-			"serializzazione CloudEdgeAggregate %q fallita: %w",
+		return kafka.Message{}, fmt.Errorf("serializzazione CloudEdgeAggregate %q fallita: %w",
 			aggregate.AggregateID,
 			err,
 		)
@@ -117,29 +85,17 @@ func cloudEdgeAggregateMessage(
 	}, nil
 }
 
-func writeKafkaMessage(
-	publish KafkaMessagePublisher,
-	message kafka.Message,
-) error {
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		operationTimeout,
-	)
+func writeKafkaMessage(publish KafkaMessagePublisher, message kafka.Message) error {
+	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 	defer cancel()
 
 	return publish(ctx, message)
 }
 
-func flushWindows(
-	processor *CloudMessageProcessor,
-) error {
+func flushWindows(processor *CloudMessageProcessor) error {
 	for _, output := range processor.aggregator.Flush() {
-		if err := processor.publishCloudAggregate(
-			output,
-			true,
-		); err != nil {
-			return fmt.Errorf(
-				"flush finestra edge=%s fallito: %w",
+		if err := processor.publishCloudAggregate(output, true); err != nil {
+			return fmt.Errorf("flush finestra edge=%s fallito: %w",
 				output.EdgeID,
 				err,
 			)
@@ -149,14 +105,8 @@ func flushWindows(
 	return nil
 }
 
-func logPublishedWindow(
-	workerID string,
-	topic string,
-	aggregate model.CloudEdgeAggregate,
-	partial bool,
-) {
-	fmt.Printf(
-		"CLOUD_WINDOW_PUBLISHED worker=%s edge=%s aggregate_id=%s window=[%s,%s) inputs=%d events=%d partial=%t topic=%s\n",
+func logPublishedWindow(workerID string, topic string, aggregate model.CloudEdgeAggregate, partial bool) {
+	fmt.Printf("CLOUD_WINDOW_PUBLISHED worker=%s edge=%s aggregate_id=%s window=[%s,%s) inputs=%d events=%d partial=%t topic=%s\n",
 		workerID,
 		aggregate.EdgeID,
 		aggregate.AggregateID,

@@ -4,6 +4,9 @@ services:
   simulator-edge-0:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-0
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-0"
@@ -12,7 +15,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -22,6 +25,9 @@ services:
   simulator-edge-1:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-1
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-1"
@@ -30,7 +36,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -40,6 +46,9 @@ services:
   simulator-edge-2:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-2
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-2"
@@ -48,7 +57,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -58,6 +67,9 @@ services:
   simulator-edge-3:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-3
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-3"
@@ -66,7 +78,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -76,6 +88,9 @@ services:
   simulator-edge-4:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-4
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-4"
@@ -84,7 +99,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -94,6 +109,9 @@ services:
   simulator-edge-5:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-5
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-5"
@@ -102,7 +120,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -112,6 +130,9 @@ services:
   simulator-edge-6:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-6
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-6"
@@ -120,7 +141,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -130,6 +151,9 @@ services:
   simulator-edge-7:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-7
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-7"
@@ -138,7 +162,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -148,6 +172,9 @@ services:
   simulator-edge-8:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-8
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-8"
@@ -156,7 +183,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -166,6 +193,9 @@ services:
   simulator-edge-9:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-9
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-9"
@@ -174,7 +204,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -184,6 +214,9 @@ services:
   simulator-edge-10:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-10
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-10"
@@ -192,7 +225,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -202,6 +235,9 @@ services:
   simulator-edge-11:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-11
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-11"
@@ -210,7 +246,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro
@@ -220,6 +256,9 @@ services:
   simulator-edge-12:
     image: "continuum-simulator:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: simulator-edge-12
+    cpus: "${SIMULATOR_CPUS:?resource profile is required}"
+    mem_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
+    memswap_limit: "${SIMULATOR_MEMORY:?resource profile is required}"
     profiles: ["replay"]
     environment:
       SITE_ID: "edge-12"
@@ -228,7 +267,7 @@ services:
       REPLAY_EPOCH: "2025-01-01T00:00:00Z"
       REPLAY_START_AT: "${REPLAY_START_AT:?REPLAY_START_AT is required}"
       ACCELERATION_FACTOR: "10000"
-      TELEMETRY_QUEUE_CAPACITY: "1000"
+      TELEMETRY_QUEUE_CAPACITY: "5000"
       START_LATE_TOLERANCE: "10s"
     volumes:
       - ../../../dataset:/app/dataset:ro

@@ -4,6 +4,9 @@ services:
   {{.MQTTService}}:
     image: "continuum-mosquitto:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: {{.MQTTService}}
+    cpus: "${MQTT_CPUS:?resource profile is required}"
+    mem_limit: "${MQTT_MEMORY:?resource profile is required}"
+    memswap_limit: "${MQTT_MEMORY:?resource profile is required}"
     ports:
       - "{{.MQTTPort}}:1883"
     volumes:
@@ -20,6 +23,9 @@ services:
   {{.EdgeID}}:
     image: "continuum-edge:${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}"
     container_name: {{.EdgeID}}
+    cpus: "${EDGE_CPUS:?resource profile is required}"
+    mem_limit: "${EDGE_MEMORY:?resource profile is required}"
+    memswap_limit: "${EDGE_MEMORY:?resource profile is required}"
     environment:
       EDGE_ID: "{{.EdgeID}}"
       MQTT_BROKER: "tcp://{{.MQTTService}}:1883"
