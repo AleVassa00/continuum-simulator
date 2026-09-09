@@ -545,7 +545,8 @@ collect_normalized_compose() {
   local role="$1"
   local env_file="${2:-.env}"
   local compose_file
-  local profile=""
+  # SSH does not preserve an empty positional argument in the remote command.
+  local profile="__none__"
 
   case "${role}" in
     cloud-core) compose_file="cloud-core.generated.yml" ;;
@@ -565,6 +566,9 @@ set -euo pipefail
 env_file="$1"
 compose_file="$2"
 profile="$3"
+if [[ "${profile}" == "__none__" ]]; then
+  profile=""
+fi
 cd /opt/continuum/current
 args=(docker compose --env-file "${env_file}")
 if [[ -n "${profile}" ]]; then
@@ -577,9 +581,13 @@ REMOTE
     "${env_file}" "${compose_file}" "${profile}" "${REPLAY_START_AT:-1970-01-01T00:00:00Z}" <<'REMOTE' \
     >"${ARTIFACT_DIR}/compose/${role}.normalized.json"
 set -euo pipefail
+profile="$3"
+if [[ "${profile}" == "__none__" ]]; then
+  profile=""
+fi
 cd /opt/continuum/current
 args=(docker compose --env-file "$1")
-[[ -z "$3" ]] || args+=(--profile "$3")
+[[ -z "${profile}" ]] || args+=(--profile "${profile}")
 REPLAY_START_AT="$4" "${args[@]}" -f "deploy/compose/distributed/$2" config --format json
 REMOTE
 }

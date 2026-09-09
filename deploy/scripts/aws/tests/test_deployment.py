@@ -83,27 +83,37 @@ bash deploy/scripts/aws/collect-kafka-lag.sh 5 offline-test once
         self.assertEqual(result.returncode, 2)
 
     def test_runner_normalized_compose_keeps_replay_timestamp(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "compose").mkdir()
-            command = '''
+        for role in ("cloud-core", "workers", "edge", "simulator"):
+            for env_file, replay_start in ((".env", ""), (".run.env", "2026-09-07T12:34:56Z")):
+                with self.subTest(role=role, env_file=env_file), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "compose").mkdir()
+                    command = '''
 source deploy/scripts/aws/run-experiment.sh
 ARTIFACT_DIR="$MOCK_ROOT"
-PUBLIC_IPS[simulator]=offline-host
-ssh_run() { shift; "$@"; }
+PUBLIC_IPS["$MOCK_ROLE"]=offline-host
+# OpenSSH joins command arguments into a string parsed by the remote shell.
+# Unlike direct "$@" execution, this really loses an unquoted empty argument.
+ssh_run() { shift; bash -c "$*"; }
 cd() { builtin cd "$MOCK_ROOT"; }
 docker() { printf '{"replay_start_at":"%s","args":"%s"}\\n' "$REPLAY_START_AT" "$*"; }
 export -f cd docker
-collect_normalized_compose simulator
-REPLAY_START_AT=2026-09-07T12:34:56Z
-collect_normalized_compose simulator .run.env
+REPLAY_START_AT="$MOCK_REPLAY_START_AT"
+collect_normalized_compose "$MOCK_ROLE" "$MOCK_ENV_FILE"
 '''
-            result = self.shell(command, MOCK_ROOT=root.as_posix())
-            self.assertEqual(result.returncode, 0, result.stderr)
-            for extension in ("json", "yml"):
-                config = json.loads((root / "compose" / f"simulator.normalized.{extension}").read_text())
-                self.assertEqual(config["replay_start_at"], "2026-09-07T12:34:56Z")
-                self.assertIn("--env-file .run.env --profile replay", config["args"])
+                    result = self.shell(command, MOCK_ROOT=root.as_posix(), MOCK_ROLE=role,
+                                        MOCK_ENV_FILE=env_file, MOCK_REPLAY_START_AT=replay_start)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    for extension in ("json", "yml"):
+                        config = json.loads((root / "compose" / f"{role}.normalized.{extension}").read_text())
+                        self.assertEqual(config["replay_start_at"], replay_start or "1970-01-01T00:00:00Z")
+                        expected_args = ["compose", "--env-file", env_file]
+                        if role == "simulator":
+                            expected_args += ["--profile", "replay"]
+                        expected_args += ["-f", f"deploy/compose/distributed/{role}.generated.yml", "config"]
+                        if extension == "json":
+                            expected_args += ["--format", "json"]
+                        self.assertEqual(config["args"].split(), expected_args)
 
     def test_runner_propagates_postprocessing_exit_codes(self):
         from test_artifacts import fixture
