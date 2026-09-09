@@ -10,9 +10,11 @@ services:
     environment:
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_INPUT_TOPIC: "edge-aggregates"
-      KAFKA_OUTPUT_TOPIC: "cloud-edge-aggregates"
+      KAFKA_OUTPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "cloud-workers"
       CLOUD_WINDOW_SIZE: "{{$.CloudWindowSize}}"
+      CLOUD_EXPECTED_EDGE_IDS: "{{$.ExpectedEdgeIDs}}"
+      SOURCE_PARTITION_COUNT: "6"
       WORKER_ID: "{{.WorkerID}}"
 
     restart: "no"

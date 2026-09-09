@@ -6,10 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"continuum/internal/cloudworker"
 	"continuum/internal/envutil"
+	"continuum/internal/model"
+	"strconv"
 )
 
 type CloudWorkerConfig struct {
+	Membership  map[int][]string
 	KafkaBroker string
 	InputTopic  string
 	OutputTopic string
@@ -22,15 +26,24 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	kafkaBroker := envutil.Required("KAFKA_BROKER")
 
 	inputTopic := loadInputTopic()
-	outputTopic := envutil.OrDefault("KAFKA_OUTPUT_TOPIC", "cloud-edge-aggregates")
+	outputTopic := envutil.OrDefault("KAFKA_OUTPUT_TOPIC", "cloud-partition-aggregates")
 	groupID := envutil.OrDefault("KAFKA_GROUP_ID", "cloud-workers")
 	workerID := loadWorkerID()
 	windowSize, err := loadCloudWindowSize()
 	if err != nil {
 		return CloudWorkerConfig{}, err
 	}
+	count, err := strconv.Atoi(envutil.OrDefault("SOURCE_PARTITION_COUNT", "6"))
+	if err != nil || count != model.SourcePartitionCount {
+		return CloudWorkerConfig{}, fmt.Errorf("SOURCE_PARTITION_COUNT must be 6")
+	}
+	membership, err := cloudworker.BuildMembership(strings.Split(os.Getenv("CLOUD_EXPECTED_EDGE_IDS"), ","))
+	if err != nil {
+		return CloudWorkerConfig{}, err
+	}
 
 	return CloudWorkerConfig{
+		Membership:  membership,
 		KafkaBroker: kafkaBroker,
 		InputTopic:  inputTopic,
 		OutputTopic: outputTopic,

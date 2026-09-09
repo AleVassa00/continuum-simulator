@@ -64,7 +64,7 @@ class ShellTests(unittest.TestCase):
 docker() {
   local group="${!#}" topic count
   if [[ "$group" == cloud-workers ]]; then topic=edge-aggregates; count=6;
-  else topic=cloud-edge-aggregates; count=1; fi
+  else topic=cloud-partition-aggregates; count=1; fi
   for ((p=0; p<count; p++)); do echo "$group $topic $p 10 10 0 consumer host client"; done
   return "${MOCK_QUERY_EXIT:-0}"
 }
@@ -160,7 +160,7 @@ class ComposeTests(unittest.TestCase):
                     self.assertEqual(len(config["services"]), count)
                     capacity = {"cpus": 2, "memory_bytes": (4 if role == "cloud-core" else 2) * 1024**3}
                     budget.check(config, capacity)
-                    # Compare workload, service limits, topics, watermark and windows
+                    # Compare workload, service limits, topics and Cloud windows
                     # while ignoring only temporary bind-mount source directories.
                     normalized = json.dumps(config["services"], sort_keys=True).replace(
                         json.dumps(str(root))[1:-1], "<ROOT>")

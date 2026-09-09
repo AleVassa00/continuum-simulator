@@ -1,0 +1,9 @@
+{
+  "type": "record",
+  "name": "PartitionProgress",
+  "namespace": "continuum",
+  "fields": [
+    {"name": "source_partition", "type": "long"},
+    {"name": "complete_through", "type": {"type": "long", "logicalType": "timestamp-nanos"}}
+  ]
+}

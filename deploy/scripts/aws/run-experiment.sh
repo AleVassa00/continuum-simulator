@@ -641,7 +641,7 @@ while (( $(date +%s) < deadline )); do
     edge_topic="$(docker exec kafka /opt/kafka/bin/kafka-topics.sh \
       --bootstrap-server kafka:29092 --describe --topic edge-aggregates)"
     cloud_topic="$(docker exec kafka /opt/kafka/bin/kafka-topics.sh \
-      --bootstrap-server kafka:29092 --describe --topic cloud-edge-aggregates)"
+      --bootstrap-server kafka:29092 --describe --topic cloud-partition-aggregates)"
     grep -F 'PartitionCount: 6' <<<"${edge_topic}" >/dev/null || exit 1
     grep -F 'PartitionCount: 1' <<<"${cloud_topic}" >/dev/null || exit 1
     exit 0
@@ -803,7 +803,7 @@ quick_preflight() {
 [[ "$(docker inspect --format "{{.State.Status}}" global-aggregator)" == "running" ]]
 docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic edge-aggregates |
   grep -F "PartitionCount: 6" >/dev/null
-docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic cloud-edge-aggregates |
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic cloud-partition-aggregates |
   grep -F "PartitionCount: 1" >/dev/null'
   verify_kafka_tcp_from_role edge
   verify_kafka_tcp_from_role workers

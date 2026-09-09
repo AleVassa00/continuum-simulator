@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"continuum/internal/globalaggregator"
+	"continuum/internal/model"
 )
 
 func main() {
@@ -23,13 +23,7 @@ func main() {
 	}
 	defer cleanup()
 
-	aggregator, err := globalaggregator.New(
-		config.ExpectedEdgeIDs,
-		config.WindowSize,
-		config.WatermarkDelay,
-		config.EdgeIdleTimeout,
-		sink,
-	)
+	aggregator, err := globalaggregator.New(sink)
 	if err != nil {
 		panic(err)
 	}
@@ -46,10 +40,7 @@ func main() {
 	fmt.Printf("Kafka broker: %s\n", config.KafkaBroker)
 	fmt.Printf("Input topic: %s\n", config.InputTopic)
 	fmt.Printf("Consumer group: %s\n", config.GroupID)
-	fmt.Printf("Global window: %s\n", config.WindowSize)
-	fmt.Printf("Watermark delay: %s\n", config.WatermarkDelay)
-	fmt.Printf("Edge idle timeout: %s\n", config.EdgeIdleTimeout)
-	fmt.Printf("Expected Edge: %s\n\n", strings.Join(config.ExpectedEdgeIDs, ","))
+	fmt.Printf("Expected source partitions: %d\n", model.SourcePartitionCount)
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
@@ -62,7 +53,6 @@ func main() {
 		ctx,
 		reader,
 		processor,
-		watermarkAdvanceCheckInterval(config.EdgeIdleTimeout),
 	)
 	if err != nil {
 		panic(err)

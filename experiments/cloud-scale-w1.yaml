@@ -16,7 +16,3 @@ edge:
 cloud:
   workers: 1
   window_size: 15m
-
-global:
-  watermark_delay: 15m
-  edge_idle_timeout: 5s

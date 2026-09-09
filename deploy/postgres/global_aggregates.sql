@@ -4,8 +4,8 @@ CREATE TABLE global_aggregates (
     window_start TIMESTAMPTZ NOT NULL,
     window_end   TIMESTAMPTZ NOT NULL,
 
-    expected_edges     BIGINT NOT NULL,
-    contributing_edges BIGINT NOT NULL,
+    expected_partitions     BIGINT NOT NULL,
+    contributing_partitions BIGINT NOT NULL,
     events             BIGINT NOT NULL,
 
     temperature_valid   BIGINT NOT NULL,

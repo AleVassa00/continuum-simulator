@@ -17,7 +17,7 @@ import (
 const postgresOperationTimeout = 5 * time.Second
 
 const insertGlobalAggregate = `INSERT INTO global_aggregates (
-	aggregate_id, window_start, window_end, expected_edges, contributing_edges, events,
+	aggregate_id, window_start, window_end, expected_partitions, contributing_partitions, events,
 	temperature_valid, temperature_invalid, temperature_sum, temperature_average, temperature_min, temperature_max,
 	humidity_valid, humidity_invalid, humidity_sum, humidity_average, humidity_min, humidity_max,
 	pressure_valid, pressure_invalid, pressure_sum, pressure_average, pressure_min, pressure_max,
@@ -62,7 +62,7 @@ func newPostgresSink(pool *pgxpool.Pool) globalaggregator.GlobalAggregateSink {
 func postgresAggregateArguments(aggregate model.GlobalAggregate) ([]any, error) {
 	arguments := []any{
 		aggregate.AggregateID, aggregate.WindowStart, aggregate.WindowEnd,
-		aggregate.ExpectedEdges, aggregate.ContributingEdges, aggregate.Events,
+		aggregate.ExpectedPartitions, aggregate.ContributingPartitions, aggregate.Events,
 		aggregate.Temperature.Valid, aggregate.Temperature.Invalid, aggregate.Temperature.Sum,
 		aggregate.Temperature.Average, aggregate.Temperature.Min, aggregate.Temperature.Max,
 		aggregate.Humidity.Valid, aggregate.Humidity.Invalid, aggregate.Humidity.Sum,

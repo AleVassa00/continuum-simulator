@@ -2,104 +2,44 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"time"
-
 	"continuum/internal/kafkautil"
-
+	"fmt"
 	"github.com/segmentio/kafka-go"
+	"time"
 )
 
-const (
-	operationTimeout                 = 5 * time.Second
-	maxWatermarkAdvanceCheckInterval = 1 * time.Second
-)
+const operationTimeout = 5 * time.Second
 
 type KafkaMessageCommitter func(kafka.Message) error
 
-func newKafkaReader(broker string, topic string, groupID string) *kafka.Reader {
-	return kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     []string{broker},
-		Topic:       topic,
-		GroupID:     groupID,
-		StartOffset: kafka.FirstOffset,
-		MinBytes:    1,
-		MaxBytes:    10 * 1024 * 1024,
-		MaxWait:     500 * time.Millisecond,
-	})
+func newKafkaReader(broker, topic, groupID string) *kafka.Reader {
+	return kafka.NewReader(kafka.ReaderConfig{Brokers: []string{broker}, Topic: topic, GroupID: groupID, StartOffset: kafka.FirstOffset, MinBytes: 1, MaxBytes: 10 * 1024 * 1024, MaxWait: 500 * time.Millisecond})
 }
-
-func consume(
-	ctx context.Context,
-	reader *kafka.Reader,
-	processor *GlobalMessageProcessor,
-	watermarkCheckInterval time.Duration,
-) (bool, error) {
+func consume(ctx context.Context, reader *kafka.Reader, p *GlobalMessageProcessor) (bool, error) {
 	for {
-		fetchContext, cancelFetch := context.WithTimeout(
-			ctx,
-			watermarkCheckInterval,
-		)
-		message, err := reader.FetchMessage(fetchContext)
-		cancelFetch()
+		message, err := reader.FetchMessage(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return false, nil
 			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				if err := processor.aggregator.AdvanceWatermark(ctx); err != nil {
-					return false, fmt.Errorf(
-						"avanzamento watermark globale fallito: %w",
-						err,
-					)
-				}
-				continue
-			}
-			return false, fmt.Errorf("lettura Kafka globale fallita: %w", err)
+			return false, err
 		}
-
-		completed, err := processAndCommitMessage(
-			ctx,
-			message,
-			processor,
-			func(message kafka.Message) error {
-				return kafkautil.CommitMessage(reader, message, operationTimeout)
-			},
-		)
+		complete, err := processAndCommitMessage(ctx, message, p, func(m kafka.Message) error { return kafkautil.CommitMessage(reader, m, operationTimeout) })
 		if err != nil {
-			return false, fmt.Errorf(
-				"global partition=%d offset=%d: %w",
-				message.Partition,
-				message.Offset,
-				err,
-			)
+			return false, fmt.Errorf("global protocol error offset=%d: %w", message.Offset, err)
 		}
-		if completed {
+		if complete {
 			return true, nil
 		}
 	}
 }
-
-func processAndCommitMessage(
-	ctx context.Context,
-	message kafka.Message,
-	processor *GlobalMessageProcessor,
-	commit KafkaMessageCommitter,
-) (bool, error) {
-	completed, err := processor.Process(ctx, message)
+func processAndCommitMessage(ctx context.Context, m kafka.Message, p *GlobalMessageProcessor, commit KafkaMessageCommitter) (bool, error) {
+	complete, err := p.Process(ctx, m)
 	if err != nil {
 		return false, err
 	}
-	if err := commit(message); err != nil {
-		return false, fmt.Errorf("commit Kafka globale fallito: %w", err)
+	if err := commit(m); err != nil {
+		return false, err
 	}
-	return completed, nil
-}
-
-func watermarkAdvanceCheckInterval(edgeIdleTimeout time.Duration) time.Duration {
-	if edgeIdleTimeout < maxWatermarkAdvanceCheckInterval {
-		return edgeIdleTimeout
-	}
-	return maxWatermarkAdvanceCheckInterval
+	return complete, nil
 }

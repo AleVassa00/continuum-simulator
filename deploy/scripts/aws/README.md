@@ -215,15 +215,9 @@ a Kafka: mantenere uguale la strumentazione. `METRICS_INTERVAL_SECONDS` (default
 5) è una pausa fra raccolte, non la frequenza esatta. I record dei topic includono
 anche EOS, non solo aggregati.
 
-Il ritardo di pubblicazione globale è:
-
-```text
-(emitted_at - REPLAY_START_AT) - (window_end - REPLAY_EPOCH) / acceleration_factor
-```
-
-Non è latenza per evento né sola latenza di rete: include finestre, watermark,
-buffering ed elaborazione. L'ultima finestra è esclusa conservativamente dai
-percentili perché EOS può anticiparne il flush, ma resta nel CSV con un flag.
+`global-windows.csv` conserva `window_start`, `window_end` ed `emitted_at`
+originali per tutte le finestre, inclusa l'ultima, senza calcolare ritardi derivati.
+I log grezzi restano invariati.
 La completezza globale assume il dataset attuale con tutti i 13 siti contributori,
 non costituisce una regola universale per dataset sparsi.
 

@@ -56,14 +56,14 @@ services:
           --create \
           --if-not-exists \
           --topic edge-aggregates \
-          --partitions ${KAFKA_PARTITIONS:-6} \
+          --partitions 6 \
           --replication-factor 1
 
         /opt/kafka/bin/kafka-topics.sh \
           --bootstrap-server kafka:29092 \
           --create \
           --if-not-exists \
-          --topic cloud-edge-aggregates \
+          --topic cloud-partition-aggregates \
           --partitions 1 \
           --replication-factor 1
 
@@ -77,16 +77,18 @@ services:
     environment:
       KAFKA_BROKER: "kafka:29092"
       KAFKA_INPUT_TOPIC: "edge-aggregates"
-      KAFKA_OUTPUT_TOPIC: "cloud-edge-aggregates"
+      KAFKA_OUTPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "cloud-workers"
       CLOUD_WINDOW_SIZE: "{{$.CloudWindowSize}}"
+      CLOUD_EXPECTED_EDGE_IDS: "{{$.ExpectedEdgeIDs}}"
+      SOURCE_PARTITION_COUNT: "6"
       WORKER_ID: "{{.WorkerID}}"
 
     depends_on:
       kafka-init:
         condition: service_completed_successfully
 
-    restart: unless-stopped
+    restart: "no"
 
     networks:
       - continuum-backbone
@@ -97,12 +99,9 @@ services:
 
     environment:
       KAFKA_BROKER: "kafka:29092"
-      KAFKA_INPUT_TOPIC: "cloud-edge-aggregates"
+      KAFKA_INPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "global-aggregator"
-      GLOBAL_WINDOW_SIZE: "{{.CloudWindowSize}}"
-      GLOBAL_WATERMARK_DELAY: "{{.GlobalWatermarkDelay}}"
-      GLOBAL_EDGE_IDLE_TIMEOUT: "{{.GlobalEdgeIdleTimeout}}"
-      EXPECTED_EDGE_IDS: "{{.ExpectedEdgeIDs}}"
+      SOURCE_PARTITION_COUNT: "6"
 
     depends_on:
       kafka-init:

@@ -1,120 +1,51 @@
 package main
 
 import (
-	"fmt"
-	"strings"
-
+	"context"
 	"continuum/internal/avrocodec"
 	"continuum/internal/cloudworker"
 	"continuum/internal/kafkautil"
 	"continuum/internal/model"
-
+	"fmt"
 	"github.com/segmentio/kafka-go"
 )
 
 type CloudMessageProcessor struct {
-	aggregator     *cloudworker.WindowAggregator
+	aggregator     *cloudworker.PartitionAggregator
 	outputTopic    string
 	workerID       string
 	publishMessage KafkaMessagePublisher
-	endedEdges     map[string]bool
 }
 
-func (processor *CloudMessageProcessor) Process(message kafka.Message) error {
-	recordType, err := kafkautil.ParseRecordType(message.Headers)
+func (p *CloudMessageProcessor) Initialize(ctx context.Context) error {
+	return p.publishOutput(ctx, p.aggregator.Initialize())
+}
+func (p *CloudMessageProcessor) Process(ctx context.Context, message kafka.Message) error {
+	kind, err := kafkautil.ParseRecordType(message.Headers)
 	if err != nil {
 		return err
 	}
-
-	switch recordType {
+	var out cloudworker.Output
+	switch kind {
 	case model.RecordTypeEdgeAggregate:
-		return processor.processEdgeAggregate(message)
-
+		input, decodeErr := avrocodec.DecodeEdgeAggregate(message.Value)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		if string(message.Key) != input.EdgeID {
+			return fmt.Errorf("Kafka key does not match EdgeAggregate edge_id")
+		}
+		out, err = p.aggregator.Add(message.Partition, input)
 	case model.RecordTypeEndOfReplay:
-		return processor.processEndOfReplay(message)
-
+		if len(message.Value) != 0 {
+			return fmt.Errorf("Edge EOS must have empty payload")
+		}
+		out, err = p.aggregator.EndEdge(message.Partition, string(message.Key))
 	default:
-		return fmt.Errorf("record_type Kafka sconosciuto %q", recordType)
+		return fmt.Errorf("unexpected Cloud record_type %q", kind)
 	}
-}
-
-func (processor *CloudMessageProcessor) processEdgeAggregate(message kafka.Message) error {
-	input, err := decodeEdgeAggregate(message.Value)
 	if err != nil {
 		return err
 	}
-	if string(message.Key) != input.EdgeID {
-		return fmt.Errorf("EdgeAggregate key Kafka=%q non coerente con edge_id=%q", message.Key, input.EdgeID)
-	}
-
-	if processor.endedEdges == nil {
-		processor.endedEdges = make(map[string]bool)
-	}
-	if processor.endedEdges[input.EdgeID] {
-		return fmt.Errorf("violazione invariant terminale: EdgeAggregate %s ricevuto dopo EndOfReplay edge=%s", input.AggregateID, input.EdgeID)
-	}
-
-	output, err := processor.aggregator.Add(input)
-	if err != nil {
-		return fmt.Errorf("elaborazione aggregate_id=%s fallita: %w", input.AggregateID, err)
-	}
-
-	if output == nil {
-		return nil
-	}
-	// Un output viene prodotto quando l'arrivo di un aggregato appartenente a una finestra successiva fa emettere quella corrente
-	return processor.publishCloudAggregate(*output, false)
-}
-
-func (processor *CloudMessageProcessor) processEndOfReplay(message kafka.Message) error {
-	edgeID := string(message.Key)
-	if strings.TrimSpace(edgeID) == "" {
-		return fmt.Errorf("key Kafka EOS mancante o vuota")
-	}
-
-	// Inizializzo la mappa degli Edge terminati se necessario
-	if processor.endedEdges == nil {
-		processor.endedEdges = make(map[string]bool)
-	}
-	// se già arrivato EOS per quell'edge allora duplicato e lo ignoro
-	if processor.endedEdges[edgeID] {
-		fmt.Printf("%s: EndOfReplay duplicato edge=%s ignorato\n", processor.workerID, edgeID)
-		return nil
-	}
-
-	// Propago l'EndOfReplay verso l'aggregatore globale
-	output := processor.aggregator.FlushEdge(edgeID)
-	if output == nil {
-		return fmt.Errorf("nessuna finestra Cloud attiva per edge=%s al ricevimento dell'EndOfReplay", edgeID)
-	}
-	// invio l'ultima finestra
-	if err := processor.publishCloudAggregate(*output, true); err != nil {
-		return fmt.Errorf(
-			"flush finale Cloud edge=%s fallito: %w",
-			edgeID,
-			err,
-		)
-	}
-
-	// genero un nuovo segnarle per l'aggregatoreGlobale
-	if err := processor.publishEndOfReplay(edgeID); err != nil {
-		return err
-	}
-
-	processor.endedEdges[edgeID] = true
-
-	return nil
-}
-
-func decodeEdgeAggregate(payload []byte) (model.EdgeAggregate, error) {
-	aggregate, err := avrocodec.DecodeEdgeAggregate(payload)
-	if err != nil {
-		return model.EdgeAggregate{}, fmt.Errorf("EdgeAggregate Avro non valido: %w", err)
-	}
-
-	if err := cloudworker.ValidateEdgeAggregate(aggregate); err != nil {
-		return model.EdgeAggregate{}, err
-	}
-
-	return aggregate, nil
+	return p.publishOutput(ctx, out)
 }

@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
+	"continuum/internal/model"
 	"fmt"
+	"github.com/segmentio/kafka-go"
 	"os"
 	"os/signal"
 	"syscall"
-
-	"continuum/internal/cloudworker"
-
-	"github.com/segmentio/kafka-go"
 )
 
 func main() {
@@ -17,62 +15,19 @@ func main() {
 		panic(err)
 	}
 }
-
 func runCloudWorker() error {
 	config, err := loadCloudWorkerConfig()
 	if err != nil {
 		return err
 	}
-
-	aggregator := cloudworker.NewWindowAggregator(config.WindowSize)
-
-	reader := newKafkaReader(config.KafkaBroker, config.InputTopic, config.GroupID)
-	defer func() {
-		if err := reader.Close(); err != nil {
-			fmt.Printf("%s: errore chiusura Kafka reader: %v\n", config.WorkerID, err)
-		}
-	}()
-
-	writer := newKafkaWriter(config.KafkaBroker, config.OutputTopic)
-	defer func() {
-		if err := writer.Close(); err != nil {
-			fmt.Printf("%s: errore chiusura Kafka writer: %v\n", config.WorkerID, err)
-		}
-	}()
-
-	fmt.Printf("Avvio Cloud Worker %s\n", config.WorkerID)
-	fmt.Printf("Kafka broker: %s\n", config.KafkaBroker)
-	fmt.Printf("Input topic: %s\n", config.InputTopic)
-	fmt.Printf("Output topic: %s\n", config.OutputTopic)
-	fmt.Printf("Cloud window: %s\n", config.WindowSize)
-	fmt.Printf("Consumer group: %s\n\n", config.GroupID)
-
-	ctx, stop := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	publishMessage := func(ctx context.Context, message kafka.Message) error {
-		return writer.WriteMessages(ctx, message)
-	}
-
-	processor := &CloudMessageProcessor{
-		aggregator:     aggregator,
-		outputTopic:    writer.Topic,
-		workerID:       config.WorkerID,
-		publishMessage: publishMessage,
-		endedEdges:     make(map[string]bool),
-	}
-
-	if err := consume(ctx, reader, processor); err != nil {
+	if err := validateKafkaTopology(ctx, config.KafkaBroker, config.InputTopic, model.SourcePartitionCount); err != nil {
 		return err
 	}
-
-	if err := flushWindows(processor); err != nil {
-		return err
-	}
-
-	fmt.Printf("\nArresto Cloud Worker %s\n", config.WorkerID)
-	return nil
+	writer := newKafkaWriter(config.KafkaBroker, config.OutputTopic)
+	defer writer.Close()
+	fmt.Printf("Avvio Cloud Worker %s: %s -> %s window=%s partitions=%d\n", config.WorkerID, config.InputTopic, config.OutputTopic, config.WindowSize, model.SourcePartitionCount)
+	// Shutdown does not certify open windows. Only deterministic progress/EOS can.
+	return consume(ctx, config, func(ctx context.Context, m kafka.Message) error { return writer.WriteMessages(ctx, m) })
 }

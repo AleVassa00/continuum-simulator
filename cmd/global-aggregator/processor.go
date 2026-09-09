@@ -2,74 +2,50 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
-
 	"continuum/internal/avrocodec"
-	"continuum/internal/cloudworker"
 	"continuum/internal/globalaggregator"
 	"continuum/internal/kafkautil"
 	"continuum/internal/model"
-
+	"fmt"
 	"github.com/segmentio/kafka-go"
 )
 
-type GlobalMessageProcessor struct {
-	aggregator *globalaggregator.Aggregator
-}
+type GlobalMessageProcessor struct{ aggregator *globalaggregator.Aggregator }
 
-func (processor *GlobalMessageProcessor) Process(
-	ctx context.Context,
-	message kafka.Message,
-) (bool, error) {
-	recordType, err := kafkautil.ParseRecordType(message.Headers)
+func (p *GlobalMessageProcessor) Process(ctx context.Context, message kafka.Message) (bool, error) {
+	kind, err := kafkautil.ParseRecordType(message.Headers)
 	if err != nil {
 		return false, err
 	}
-
-	switch recordType {
-	case model.RecordTypeCloudEdgeAggregate:
-		input, err := decodeCloudEdgeAggregate(message.Value)
+	partition, err := model.ParsePartitionKey(message.Key)
+	if err != nil {
+		return false, err
+	}
+	switch kind {
+	case model.RecordTypeCloudPartitionAggregate:
+		a, err := avrocodec.DecodeCloudPartitionAggregate(message.Value)
 		if err != nil {
 			return false, err
 		}
-		if string(message.Key) != input.EdgeID {
-			return false, fmt.Errorf(
-				"CloudEdgeAggregate key Kafka=%q non coerente con edge_id=%q",
-				message.Key,
-				input.EdgeID,
-			)
+		if a.SourcePartition != partition {
+			return false, fmt.Errorf("partial source partition differs from Kafka key")
 		}
-		if err := processor.aggregator.Add(ctx, input); err != nil {
-			if errors.Is(err, globalaggregator.ErrClosedWindow) {
-				fmt.Printf("Global Aggregator: late aggregate scartato (%v)\n", err)
-				return false, nil
-			}
+		return false, p.aggregator.Add(ctx, a)
+	case model.RecordTypePartitionProgress:
+		progress, err := avrocodec.DecodePartitionProgress(message.Value)
+		if err != nil {
 			return false, err
 		}
-		return false, nil
-
-	case model.RecordTypeEndOfReplay:
-		return processor.aggregator.EndReplay(ctx, string(message.Key))
-
+		if progress.SourcePartition != partition {
+			return false, fmt.Errorf("progress source partition differs from Kafka key")
+		}
+		return false, p.aggregator.Progress(ctx, progress)
+	case model.RecordTypePartitionEndOfReplay:
+		if len(message.Value) != 0 {
+			return false, fmt.Errorf("partition EOS must have empty payload")
+		}
+		return p.aggregator.EndPartition(ctx, partition)
 	default:
-		return false, fmt.Errorf(
-			"record_type Kafka globale sconosciuto %q",
-			recordType,
-		)
+		return false, fmt.Errorf("unexpected Global record_type %q", kind)
 	}
-}
-
-func decodeCloudEdgeAggregate(payload []byte) (model.CloudEdgeAggregate, error) {
-	aggregate, err := avrocodec.DecodeCloudEdgeAggregate(payload)
-	if err != nil {
-		return model.CloudEdgeAggregate{}, fmt.Errorf(
-			"CloudEdgeAggregate Avro non valido: %w",
-			err,
-		)
-	}
-	if err := cloudworker.ValidateCloudEdgeAggregate(aggregate); err != nil {
-		return model.CloudEdgeAggregate{}, err
-	}
-	return aggregate, nil
 }

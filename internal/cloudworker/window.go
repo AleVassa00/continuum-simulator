@@ -1,147 +1,56 @@
 package cloudworker
 
 import (
-	"fmt"
-	"time"
-
 	"continuum/internal/model"
+	"time"
 )
 
 type cloudWindowState struct {
-	edgeID string
-	start  time.Time
-	end    time.Time
-
-	inputAggregates  uint64
-	events           uint64
-	seenAggregateIDs map[string]struct{}
-
-	temperature metricState
-	humidity    metricState
-	pressure    metricState
+	start, end                      time.Time
+	inputs                          map[string]model.EdgeAggregate
+	events                          uint64
+	temperature, humidity, pressure metricState
 }
-
 type metricState struct {
-	valid   uint64
-	invalid uint64
-	sum     float64
-	min     float64
-	max     float64
+	valid, invalid uint64
+	sum, min, max  float64
 }
 
-func (aggregator *WindowAggregator) cloudWindowFor(input model.EdgeAggregate) (time.Time, time.Time, error) {
-	edgeWindowSize := input.WindowEnd.Sub(input.WindowStart)
-
-	if edgeWindowSize <= 0 {
-		return time.Time{}, time.Time{}, fmt.Errorf("EdgeAggregate %q ha una finestra non valida", input.AggregateID)
-	}
-
-	if aggregator.windowSize%edgeWindowSize != 0 {
-		return time.Time{}, time.Time{}, fmt.Errorf("finestra Cloud %s non multipla della finestra Edge %s per aggregate_id=%s",
-			aggregator.windowSize,
-			edgeWindowSize,
-			input.AggregateID,
-		)
-	}
-
-	cloudWindowStart := input.WindowStart.Truncate(aggregator.windowSize)
-	cloudWindowEnd := cloudWindowStart.Add(aggregator.windowSize)
-
-	if input.WindowStart.Before(cloudWindowStart) || input.WindowEnd.After(cloudWindowEnd) {
-		return time.Time{}, time.Time{}, fmt.Errorf("finestra Edge [%s,%s) attraversa il confine della finestra Cloud [%s,%s)",
-			input.WindowStart.Format(time.RFC3339),
-			input.WindowEnd.Format(time.RFC3339),
-			cloudWindowStart.Format(time.RFC3339),
-			cloudWindowEnd.Format(time.RFC3339),
-		)
-	}
-
-	return cloudWindowStart, cloudWindowEnd, nil
+func (s *cloudWindowState) add(a model.EdgeAggregate) {
+	s.inputs[a.AggregateID] = a
+	s.events += a.Events
+	s.temperature.add(a.Temperature)
+	s.humidity.add(a.Humidity)
+	s.pressure.add(a.Pressure)
 }
-
-func newCloudWindowState(edgeID string, start time.Time, end time.Time) *cloudWindowState {
-	return &cloudWindowState{
-		edgeID: edgeID,
-		start:  start,
-		end:    end,
-		// Gli ID vivono quanto la finestra: sostituzione e flush liberano il set
-		seenAggregateIDs: make(map[string]struct{}),
+func (s *cloudWindowState) buildAggregate(partition int) model.CloudPartitionAggregate {
+	return model.CloudPartitionAggregate{
+		AggregateID: model.PartitionAggregateID(partition, s.start, s.end), SourcePartition: partition,
+		WindowStart: s.start, WindowEnd: s.end, InputAggregates: uint64(len(s.inputs)), Events: s.events,
+		Temperature: s.temperature.buildAggregate(), Humidity: s.humidity.buildAggregate(), Pressure: s.pressure.buildAggregate(), EmittedAt: time.Now().UTC(),
 	}
 }
-
-func (state *cloudWindowState) add(input model.EdgeAggregate) {
-	state.seenAggregateIDs[input.AggregateID] = struct{}{}
-	state.inputAggregates++
-	state.events += input.Events
-
-	state.temperature.add(input.Temperature)
-	state.humidity.add(input.Humidity)
-	state.pressure.add(input.Pressure)
-}
-
-func (state *metricState) add(input model.MetricAggregate) {
-	if input.Valid > 0 {
-		if state.valid == 0 {
-			state.min = *input.Min
-			state.max = *input.Max
+func (s *metricState) add(m model.MetricAggregate) {
+	if m.Valid > 0 {
+		if s.valid == 0 {
+			s.min = *m.Min
+			s.max = *m.Max
 		} else {
-			state.min = min(state.min, *input.Min)
-
-			state.max = max(state.max, *input.Max)
+			s.min = min(s.min, *m.Min)
+			s.max = max(s.max, *m.Max)
 		}
 	}
-
-	state.valid += input.Valid
-	state.invalid += input.Invalid
-	state.sum += input.Sum
+	s.valid += m.Valid
+	s.invalid += m.Invalid
+	s.sum += m.Sum
 }
-
-func (state *cloudWindowState) buildAggregate(emittedAt time.Time) model.CloudEdgeAggregate {
-	return model.CloudEdgeAggregate{
-		AggregateID:     buildCloudAggregateID(state.edgeID, state.start, state.end),
-		EdgeID:          state.edgeID,
-		WindowStart:     state.start,
-		WindowEnd:       state.end,
-		InputAggregates: state.inputAggregates,
-		Events:          state.events,
-		Temperature:     state.temperature.buildAggregate(),
-		Humidity:        state.humidity.buildAggregate(),
-		Pressure:        state.pressure.buildAggregate(),
-		EmittedAt:       emittedAt,
+func (s metricState) buildAggregate() model.MetricAggregate {
+	m := model.MetricAggregate{Valid: s.valid, Invalid: s.invalid, Sum: s.sum}
+	if s.valid > 0 {
+		avg := s.sum / float64(s.valid)
+		m.Average = &avg
+		m.Min = &s.min
+		m.Max = &s.max
 	}
-}
-
-func (state metricState) buildAggregate() model.MetricAggregate {
-	if state.valid == 0 {
-		return model.MetricAggregate{
-			Valid:   0,
-			Invalid: state.invalid,
-			Sum:     0,
-			Average: nil,
-			Min:     nil,
-			Max:     nil,
-		}
-	}
-
-	average := state.sum / float64(state.valid)
-
-	minimum := state.min
-	maximum := state.max
-
-	return model.MetricAggregate{
-		Valid:   state.valid,
-		Invalid: state.invalid,
-		Sum:     state.sum,
-		Average: &average,
-		Min:     &minimum,
-		Max:     &maximum,
-	}
-}
-
-func buildCloudAggregateID(edgeID string, windowStart time.Time, windowEnd time.Time) string {
-	return fmt.Sprintf("cloud:%s:%s:%s",
-		edgeID,
-		windowStart.UTC().Format(time.RFC3339),
-		windowEnd.UTC().Format(time.RFC3339),
-	)
+	return m
 }

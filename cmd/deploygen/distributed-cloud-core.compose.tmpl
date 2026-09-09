@@ -62,14 +62,14 @@ services:
           --create \
           --if-not-exists \
           --topic edge-aggregates \
-          --partitions ${KAFKA_PARTITIONS:-6} \
+          --partitions 6 \
           --replication-factor 1
 
         /opt/kafka/bin/kafka-topics.sh \
           --bootstrap-server kafka:29092 \
           --create \
           --if-not-exists \
-          --topic cloud-edge-aggregates \
+          --topic cloud-partition-aggregates \
           --partitions 1 \
           --replication-factor 1
 
@@ -86,11 +86,8 @@ services:
 
     environment:
       KAFKA_BROKER: "kafka:29092"
-      KAFKA_INPUT_TOPIC: "cloud-edge-aggregates"
+      KAFKA_INPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "global-aggregator"
-      GLOBAL_WINDOW_SIZE: "{{.CloudWindowSize}}"
-      GLOBAL_WATERMARK_DELAY: "{{.GlobalWatermarkDelay}}"
-      GLOBAL_EDGE_IDLE_TIMEOUT: "{{.GlobalEdgeIdleTimeout}}"
       GLOBAL_SINK_TYPE: "${GLOBAL_SINK_TYPE:-log}"
       GLOBAL_POSTGRES_HOST: "${GLOBAL_POSTGRES_HOST:-}"
       GLOBAL_POSTGRES_PORT: "${GLOBAL_POSTGRES_PORT:-5432}"
@@ -98,7 +95,7 @@ services:
       GLOBAL_POSTGRES_USER: "${GLOBAL_POSTGRES_USER:-}"
       GLOBAL_POSTGRES_PASSWORD: "${GLOBAL_POSTGRES_PASSWORD:-}"
       GLOBAL_POSTGRES_SSLMODE: "${GLOBAL_POSTGRES_SSLMODE:-verify-full}"
-      EXPECTED_EDGE_IDS: "{{.ExpectedEdgeIDs}}"
+      SOURCE_PARTITION_COUNT: "6"
 
     depends_on:
       kafka-init:

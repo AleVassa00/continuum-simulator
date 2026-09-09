@@ -29,10 +29,10 @@ type EdgeAggregate struct {
 	EmittedAt time.Time
 }
 
-type CloudEdgeAggregate struct {
+type CloudPartitionAggregate struct {
 	AggregateID string
 
-	EdgeID string
+	SourcePartition int
 
 	WindowStart time.Time
 	WindowEnd   time.Time
@@ -54,8 +54,8 @@ type GlobalAggregate struct {
 	WindowStart time.Time
 	WindowEnd   time.Time
 
-	ExpectedEdges     uint64
-	ContributingEdges uint64
+	ExpectedPartitions     uint64
+	ContributingPartitions uint64
 
 	Events uint64
 
@@ -64,4 +64,12 @@ type GlobalAggregate struct {
 	Pressure    MetricAggregate
 
 	EmittedAt time.Time
+}
+
+// PartitionProgress certifies that all nonempty partials ending at or before
+// CompleteThrough have already been published on the same ordered stream.
+// Missing partials in that range are therefore zero contributions.
+type PartitionProgress struct {
+	SourcePartition int
+	CompleteThrough time.Time
 }

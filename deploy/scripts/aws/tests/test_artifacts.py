@@ -1,5 +1,6 @@
 """Offline tests: no Docker daemon, AWS credentials, or Go application changes."""
 import importlib.util
+import csv
 import json
 import subprocess
 import sys
@@ -46,7 +47,7 @@ def fixture(root):
     metric = {"valid": 2, "invalid": 0, "sum": 10, "average": 5, "min": 5, "max": 5}
     windows = [{"aggregate_id": f"global-{i}", "window_start": f"2025-01-01T00:{i*15:02}:00Z",
                 "window_end": f"2025-01-01T00:{(i+1)*15:02}:00Z", "emitted_at": "2026-09-07T00:00:01Z",
-                "expected_edges": 2, "contributing_edges": 2, "events": 2,
+                "expected_partitions": 6, "contributing_partitions": 6, "events": 2,
                 "temperature": metric, "humidity": metric, "pressure": metric} for i in range(2)]
     (root / "logs/cloud-core.log").write_text("\n".join("GLOBAL_AGGREGATE " + json.dumps(row) for row in windows) +
                                             "\n2026-09-07T00:00:02.000000001Z GLOBAL_REPLAY_COMPLETED\n", encoding="utf-8")
@@ -66,14 +67,41 @@ class ArtifactTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         fixture(self.root)
 
-    def test_clean_run_and_accelerated_window_latency(self):
+    def test_clean_run_preserves_window_timestamps_without_derived_delay(self):
+        log_path = self.root / "logs/cloud-core.log"
+        original_log = log_path.read_bytes()
+        original_windows = artifacts.records(log_path.read_text(), "GLOBAL_AGGREGATE")
         result = artifacts.summarize(self.root)
         self.assertEqual(result["quality_status"], "pass")
         self.assertEqual(result["cloud_workers_max_total_lag"], 12)
         self.assertEqual(result["cloud_workers_final_lag"], 0)
         self.assertEqual(result["replay_elapsed_seconds"], 2)
-        self.assertAlmostEqual(result["global_publication_delay_p95_seconds"], 0.91)
-        self.assertEqual(result["global_publication_delay_samples"], 1)
+        self.assertFalse(any("publication_delay" in key for key in result))
+        with (self.root / "global-windows.csv").open(newline="", encoding="utf-8") as stream:
+            windows = list(csv.DictReader(stream))
+        self.assertEqual(len(windows), len(original_windows))
+        for exported, original in zip(windows, original_windows):
+            for field in ("window_start", "window_end", "emitted_at"):
+                self.assertEqual(exported[field], original[field])
+            self.assertNotIn("publication_delay_seconds", exported)
+            self.assertNotIn("excluded_terminal_window", exported)
+        self.assertEqual(log_path.read_bytes(), original_log)
+        self.assertNotIn("publication_delay", (self.root / "run-summary.csv").read_text())
+
+    def test_single_window_no_longer_fails_for_missing_delay_samples(self):
+        path = self.root / "logs/cloud-core.log"
+        lines = path.read_text().splitlines()
+        window = artifacts.records(lines[0], "GLOBAL_AGGREGATE")[0]
+        window["events"] = 4
+        path.write_text("GLOBAL_AGGREGATE " + json.dumps(window) + "\n" + lines[-1] + "\n", encoding="utf-8")
+        self.assertEqual(artifacts.summarize(self.root)["quality_status"], "pass")
+
+    def test_window_emission_no_longer_triggers_negative_delay_check(self):
+        path = self.root / "logs/cloud-core.log"
+        path.write_text(path.read_text().replace("2026-09-07T00:00:01Z", "2026-09-07T00:00:00Z"), encoding="utf-8")
+        result = artifacts.summarize(self.root)
+        self.assertEqual(result["quality_status"], "pass")
+        self.assertNotIn("publication_delay", result["quality_failures"])
 
     def test_missing_simulator_is_not_zero_drop_success(self):
         (self.root / "logs/simulator.log").write_text("", encoding="utf-8")

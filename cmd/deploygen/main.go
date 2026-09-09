@@ -61,11 +61,9 @@ type composeEdge struct {
 type composeTemplateData struct {
 	ExperimentName string
 
-	CloudWorkers          []composeCloudWorker
-	CloudWindowSize       string
-	GlobalWatermarkDelay  string
-	GlobalEdgeIdleTimeout string
-	ExpectedEdgeIDs       string
+	CloudWorkers    []composeCloudWorker
+	CloudWindowSize string
+	ExpectedEdgeIDs string
 
 	Edges                    []composeEdge
 	EdgeWindowSize           string
@@ -113,11 +111,7 @@ var distributedEdgeTemplateSource string
 //go:embed distributed-simulator.compose.tmpl
 var distributedSimulatorTemplateSource string
 
-var composeTemplate = template.Must(
-	template.New("local-compose").Parse(
-		strings.ReplaceAll(localComposeTemplateSource, "\r\n", "\n"),
-	),
-)
+var composeTemplate = template.Must(template.New("local-compose").Parse(strings.ReplaceAll(localComposeTemplateSource, "\r\n", "\n")))
 
 var distributedCloudCoreTemplate = template.Must(
 	template.New("distributed-cloud-core-compose").Parse(
@@ -197,15 +191,9 @@ func runDeploygen(args []string, options deploygenOptions) error {
 	}
 }
 
-func generateLocalDeployment(
-	config experiment.Config,
-	edges []EdgeDeployment,
-	options deploygenOptions,
-) error {
+func generateLocalDeployment(config experiment.Config, edges []EdgeDeployment, options deploygenOptions) error {
 
-	replayStartAt := time.Now().UTC().Add(
-		config.Workload.StartLeadTime.Duration(),
-	)
+	replayStartAt := time.Now().UTC().Add(config.Workload.StartLeadTime.Duration())
 	effective := experiment.BuildEffective(config, replayStartAt)
 	compose := buildCompose(edges, effective)
 
@@ -227,9 +215,7 @@ func generateLocalDeployment(
 
 	printExperimentSummary(options.Stdout, effective, effectivePath)
 
-	fmt.Fprintf(
-		options.Stdout,
-		"Topologia letta: %d Edge\n\n",
+	fmt.Fprintf(options.Stdout, "Topologia letta: %d Edge\n\n",
 		len(edges),
 	)
 
@@ -254,11 +240,7 @@ func generateLocalDeployment(
 	return nil
 }
 
-func generateDistributedDeployment(
-	config experiment.Config,
-	edges []EdgeDeployment,
-	options deploygenOptions,
-) error {
+func generateDistributedDeployment(config experiment.Config, edges []EdgeDeployment, options deploygenOptions) error {
 	resolved := experiment.ResolveDefaults(config)
 	composes := buildDistributedComposes(edges, resolved)
 
@@ -275,10 +257,7 @@ func generateDistributedDeployment(
 	if err != nil {
 		return err
 	}
-	manifestPath := filepath.Join(
-		options.DistributedOutputDir,
-		generationManifestFilename,
-	)
+	manifestPath := filepath.Join(options.DistributedOutputDir, generationManifestFilename)
 	if err := os.WriteFile(manifestPath, manifest, 0644); err != nil {
 		return err
 	}
@@ -290,11 +269,7 @@ func generateDistributedDeployment(
 	fmt.Fprintf(options.Stdout, "Cloud workers: %d\n\n", resolved.Cloud.Workers)
 
 	for _, compose := range composes {
-		fmt.Fprintf(
-			options.Stdout,
-			"Generato: %s\n",
-			filepath.Join(options.DistributedOutputDir, compose.Filename),
-		)
+		fmt.Fprintf(options.Stdout, "Generato: %s\n", filepath.Join(options.DistributedOutputDir, compose.Filename))
 	}
 	fmt.Fprintf(options.Stdout, "Generato: %s\n", manifestPath)
 
@@ -339,11 +314,7 @@ func buildComposeGenerationManifest(
 	return append(payload, '\n'), nil
 }
 
-func printExperimentSummary(
-	output io.Writer,
-	config experiment.EffectiveConfig,
-	effectivePath string,
-) {
+func printExperimentSummary(output io.Writer, config experiment.EffectiveConfig, effectivePath string) {
 	fmt.Fprintf(output, "Experiment: %s\n\n", config.Experiment.Name)
 	fmt.Fprintln(output, "Workload:")
 	fmt.Fprintf(output, "  acceleration factor: %s\n", formatFloat(config.Workload.AccelerationFactor))
@@ -358,8 +329,7 @@ func printExperimentSummary(
 	fmt.Fprintf(output, "  workers: %d\n", config.Cloud.Workers)
 	fmt.Fprintf(output, "  window: %s\n\n", config.Cloud.WindowSize)
 	fmt.Fprintln(output, "Global:")
-	fmt.Fprintf(output, "  watermark delay: %s\n", config.Global.WatermarkDelay)
-	fmt.Fprintf(output, "  edge idle timeout: %s\n\n", config.Global.EdgeIdleTimeout)
+	fmt.Fprintln(output, "  exact-window merge of source partitions 0..5")
 	fmt.Fprintf(output, "Effective config: %s\n\n", effectivePath)
 }
 
@@ -367,9 +337,7 @@ func formatFloat(value float64) string {
 	return strconv.FormatFloat(value, 'g', -1, 64)
 }
 
-func loadEdges(
-	path string,
-) ([]EdgeDeployment, error) {
+func loadEdges(path string) ([]EdgeDeployment, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -386,17 +354,12 @@ func loadEdges(
 
 	columns := buildColumnIndex(header)
 
-	edgeIDIndex, err := requiredColumn(
-		columns,
-		"edge_id",
-	)
+	edgeIDIndex, err := requiredColumn(columns, "edge_id")
 	if err != nil {
 		return nil, err
 	}
 
-	sensorCounts := make(
-		map[string]int,
-	)
+	sensorCounts := make(map[string]int)
 
 	for {
 		row, err := reader.Read()
@@ -409,52 +372,35 @@ func loadEdges(
 			return nil, err
 		}
 
-		edgeID := strings.TrimSpace(
-			row[edgeIDIndex],
-		)
+		edgeID := strings.TrimSpace(row[edgeIDIndex])
 
 		if edgeID == "" {
-			return nil,
-				fmt.Errorf(
-					"edge_id vuoto nella topologia",
-				)
+			return nil, fmt.Errorf("edge_id vuoto nella topologia")
 		}
 
 		sensorCounts[edgeID]++
 	}
 
-	edges := make(
-		[]EdgeDeployment,
-		0,
-		len(sensorCounts),
-	)
+	edges := make([]EdgeDeployment, 0, len(sensorCounts))
 
 	for edgeID, sensorCount := range sensorCounts {
-		edgeNumber, err := parseEdgeNumber(
-			edgeID,
-		)
+		edgeNumber, err := parseEdgeNumber(edgeID)
 		if err != nil {
 			return nil, err
 		}
 
-		edges = append(
-			edges,
-			EdgeDeployment{
-				EdgeID:      edgeID,
-				EdgeNumber:  edgeNumber,
-				SensorCount: sensorCount,
-				MQTTPort:    mqttBasePort + edgeNumber,
-			},
+		edges = append(edges, EdgeDeployment{
+			EdgeID:      edgeID,
+			EdgeNumber:  edgeNumber,
+			SensorCount: sensorCount,
+			MQTTPort:    mqttBasePort + edgeNumber,
+		},
 		)
 	}
 
-	sort.Slice(
-		edges,
-		func(i int, j int) bool {
-			return edges[i].EdgeNumber <
-				edges[j].EdgeNumber
-		},
-	)
+	sort.Slice(edges, func(i int, j int) bool {
+		return edges[i].EdgeNumber < edges[j].EdgeNumber
+	})
 
 	return edges, nil
 }
@@ -503,12 +449,8 @@ func parseEdgeNumber(
 	return edgeNumber, nil
 }
 
-func buildColumnIndex(
-	header []string,
-) map[string]int {
-	columns := make(
-		map[string]int,
-	)
+func buildColumnIndex(header []string) map[string]int {
+	columns := make(map[string]int)
 
 	for index, name := range header {
 		columns[strings.TrimSpace(name)] = index
@@ -517,40 +459,25 @@ func buildColumnIndex(
 	return columns
 }
 
-func requiredColumn(
-	columns map[string]int,
-	name string,
-) (int, error) {
+func requiredColumn(columns map[string]int, name string) (int, error) {
 	index, found := columns[name]
 
 	if !found {
-		return 0,
-			fmt.Errorf(
-				"colonna %q non trovata",
-				name,
-			)
+		return 0, fmt.Errorf("colonna %q non trovata", name)
 	}
 
 	return index, nil
 }
 
-func buildCompose(
-	edges []EdgeDeployment,
-	config experiment.EffectiveConfig,
-) string {
-	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(
-		edges,
-		config.Cloud.Workers,
-	)
+func buildCompose(edges []EdgeDeployment, config experiment.EffectiveConfig) string {
+	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(edges, config.Cloud.Workers)
 
 	data := composeTemplateData{
 		ExperimentName: config.Experiment.Name,
 
-		CloudWorkers:          cloudWorkers,
-		CloudWindowSize:       config.Cloud.WindowSize.String(),
-		GlobalWatermarkDelay:  config.Global.WatermarkDelay.String(),
-		GlobalEdgeIdleTimeout: config.Global.EdgeIdleTimeout.String(),
-		ExpectedEdgeIDs:       expectedEdgeIDs,
+		CloudWorkers:    cloudWorkers,
+		CloudWindowSize: config.Cloud.WindowSize.String(),
+		ExpectedEdgeIDs: expectedEdgeIDs,
 
 		Edges:                    composeEdges,
 		EdgeWindowSize:           config.Edge.WindowSize.String(),
@@ -566,24 +493,16 @@ func buildCompose(
 	return renderCompose(composeTemplate, data)
 }
 
-func buildDistributedComposes(
-	edges []EdgeDeployment,
-	config experiment.Config,
-) []generatedCompose {
+func buildDistributedComposes(edges []EdgeDeployment, config experiment.Config) []generatedCompose {
 	config = experiment.ResolveDefaults(config)
-	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(
-		edges,
-		config.Cloud.Workers,
-	)
+	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(edges, config.Cloud.Workers)
 
 	data := composeTemplateData{
 		ExperimentName: config.Experiment.Name,
 
-		CloudWorkers:          cloudWorkers,
-		CloudWindowSize:       config.Cloud.WindowSize.String(),
-		GlobalWatermarkDelay:  config.Global.WatermarkDelay.String(),
-		GlobalEdgeIdleTimeout: config.Global.EdgeIdleTimeout.String(),
-		ExpectedEdgeIDs:       expectedEdgeIDs,
+		CloudWorkers:    cloudWorkers,
+		CloudWindowSize: config.Cloud.WindowSize.String(),
+		ExpectedEdgeIDs: expectedEdgeIDs,
 
 		Edges:                    composeEdges,
 		EdgeWindowSize:           config.Edge.WindowSize.String(),
@@ -615,10 +534,7 @@ func buildDistributedComposes(
 	}
 }
 
-func buildComposeTopology(
-	edges []EdgeDeployment,
-	workers int,
-) ([]composeCloudWorker, []composeEdge, string) {
+func buildComposeTopology(edges []EdgeDeployment, workers int) ([]composeCloudWorker, []composeEdge, string) {
 	cloudWorkers := make([]composeCloudWorker, 0, workers)
 	for workerNumber := 0; workerNumber < workers; workerNumber++ {
 		cloudWorkers = append(cloudWorkers, composeCloudWorker{

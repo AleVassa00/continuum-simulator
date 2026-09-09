@@ -24,6 +24,9 @@ bin/
 # Generated deployment artifacts
 .build/
 artifacts/aws-runs/
+artifacts/local-runs/
+artifacts/experiments/*/effective-config.yaml
+deploy/compose/continuum.generated.yml
 
 # Terraform local state and working directories
 .terraform/

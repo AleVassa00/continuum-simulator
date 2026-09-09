@@ -43,7 +43,7 @@ func decodeRecord(codec *goavro.Codec, payload []byte) (map[string]any, error) {
 		switch field {
 		case "events", "input_aggregates":
 			record[field], err = decodeCounter(value.(int64))
-		case "window_start", "window_end", "emitted_at":
+		case "window_start", "window_end", "emitted_at", "complete_through":
 			record[field] = time.Unix(0, value.(int64)).UTC()
 		case "temperature", "humidity", "pressure":
 			record[field], err = decodeMetric(value.(map[string]any))

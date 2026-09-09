@@ -15,7 +15,7 @@ import statistics
 
 
 GROUPS = {"cloud-workers": ("edge-aggregates", 6),
-          "global-aggregator": ("cloud-edge-aggregates", 1)}
+          "global-aggregator": ("cloud-partition-aggregates", 1)}
 UNITS = {"B": 1, "kB": 1000, "MB": 1000**2, "GB": 1000**3,
          "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3}
 
@@ -54,15 +54,6 @@ def unique_sites(rows, expected, label):
     ids = [row["edge_id"] for row in rows]
     if len(ids) != len(set(ids)) or set(ids) != set(expected):
         raise ValueError(f"{label}: expected one row per site {sorted(expected)}, got {ids}")
-
-
-def percentile(values, fraction):
-    if not values:
-        return None
-    ordered = sorted(values)
-    position = (len(ordered) - 1) * fraction
-    low, high = math.floor(position), math.ceil(position)
-    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
 
 
 def number_unit(value):
@@ -165,7 +156,8 @@ def summarize(directory):
     factors = {float(env["ACCELERATION_FACTOR"]) for env in environments}
     if len(expected) != len(set(expected)) or len(epochs) != 1 or len(factors) != 1:
         raise ValueError("Simulator sites or replay configuration are inconsistent")
-    epoch, factor = timestamp(epochs.pop()), factors.pop()
+    timestamp(epochs.pop())  # Keep validating the common replay epoch.
+    factor = factors.pop()
     if not math.isfinite(factor) or factor <= 0:
         raise ValueError("Acceleration must be finite and positive")
     start = timestamp(metadata["replay_start_at"])
@@ -213,9 +205,9 @@ def summarize(directory):
     summary["processed_minus_global_events"] = summary["edge_processed_total"] - summary["global_events_total"]
     summary["global_windows_total"] = len(globals_)
     summary["global_duplicate_ids_total"] = len(globals_) - len({row["aggregate_id"] for row in globals_})
-    summary["global_incomplete_windows_total"] = sum(row["contributing_edges"] != len(expected) or
-                                                    row["expected_edges"] != len(expected) for row in globals_)
-    summary["global_late_aggregates_dropped_total"] = logs["cloud-core"].count("late aggregate scartato")
+    summary["global_incomplete_windows_total"] = sum(row["contributing_partitions"] != 6 or
+                                                    row["expected_partitions"] != 6 for row in globals_)
+    summary["global_protocol_errors_total"] = logs["cloud-core"].count("global protocol error")
     for key in ("simulator_locally_dropped_total", "simulator_mqtt_errors_total", "simulator_eos_failures_total",
                 "edge_ingress_queue_dropped_total", "edge_invalid_total", "edge_out_of_order_dropped_total",
                 "edge_post_eos_dropped_total", "offered_minus_global_events", "processed_minus_global_events",
@@ -230,27 +222,12 @@ def summarize(directory):
         if sim["mqtt_publish_attempts"] != edge["telemetry_received"]:
             failures.append(f"mqtt_delivery_count:{sim['edge_id']}")
 
-    window_rows, latencies = [], []
-    terminal_end = max(timestamp(row["window_end"]) for row in globals_)
+    window_rows = []
     for row in sorted(globals_, key=lambda row: row["window_start"]):
-        window_end = timestamp(row["window_end"])
-        delay = (timestamp(row["emitted_at"]) - start).total_seconds() - (window_end - epoch).total_seconds() / factor
-        terminal = window_end == terminal_end
-        # Exclude the last window conservatively: EOS may flush it before its
-        # nominal deadline. This is publication delay, not per-record latency.
-        if not terminal:
-            latencies.append(delay)
         flat = {key: value for key, value in row.items() if not isinstance(value, dict)}
-        flat.update(publication_delay_seconds=delay, excluded_terminal_window=terminal)
         for metric in ("temperature", "humidity", "pressure"):
             flat.update({f"{metric}_{key}": value for key, value in row[metric].items()})
         window_rows.append(flat)
-    summary["global_publication_delay_samples"] = len(latencies)
-    summary["global_publication_delay_p50_seconds"] = percentile(latencies, 0.5)
-    summary["global_publication_delay_p95_seconds"] = percentile(latencies, 0.95)
-    summary["global_publication_delay_max_seconds"] = max(latencies) if latencies else None
-    if not latencies or any(value < -0.001 for value in latencies):
-        failures.append("publication_delay_unavailable_or_negative")
 
     lag = [row for row in parse_lag((directory / "metrics" / "kafka-lag.log").read_text(encoding="utf-8-sig"))
            if start <= timestamp(row["timestamp"]) <= end]

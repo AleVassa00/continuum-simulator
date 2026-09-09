@@ -17,7 +17,7 @@ type windowState struct {
 	start time.Time
 	end   time.Time
 
-	contributors map[string]string // edgeID -> AggregateID incorporato nella finestra
+	contributors map[int]model.CloudPartitionAggregate // source partition -> immutable partial
 	events       uint64
 
 	temperature metricState
@@ -54,12 +54,8 @@ func makeWindowKey(start time.Time, end time.Time) windowKey {
 	}
 }
 
-func (state *windowState) add(input model.CloudEdgeAggregate) {
-	state.contributors[input.EdgeID] = input.AggregateID
-	state.events += input.Events
-	state.temperature.add(input.Temperature)
-	state.humidity.add(input.Humidity)
-	state.pressure.add(input.Pressure)
+func (state *windowState) add(input model.CloudPartitionAggregate) {
+	state.contributors[input.SourcePartition] = input
 }
 
 func (state *metricState) add(input model.MetricAggregate) {
@@ -78,22 +74,35 @@ func (state *metricState) add(input model.MetricAggregate) {
 }
 
 func (state *windowState) buildAggregate(
-	expectedEdges uint64,
+	expectedPartitions uint64,
 	emittedAt time.Time,
 ) model.GlobalAggregate {
+	// Stable partition order gives the same reduction across worker counts.
+	state.events = 0
+	state.temperature = metricState{}
+	state.humidity = metricState{}
+	state.pressure = metricState{}
+	for p := 0; p < int(expectedPartitions); p++ {
+		input, ok := state.contributors[p]
+		if !ok {
+			continue
+		}
+		state.events += input.Events
+		state.temperature.add(input.Temperature)
+		state.humidity.add(input.Humidity)
+		state.pressure.add(input.Pressure)
+	}
 	return model.GlobalAggregate{
-		AggregateID:   buildGlobalAggregateID(state.start, state.end),
-		WindowStart:   state.start,
-		WindowEnd:     state.end,
-		ExpectedEdges: expectedEdges,
-		ContributingEdges: uint64(
-			len(state.contributors),
-		),
-		Events:      state.events,
-		Temperature: state.temperature.buildAggregate(),
-		Humidity:    state.humidity.buildAggregate(),
-		Pressure:    state.pressure.buildAggregate(),
-		EmittedAt:   emittedAt,
+		AggregateID:            buildGlobalAggregateID(state.start, state.end),
+		WindowStart:            state.start,
+		WindowEnd:              state.end,
+		ExpectedPartitions:     expectedPartitions,
+		ContributingPartitions: expectedPartitions, // Includes certified zero contributions.
+		Events:                 state.events,
+		Temperature:            state.temperature.buildAggregate(),
+		Humidity:               state.humidity.buildAggregate(),
+		Pressure:               state.pressure.buildAggregate(),
+		EmittedAt:              emittedAt,
 	}
 }
 
@@ -122,7 +131,7 @@ func (state metricState) buildAggregate() model.MetricAggregate {
 func buildGlobalAggregateID(start time.Time, end time.Time) string {
 	return fmt.Sprintf(
 		"global:%s:%s",
-		start.UTC().Format(time.RFC3339),
-		end.UTC().Format(time.RFC3339),
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
 	)
 }

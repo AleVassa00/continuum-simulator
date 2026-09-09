@@ -22,7 +22,6 @@ type Config struct {
 	Simulator  SimulatorConfig  `yaml:"simulator"`
 	Edge       EdgeConfig       `yaml:"edge"`
 	Cloud      CloudConfig      `yaml:"cloud"`
-	Global     GlobalConfig     `yaml:"global,omitempty"`
 }
 
 type ExperimentConfig struct {
@@ -49,18 +48,12 @@ type CloudConfig struct {
 	WindowSize Duration `yaml:"window_size"`
 }
 
-type GlobalConfig struct {
-	WatermarkDelay  Duration `yaml:"watermark_delay,omitempty"`
-	EdgeIdleTimeout Duration `yaml:"edge_idle_timeout,omitempty"`
-}
-
 type EffectiveConfig struct {
 	Experiment ExperimentConfig        `yaml:"experiment"`
 	Workload   EffectiveWorkloadConfig `yaml:"workload"`
 	Simulator  SimulatorConfig         `yaml:"simulator"`
 	Edge       EdgeConfig              `yaml:"edge"`
 	Cloud      CloudConfig             `yaml:"cloud"`
-	Global     GlobalConfig            `yaml:"global"`
 }
 
 type EffectiveWorkloadConfig struct {
@@ -152,12 +145,6 @@ func (config Config) Validate() error {
 	if config.Simulator.StartLateTolerance.Duration() < 0 {
 		return fmt.Errorf("simulator.start_late_tolerance non puo essere negativo")
 	}
-	if config.Global.WatermarkDelay.Duration() < 0 {
-		return fmt.Errorf("global.watermark_delay non puo essere negativo")
-	}
-	if config.Global.EdgeIdleTimeout.Duration() < 0 {
-		return fmt.Errorf("global.edge_idle_timeout non puo essere negativo")
-	}
 	if config.Edge.WindowSize.Duration() <= 0 {
 		return fmt.Errorf("edge.window_size deve essere maggiore di zero")
 	}
@@ -187,16 +174,7 @@ func ResolveDefaults(config Config) Config {
 		simulator.StartLateTolerance = Duration(10 * time.Second)
 	}
 
-	global := config.Global
-	if global.WatermarkDelay.Duration() <= 0 {
-		global.WatermarkDelay = config.Cloud.WindowSize
-	}
-	if global.EdgeIdleTimeout.Duration() <= 0 {
-		global.EdgeIdleTimeout = Duration(5 * time.Second)
-	}
-
 	config.Simulator = simulator
-	config.Global = global
 
 	return config
 }
@@ -233,7 +211,6 @@ func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
 		Simulator: config.Simulator,
 		Edge:      config.Edge,
 		Cloud:     config.Cloud,
-		Global:    config.Global,
 	}
 }
 

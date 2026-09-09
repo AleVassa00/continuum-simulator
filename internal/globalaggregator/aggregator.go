@@ -2,270 +2,143 @@ package globalaggregator
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"strings"
-	"time"
-
 	"continuum/internal/model"
+	"fmt"
+	"reflect"
+	"time"
 )
 
-type GlobalAggregateSink func(
-	context.Context,
-	model.GlobalAggregate,
-) error
+type GlobalAggregateSink func(context.Context, model.GlobalAggregate) error
+type partitionState struct {
+	through time.Time
+	ended   bool
+	last    *model.CloudPartitionAggregate
+}
 
-var ErrClosedWindow = errors.New("finestra globale gia chiusa")
-
-// Aggregator sincronizza i contributi di tutti gli Edge attesi in finestre
-// temporali globali, gestendo late arrival tramite watermark.
-//
-// Limitazione architetturale: lo stato delle finestre e del watermark vive
-// esclusivamente in RAM, mentre gli offset Kafka vengono committati dopo
-// l'elaborazione di ciascun record. Un crash può perdere stato derivato da
-// record già committati, rendendo impossibile la ricostruzione automatica
-// delle finestre parziali al riavvio.
+// Exact-window reducer: no Edge membership, timers, or event-time window policy.
 type Aggregator struct {
-	expectedEdges   map[string]struct{}
-	endedEdges      map[string]struct{}
-	windowSize      time.Duration
-	watermarkDelay  time.Duration
-	edgeIdleTimeout time.Duration
-
-	maxWindowEndByEdge map[string]time.Time
-	lastActivityByEdge map[string]time.Time
-	firstAggregateAt   time.Time
-	watermark          time.Time
-
-	windows       map[windowKey]*windowState
-	closedWindows map[windowKey]struct{}
-	complete      bool
-
-	lateAggregatesDropped uint64
-
-	sink GlobalAggregateSink
+	partitions [model.SourcePartitionCount]partitionState
+	windows    map[windowKey]*windowState
+	sink       GlobalAggregateSink
+	complete   bool
 }
 
-func New(
-	expectedEdgeIDs []string,
-	windowSize time.Duration,
-	watermarkDelay time.Duration,
-	edgeIdleTimeout time.Duration,
-	sink GlobalAggregateSink,
-) (*Aggregator, error) {
-	if len(expectedEdgeIDs) == 0 {
-		return nil, fmt.Errorf("EXPECTED_EDGE_IDS non puo essere vuota")
-	}
-	if windowSize <= 0 {
-		return nil, fmt.Errorf(
-			"GLOBAL_WINDOW_SIZE deve essere maggiore di zero",
-		)
-	}
-	if watermarkDelay <= 0 {
-		watermarkDelay = windowSize
-	}
-	if edgeIdleTimeout <= 0 {
-		return nil, fmt.Errorf(
-			"GLOBAL_EDGE_IDLE_TIMEOUT deve essere maggiore di zero",
-		)
-	}
+func New(sink GlobalAggregateSink) (*Aggregator, error) {
 	if sink == nil {
-		return nil, fmt.Errorf("GlobalAggregate sink non configurato")
+		return nil, fmt.Errorf("Global sink is required")
 	}
-	expected := make(map[string]struct{}, len(expectedEdgeIDs))
-	for _, rawEdgeID := range expectedEdgeIDs {
-		edgeID := strings.TrimSpace(rawEdgeID)
-		if edgeID == "" {
-			return nil, fmt.Errorf(
-				"EXPECTED_EDGE_IDS contiene un edge_id vuoto",
-			)
-		}
-		if _, found := expected[edgeID]; found {
-			return nil, fmt.Errorf(
-				"EXPECTED_EDGE_IDS contiene edge_id duplicato %q",
-				edgeID,
-			)
-		}
-		expected[edgeID] = struct{}{}
-	}
-	return &Aggregator{
-		expectedEdges:      expected,
-		endedEdges:         make(map[string]struct{}, len(expected)),
-		windowSize:         windowSize,
-		watermarkDelay:     watermarkDelay,
-		edgeIdleTimeout:    edgeIdleTimeout,
-		maxWindowEndByEdge: make(map[string]time.Time, len(expected)),
-		lastActivityByEdge: make(map[string]time.Time, len(expected)),
-		windows:            make(map[windowKey]*windowState),
-		closedWindows:      make(map[windowKey]struct{}),
-		sink:               sink,
-	}, nil
+	return &Aggregator{windows: make(map[windowKey]*windowState), sink: sink}, nil
 }
-
-func (aggregator *Aggregator) LateAggregatesDropped() uint64 {
-	return aggregator.lateAggregatesDropped
-}
-
-// Add incorpora un CloudEdgeAggregate già validato al confine Kafka.
-func (aggregator *Aggregator) Add(
-	ctx context.Context,
-	input model.CloudEdgeAggregate,
-) error {
-	if _, found := aggregator.expectedEdges[input.EdgeID]; !found {
-		return fmt.Errorf("CloudEdgeAggregate da Edge non atteso %q", input.EdgeID)
-	}
-	if aggregator.complete {
-		return fmt.Errorf(
-			"CloudEdgeAggregate %q ricevuto dopo completamento globale",
-			input.AggregateID,
-		)
-	}
-	if _, ended := aggregator.endedEdges[input.EdgeID]; ended {
-		return fmt.Errorf(
-			"CloudEdgeAggregate %q ricevuto dopo EndOfReplay edge=%s",
-			input.AggregateID,
-			input.EdgeID,
-		)
-	}
-	if err := aggregator.validateWindow(input); err != nil {
+func (a *Aggregator) Add(ctx context.Context, input model.CloudPartitionAggregate) error {
+	if err := model.ValidateCloudPartitionAggregate(input); err != nil {
 		return err
 	}
-
+	p := &a.partitions[input.SourcePartition]
 	key := makeWindowKey(input.WindowStart, input.WindowEnd)
-	state := aggregator.windows[key]
-	if state != nil {
-		if aggregateID, found := state.contributors[input.EdgeID]; found {
-			// Un retry dello stesso contributo non rappresenta nuova attivita.
-			if aggregateID == input.AggregateID {
-				return nil
+	if s := a.windows[key]; s != nil {
+		if old, ok := s.contributors[input.SourcePartition]; ok {
+			if !samePartial(old, input) {
+				return fmt.Errorf("conflicting partial %q", input.AggregateID)
 			}
-			return fmt.Errorf(
-				"violazione strutturale: edge=%s ha contribuito piu volte alla finestra globale [%s,%s)",
-				input.EdgeID,
-				state.start.Format(time.RFC3339),
-				state.end.Format(time.RFC3339),
-			)
+			return a.emitReady(ctx)
 		}
 	}
-
-	now := time.Now().UTC()
-	if aggregator.firstAggregateAt.IsZero() {
-		aggregator.firstAggregateAt = now
-	}
-	// L'attivita e processing-time: anche un record late segnala che l'Edge e tornato attivo.
-	aggregator.lastActivityByEdge[input.EdgeID] = now
-
-	// Il record e late soltanto rispetto al watermark valido prima del suo arrivo.
-	_, explicitlyClosed := aggregator.closedWindows[key]
-	closedByWatermark := !aggregator.watermark.IsZero() &&
-		!input.WindowEnd.After(aggregator.watermark)
-	if explicitlyClosed || closedByWatermark {
-		aggregator.lateAggregatesDropped++
-		return fmt.Errorf(
-			"CloudEdgeAggregate %q tenta di riaprire la finestra globale gia chiusa [%s,%s): %w",
-			input.AggregateID,
-			input.WindowStart.Format(time.RFC3339),
-			input.WindowEnd.Format(time.RFC3339),
-			ErrClosedWindow,
-		)
-	}
-
-	if state == nil {
-		state = &windowState{
-			start:        input.WindowStart.UTC(),
-			end:          input.WindowEnd.UTC(),
-			contributors: make(map[string]string),
+	if p.last != nil && p.last.AggregateID == input.AggregateID {
+		if !samePartial(*p.last, input) {
+			return fmt.Errorf("conflicting partial %q", input.AggregateID)
 		}
-		aggregator.windows[key] = state
+		return a.emitReady(ctx)
 	}
-
-	if input.WindowEnd.After(aggregator.maxWindowEndByEdge[input.EdgeID]) {
-		aggregator.maxWindowEndByEdge[input.EdgeID] = input.WindowEnd.UTC()
+	if p.ended || a.complete {
+		return fmt.Errorf("partition partial after EOS")
 	}
-
-	state.add(input)
-
-	// 1. Fast path: se tutti gli Edge attesi sono arrivati per questa finestra, emetti subito.
-	if len(state.contributors) == len(aggregator.expectedEdges) {
-		if err := aggregator.emit(ctx, state); err != nil {
-			return err
+	if !p.through.IsZero() && !input.WindowEnd.After(p.through) {
+		return fmt.Errorf("partial behind certified partition progress")
+	}
+	if p.last != nil && input.WindowStart.Before(p.last.WindowEnd) {
+		return fmt.Errorf("out-of-order/overlapping partition partial")
+	}
+	for k := range a.windows {
+		if k != key && key.start < k.end && k.start < key.end {
+			return fmt.Errorf("overlapping nonidentical Cloud windows")
 		}
-		delete(aggregator.windows, key)
-		aggregator.closedWindows[key] = struct{}{}
 	}
-
-	// 2. Watermark trigger: chiudi finestre aperte per cui Watermark >= WindowEnd.
-	return aggregator.advanceWatermarkAt(ctx, now)
+	s := a.windows[key]
+	if s == nil {
+		s = &windowState{start: input.WindowStart.UTC(), end: input.WindowEnd.UTC(), contributors: make(map[int]model.CloudPartitionAggregate)}
+		a.windows[key] = s
+	}
+	s.add(input)
+	copy := input
+	p.last = &copy
+	return a.emitReady(ctx)
 }
-
-func (aggregator *Aggregator) EndReplay(
-	ctx context.Context,
-	edgeID string,
-) (bool, error) {
-	if strings.TrimSpace(edgeID) == "" {
-		return false, fmt.Errorf("edge_id EOS mancante")
+func (a *Aggregator) Progress(ctx context.Context, progress model.PartitionProgress) error {
+	if err := model.ValidatePartitionProgress(progress); err != nil {
+		return err
 	}
-	if _, found := aggregator.expectedEdges[edgeID]; !found {
-		return false, fmt.Errorf("EndOfReplay da Edge non atteso %q", edgeID)
+	p := &a.partitions[progress.SourcePartition]
+	if p.ended {
+		return fmt.Errorf("partition progress after EOS")
 	}
-	if _, duplicate := aggregator.endedEdges[edgeID]; duplicate {
-		return aggregator.complete, nil
+	if progress.CompleteThrough.Before(p.through) {
+		return fmt.Errorf("partition progress regressed")
 	}
-	if aggregator.complete {
-		return true, nil
+	p.through = progress.CompleteThrough.UTC()
+	return a.emitReady(ctx)
+}
+func (a *Aggregator) EndPartition(ctx context.Context, partition int) (bool, error) {
+	if err := model.ValidateSourcePartition(partition); err != nil {
+		return false, err
 	}
-
-	// EOS e solo controllo: non aggiorna attivita, progresso temporale o watermark.
-	aggregator.endedEdges[edgeID] = struct{}{}
-	if len(aggregator.endedEdges) != len(aggregator.expectedEdges) {
-		return false, nil
+	a.partitions[partition].ended = true
+	if err := a.emitReady(ctx); err != nil {
+		return false, err
 	}
-
-	keys := aggregator.sortedOpenWindowKeys()
-	for _, key := range keys {
-		if err := aggregator.emit(ctx, aggregator.windows[key]); err != nil {
-			return false, fmt.Errorf(
-				"flush finestra globale [%s,%s) fallito: %w",
-				aggregator.windows[key].start.Format(time.RFC3339),
-				aggregator.windows[key].end.Format(time.RFC3339),
-				err,
-			)
+	for _, p := range a.partitions {
+		if !p.ended {
+			return false, nil
 		}
 	}
-	for _, key := range keys {
-		delete(aggregator.windows, key)
+	if len(a.windows) != 0 {
+		return false, fmt.Errorf("unresolved windows after all partition EOS")
 	}
-	aggregator.complete = true
-	clear(aggregator.closedWindows)
-
+	a.complete = true
 	return true, nil
 }
-
-func (aggregator *Aggregator) IsComplete() bool {
-	return aggregator.complete
-}
-
-func (aggregator *Aggregator) emit(
-	ctx context.Context,
-	state *windowState,
-) error {
-	output := state.buildAggregate(
-		uint64(len(aggregator.expectedEdges)),
-		time.Now().UTC(),
-	)
-	if err := ValidateGlobalAggregate(output); err != nil {
-		return fmt.Errorf(
-			"GlobalAggregate %q non valido: %w",
-			output.AggregateID,
-			err,
-		)
-	}
-	if err := aggregator.sink(ctx, output); err != nil {
-		return fmt.Errorf(
-			"sink GlobalAggregate %q fallito: %w",
-			output.AggregateID,
-			err,
-		)
+func (a *Aggregator) IsComplete() bool { return a.complete }
+func (a *Aggregator) emitReady(ctx context.Context) error {
+	for _, key := range a.sortedOpenWindowKeys() {
+		s := a.windows[key]
+		ready := true
+		for id, p := range a.partitions {
+			_, contributed := s.contributors[id]
+			if !contributed && !p.ended && (p.through.IsZero() || p.through.Before(s.end)) {
+				ready = false
+				break
+			}
+		}
+		if !ready {
+			continue
+		}
+		// Missing partials count as zero ONLY after ordered progress/EOS certificates.
+		out := s.buildAggregate(model.SourcePartitionCount, time.Now().UTC())
+		if err := ValidateGlobalAggregate(out); err != nil {
+			return err
+		}
+		if err := a.sink(ctx, out); err != nil {
+			return err
+		}
+		delete(a.windows, key)
 	}
 	return nil
+}
+func samePartial(a, b model.CloudPartitionAggregate) bool {
+	a.EmittedAt = time.Time{}
+	b.EmittedAt = time.Time{}
+	a.WindowStart = a.WindowStart.UTC()
+	b.WindowStart = b.WindowStart.UTC()
+	a.WindowEnd = a.WindowEnd.UTC()
+	b.WindowEnd = b.WindowEnd.UTC()
+	return reflect.DeepEqual(a, b)
 }

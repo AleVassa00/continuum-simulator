@@ -33,16 +33,16 @@ type metricAggregateLog struct {
 }
 
 type globalAggregateLog struct {
-	AggregateID       string             `json:"aggregate_id"`
-	WindowStart       time.Time          `json:"window_start"`
-	WindowEnd         time.Time          `json:"window_end"`
-	ExpectedEdges     uint64             `json:"expected_edges"`
-	ContributingEdges uint64             `json:"contributing_edges"`
-	Events            uint64             `json:"events"`
-	Temperature       metricAggregateLog `json:"temperature"`
-	Humidity          metricAggregateLog `json:"humidity"`
-	Pressure          metricAggregateLog `json:"pressure"`
-	EmittedAt         time.Time          `json:"emitted_at"`
+	AggregateID            string             `json:"aggregate_id"`
+	WindowStart            time.Time          `json:"window_start"`
+	WindowEnd              time.Time          `json:"window_end"`
+	ExpectedPartitions     uint64             `json:"expected_partitions"`
+	ContributingPartitions uint64             `json:"contributing_partitions"`
+	Events                 uint64             `json:"events"`
+	Temperature            metricAggregateLog `json:"temperature"`
+	Humidity               metricAggregateLog `json:"humidity"`
+	Pressure               metricAggregateLog `json:"pressure"`
+	EmittedAt              time.Time          `json:"emitted_at"`
 }
 
 func metricLog(metric model.MetricAggregate) metricAggregateLog {
@@ -63,16 +63,16 @@ func newJSONLogSink(writer io.Writer) globalaggregator.GlobalAggregateSink {
 	) error {
 		// emit ha già validato il dominio; il sink è responsabile soltanto del formato e dell'I/O.
 		payload, err := json.Marshal(globalAggregateLog{
-			AggregateID:       aggregate.AggregateID,
-			WindowStart:       aggregate.WindowStart,
-			WindowEnd:         aggregate.WindowEnd,
-			ExpectedEdges:     aggregate.ExpectedEdges,
-			ContributingEdges: aggregate.ContributingEdges,
-			Events:            aggregate.Events,
-			Temperature:       metricLog(aggregate.Temperature),
-			Humidity:          metricLog(aggregate.Humidity),
-			Pressure:          metricLog(aggregate.Pressure),
-			EmittedAt:         aggregate.EmittedAt,
+			AggregateID:            aggregate.AggregateID,
+			WindowStart:            aggregate.WindowStart,
+			WindowEnd:              aggregate.WindowEnd,
+			ExpectedPartitions:     aggregate.ExpectedPartitions,
+			ContributingPartitions: aggregate.ContributingPartitions,
+			Events:                 aggregate.Events,
+			Temperature:            metricLog(aggregate.Temperature),
+			Humidity:               metricLog(aggregate.Humidity),
+			Pressure:               metricLog(aggregate.Pressure),
+			EmittedAt:              aggregate.EmittedAt,
 		})
 		if err != nil {
 			return fmt.Errorf(

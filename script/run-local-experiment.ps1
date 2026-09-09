@@ -1086,7 +1086,7 @@ function Export-RunSummaryCsv {
         global_aggregator_final_lag         = Get-FinalGroupLag -Rows $FinalKafkaRows -Group "global-aggregator"
 
         edge_aggregates_topic_records       = Get-FinalTopicRecords -Rows $FinalKafkaRows -Topic "edge-aggregates"
-        cloud_edge_aggregates_topic_records = Get-FinalTopicRecords -Rows $FinalKafkaRows -Topic "cloud-edge-aggregates"
+        cloud_partition_aggregates_topic_records = Get-FinalTopicRecords -Rows $FinalKafkaRows -Topic "cloud-partition-aggregates"
     }
 
     $summary | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding utf8
