@@ -211,7 +211,7 @@ def summarize(directory):
     for key in ("simulator_locally_dropped_total", "simulator_mqtt_errors_total", "simulator_eos_failures_total",
                 "edge_ingress_queue_dropped_total", "edge_invalid_total", "edge_out_of_order_dropped_total",
                 "edge_post_eos_dropped_total", "offered_minus_global_events", "processed_minus_global_events",
-                "global_duplicate_ids_total", "global_incomplete_windows_total", "global_late_aggregates_dropped_total"):
+                "global_duplicate_ids_total", "global_incomplete_windows_total", "global_protocol_errors_total"):
         if summary[key] != 0:
             failures.append(key)
     if summary["edge_max_queue_utilization_pct"] >= 100:

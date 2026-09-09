@@ -108,6 +108,16 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SIMULATOR_STATS"):
             artifacts.summarize(self.root)
 
+    def test_global_protocol_error_invalidates_quality(self):
+        path = self.root / "logs/cloud-core.log"
+        path.write_text(path.read_text(encoding="utf-8") +
+                        "global protocol error offset=42: conflicting partial\n", encoding="utf-8")
+        result = artifacts.summarize(self.root)
+        self.assertEqual(result["global_protocol_errors_total"], 1)
+        self.assertEqual(result["quality_status"], "fail")
+        self.assertIn("global_protocol_errors_total", result["quality_failures"])
+        self.assertNotIn("global_late_aggregates_dropped_total", result)
+
     def test_successful_orchestration_with_loss_fails_quality(self):
         path = self.root / "logs/cloud-core.log"
         path.write_text(path.read_text(encoding="utf-8").replace('"events": 2', '"events": 1'), encoding="utf-8")

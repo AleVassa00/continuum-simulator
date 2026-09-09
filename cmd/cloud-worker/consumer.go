@@ -4,14 +4,16 @@ import (
 	"context"
 	"continuum/internal/cloudworker"
 	"continuum/internal/model"
+	"errors"
 	"fmt"
-	"github.com/segmentio/kafka-go"
 	"sync"
 	"sync/atomic"
+
+	"github.com/segmentio/kafka-go"
 )
 
 // Partition readers fetch concurrently; one processing loop per worker keeps
-// computation serial within the worker, with distinct state for each assignment.
+// computation serial within the worker, with distinct state for each assignment
 func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessagePublisher) error {
 	group, err := kafka.NewConsumerGroup(kafka.ConsumerGroupConfig{
 		ID: config.GroupID, Brokers: []string{config.KafkaBroker}, Topics: []string{config.InputTopic},
@@ -36,6 +38,11 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 			return nil
 		}
 		if err != nil {
+			// Joining workers may rebalance before replay starts. There is no
+			// consumed state to lose yet; kafka-go retains the member and retries.
+			if !processed.Load() && errors.Is(err, kafka.RebalanceInProgress) {
+				continue
+			}
 			return err
 		}
 		if processed.Load() {

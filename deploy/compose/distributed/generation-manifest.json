@@ -1,11 +1,11 @@
 {
-  "config_sha256": "adb9af71c4b1ca8d7a1c5cb18d0843c1a69ab8a4c494f971c0dc11fb32ffac2f",
+  "config_sha256": "815a79485c72c9da0acafa1328c7a859332c75b7ead692abf20271f5fbba1a7d",
   "topology_sha256": "968ca2c43817ac51a5df9272255c7c3ccbb744ccf0093af21b00b25cf4156eed",
-  "resolved_config_yaml": "experiment:\n    name: calibration-aws\nworkload:\n    acceleration_factor: 10000\n    start_lead_time: 1m0s\nsimulator:\n    telemetry_queue_capacity: 5000\n    start_late_tolerance: 10s\nedge:\n    window_size: 5m0s\n    ingress_queue_capacity: 5000\ncloud:\n    workers: 1\n    window_size: 15m0s\nglobal:\n    watermark_delay: 15m0s\n    edge_idle_timeout: 5s\n",
+  "resolved_config_yaml": "experiment:\n    name: calibration-aws\nworkload:\n    acceleration_factor: 10000\n    start_lead_time: 1m0s\nsimulator:\n    telemetry_queue_capacity: 5000\n    start_late_tolerance: 10s\nedge:\n    window_size: 5m0s\n    ingress_queue_capacity: 5000\ncloud:\n    workers: 1\n    window_size: 15m0s\n",
   "compose_sha256": {
-    "cloud-core.generated.yml": "f2e0c635a0be10f6d31b69c3827673f7b87b622d8249e4cf4fa1e4d89f19be98",
+    "cloud-core.generated.yml": "57872f8ba6743467b26a1cf2d7dfc7cbe22f2dc05aa89610d2be6391e157e92c",
     "edge.generated.yml": "083a27c03a39a35c32da7884872834e4e46504b5fc55e0bb084f2fccf5b4e436",
     "simulator.generated.yml": "3601059cc4554c727727490b71badc4971ec5fe0d87383fcaae71bd77527b08a",
-    "workers.generated.yml": "9b347351fb17c4f26ff745472e004a66327171cefe7d6f726b74678f82955df4"
+    "workers.generated.yml": "f1e3c60c91f104bc5bb0cb06d5165243a87b98fa61ea8d884a3cc3298e78a2d5"
   }
 }

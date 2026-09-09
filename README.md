@@ -13,15 +13,15 @@ Replay globale di gennaio
   -> EdgeAggregate 5m per edge_id
   -> Kafka topic edge-aggregates / Avro
   -> Cloud Worker x N, stesso consumer group
-  -> CloudEdgeAggregate 15m per edge_id
-  -> Kafka topic cloud-edge-aggregates / Avro
+  -> CloudPartitionAggregate 15m per source_partition (P0...P5)
+  -> Kafka topic cloud-partition-aggregates / Avro
   -> Global Aggregator
   -> GlobalAggregate: log JSON (default) oppure colonne PostgreSQL
 ```
 
 Non e presente un livello Fog. Le tredici zone Edge sono nodi logici derivati dal
 clustering geografico dei sensori e possono essere eseguite sullo stesso host con
-risorse container limitate. Il Global Aggregator combina i contributi degli Edge
+risorse container limitate. Il Global Aggregator combina i contributi delle partition
 per finestra e scrive il risultato nel sink selezionato: log JSON o PostgreSQL.
 
 Lo stato dei requisiti della traccia e mantenuto in
@@ -45,22 +45,25 @@ Lo stato dei requisiti della traccia e mantenuto in
   backoff breve, restando non-ready fino al successo effettivo.
 - **Kafka** persiste gli `EdgeAggregate` e li distribuisce ai Cloud Worker usando
   la chiave `edge_id`.
-- I **Cloud Worker** eseguono un temporal roll-up indipendente per ogni Edge: tre
-  finestre locali da 5 minuti formano, per default, una finestra Cloud da 15
-  minuti. I Worker non combinano Edge differenti.
-- Il **Global Aggregator** consuma `cloud-edge-aggregates` e combina gli Edge
-  attesi nella stessa finestra. Gli EOS segnalano il completamento del replay;
-  quando tutti gli Edge sono terminati, esegue il flush finale.
+- I **Cloud Worker** mantengono stato distinto per ogni partition Kafka di input
+  assegnata dal consumer group. Combinano gli Edge di quella partition in finestre
+  Cloud da 15 minuti. La membership Edge rimane qui, per certificare il progresso.
+- Il **Global Aggregator** consuma `cloud-partition-aggregates` e riduce i partial
+  di P0...P5 con identici confini di finestra. Non conosce gli Edge e non applica
+  una seconda windowing policy. Termina dopo gli EOS delle sei source partition.
+
+Il [contratto Cloud/Global](docs/cloud-partition-aggregation.md) descrive
+finalizzazione, contributi vuoti, EOS, deduplica e limiti di recovery.
 
 ## Contratti Kafka
 
-I payload di `EdgeAggregate` su `edge-aggregates` e di `CloudEdgeAggregate` su
-`cloud-edge-aggregates` sono singoli record Apache Avro binari, senza prefissi
+I payload di `EdgeAggregate` su `edge-aggregates` e di `CloudPartitionAggregate` su
+`cloud-partition-aggregates` sono singoli record Apache Avro binari, senza prefissi
 aggiuntivi. Gli schema statici sono in
 [`internal/avrocodec/schemas`](internal/avrocodec/schemas) e vengono incorporati
 nei binari; producer e consumer utilizzano lo stesso contratto durante ogni run.
-Le nuove esecuzioni richiedono topic privi di aggregati JSON precedenti, che il
-decoder Avro non puo leggere.
+Le nuove esecuzioni richiedono topic e offset nuovi: i precedenti record JSON
+o Avro per-Edge non sono compatibili con il contratto Cloud per-partition.
 `internal/avrocodec` esegue il mapping, mentre la business logic continua a usare
 le struct di `internal/model`. MQTT e il sink finale `log` restano JSON; il sink
 `postgres` salva invece colonne tipizzate. Ogni metrica contiene:
@@ -87,21 +90,24 @@ il record all'aggregatore; deduplica e vincoli sullo stato restano nell'aggregat
 La somma rende componibili gli aggregati: il Worker calcola la media come
 `sum(valid values) / valid`, senza effettuare una media delle medie.
 
-`CloudEdgeAggregate` mantiene un solo `edge_id` e aggiunge
-`input_aggregates`, cioe il numero di `EdgeAggregate` unici incorporati. Gli ID
-sono deterministici: il Cloud Worker valida ogni input e controlla `AggregateID`
-prima di incorporarlo. Gli input gia visti nella finestra attiva vengono ignorati
-senza cambiare conteggi, misure o progresso temporale. Il set degli ID appartiene
-alla finestra di ciascun Edge e viene liberato al cambio finestra o al flush.
+`CloudPartitionAggregate` contiene `source_partition`, i confini della finestra,
+le metriche e `input_aggregates`, numero di `EdgeAggregate` unici incorporati.
+Non contiene Worker ID o lista degli Edge. L'identita naturale e
+`source_partition + window_start + window_end`; l'ID include tutti e tre i campi.
+I duplicati identici nelle finestre pendenti sono no-op; quelli conflittuali sono
+errori. Si conserva anche l'ultimo record per sorgente, non uno storico illimitato.
 
 La dimensione `CLOUD_WINDOW_SIZE` deve essere un multiplo della finestra Edge. Un
 input fuori ordine o che attraversa il confine di una finestra Cloud viene
 rifiutato esplicitamente.
 
-Su entrambi i topic Kafka, l'EOS e un marker di controllo: key uguale all'ID
-dell'Edge, header `record_type=end_of_replay`, value vuoto e timestamp Kafka
-di pubblicazione. Cloud Worker e Global Aggregator ricavano l'Edge soltanto
-dalla key, senza deserializzare il value.
+Su `edge-aggregates`, EOS resta key `edgeID`, header `record_type=end_of_replay`
+e value vuoto. L'Edge pubblica sincronicamente l'ultimo aggregato prima dell'EOS,
+usando lo stesso `kafka.Hash` e la stessa key. Le sei partition restano fisse.
+Su `cloud-partition-aggregates`, data e controlli usano key `source_partition`:
+`partition_progress` ha payload Avro, `partition_end_of_replay` ha value vuoto.
+Ogni controllo segue tutti i partial che certifica. La source partition e quella
+di input, non la partition fisica del topic di output (attualmente una sola).
 
 ## Semantica e limiti attuali
 
@@ -136,17 +142,18 @@ automaticamente. Il numero di repliche deve quindi essere fissato prima del repl
 e mantenuto invariato durante il singolo esperimento. La fault tolerance non e il
 requisito individuale scelto ed e documentata come limitazione architetturale nota.
 
-Le finestre Edge e Cloud vengono chiuse dall'arrivo di un input appartenente alla
-finestra successiva. Su EOS, l'Edge pubblica l'ultima finestra prima del marker
-Kafka; il Cloud Worker esegue il flush del solo Edge terminato e pubblica il
-relativo aggregato prima di inoltrare il marker. Allo shutdown graceful, Edge
-e Cloud Worker pubblicano anche l'ultima finestra parziale ancora in memoria.
+L'Edge chiude una finestra quando passa alla successiva; su EOS pubblica l'ultima
+prima del marker Kafka. Il Cloud finalizza una finestra solo quando tutti gli Edge
+della relativa partition hanno certificato progresso oltre il suo confine o EOS.
+Un Edge non ancora osservato blocca il progresso: nessun timeout lo esclude.
+Su EOS dell'ultimo Edge della partition il Cloud emette i partial rimasti, poi
+`PartitionEndOfReplay`. Lo shutdown del Worker non forza il flush di stato incompleto.
 
-Nel Global Aggregator l'EOS non aggiorna `lastActivityByEdge`,
-`maxWindowEndByEdge` o `firstAggregateAt` e non fa avanzare direttamente il
-watermark. Restano invariati i trigger delle finestre globali, la startup grace,
-i timeout degli Edge inattivi e la gestione degli aggregati late: il watermark
-dipende dagli aggregati validi e dai timeout gia implementati.
+Il Global attende per ciascuna delle sei partition un partial definitivo oppure
+una certificazione ordinata di contributo zero (progress/EOS). Nessun idle timeout,
+watermark ricalcolato o finestra aggiuntiva. Una sorgente bloccata puo trattenere
+finestre in RAM: il timeout della run segnala un esperimento incompleto, non ne
+simula la completezza. Rebalance dopo l'inizio del processamento invalida la run.
 
 ## Dati
 
@@ -307,8 +314,8 @@ docker compose -f deploy/compose/continuum.generated.yml logs global-aggregator
 ```
 
 Al completamento dei CSV, gli EOS attraversano l'intera pipeline dopo i relativi
-aggregati. Il Global Aggregator termina dopo gli EOS di tutti gli Edge attesi e
-il flush finale, registrando `GLOBAL_REPLAY_COMPLETED`.
+aggregati. Il Global Aggregator termina dopo gli EOS delle sei source partition e
+il merge finale, registrando `GLOBAL_REPLAY_COMPLETED` dopo il commit Kafka.
 
 ## Sink finale del Global Aggregator
 
@@ -316,7 +323,7 @@ il flush finale, registrando `GLOBAL_REPLAY_COMPLETED`.
 l'output `GLOBAL_AGGREGATE {...}` su stdout, con gli stessi nomi snake_case e
 valori nullable. Il Compose locale usa questo default e non richiede PostgreSQL.
 Il mapping JSON e privato al sink: `MetricAggregate`, `EdgeAggregate`,
-`CloudEdgeAggregate` e `GlobalAggregate` non hanno tag di serializzazione.
+`CloudPartitionAggregate` e `GlobalAggregate` non hanno tag di serializzazione.
 `SensorEvent` e `NullableFloat64` conservano il contratto MQTT/JSON.
 
 Solo con `GLOBAL_SINK_TYPE=postgres` vengono caricate queste variabili:
@@ -336,7 +343,7 @@ Il pool viene riutilizzato per le INSERT e chiuso all'uscita, anche in caso di
 errore. Ping e INSERT hanno timeout di 5 secondi. `verify-full` verifica anche
 il certificato e il nome del server; l'immagine include i certificati CA di sistema.
 
-Prima dell'avvio, creare la tabella nel database scelto applicando
+Prima dell'avvio (con Global fermo), installare o aggiornare la tabella applicando
 [`deploy/postgres/global_aggregates.sql`](deploy/postgres/global_aggregates.sql)
 con `psql` o con gli strumenti di amministrazione PostgreSQL. Ad esempio, con
 host, database e utente sostituiti ai segnaposto e password richiesta interattivamente:
@@ -347,6 +354,15 @@ psql "host=HOST port=5432 dbname=DATABASE user=USER sslmode=verify-full" -W -v O
 
 Il programma non crea la tabella. Le INSERT usano parametri SQL e
 `ON CONFLICT (aggregate_id) DO NOTHING`: un retry non aggiorna la riga esistente.
+Lo stesso script elimina la tabella con le vecchie colonne Edge e ricrea
+`global_aggregates` con `expected_partitions` e `contributing_partitions`.
+**I vecchi dati vengono cancellati, senza archivio o backup.** Una tabella gia
+aggiornata viene invece conservata con tutti i suoi dati. Lo script e
+transazionale e rieseguibile; schemi inattesi o dipendenze che impediscono
+il DROP causano errore, senza usare `CASCADE`.
+Eseguirlo con il ruolo proprietario della tabella e il corretto `search_path`.
+Se il sink usa un ruolo diverso, concedere su quella nuova gli stessi permessi
+di INSERT necessari.
 I contatori oltre `MaxInt64` vengono rifiutati prima della query; i puntatori
 `*float64` nil diventano `NULL`. I timestamp sono `TIMESTAMPTZ`, con precisione
 PostgreSQL al microsecondo; la precisione e la logica in memoria/Avro restano invariate.

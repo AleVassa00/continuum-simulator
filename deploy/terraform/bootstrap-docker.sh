@@ -36,7 +36,11 @@ install_docker_apt() {
 install_docker_rpm() {
   local package_manager="$1"
 
-  "${package_manager}" install -y ca-certificates curl docker
+  "${package_manager}" install -y ca-certificates docker
+
+  if ! command -v curl >/dev/null 2>&1; then
+    "${package_manager}" install -y curl
+  fi
 }
 
 install_compose_plugin() {

@@ -14,7 +14,7 @@ deployment AWS né sostituiscono serie ripetute a parità di carico e senza perd
 |---|---|---|
 | Applicazione in Go | Soddisfatto | Simulator, Edge, Cloud Worker e Global Aggregator sono programmi Go; `go vet ./...` e `go build ./...` verificano il codice corrente. |
 | Almeno Edge e Cloud | Parziale | Implementata e configurata l'intera pipeline `Simulator -> MQTT -> Edge -> Kafka -> Cloud Worker -> Kafka -> Global Aggregator`, incluso output `GlobalAggregate` nei log. Le verifiche locali dei contratti non sostituiscono una prova end-to-end con broker reali. |
-| Comunicazione persistente tra almeno due componenti | Parziale | Implementati producer Kafka sincroni con `RequireAll`, retry e commit espliciti dei consumer. Configurati i topic `edge-aggregates` e `cloud-edge-aggregates` e il volume `kafka-data`; una prova riproducibile di persistenza non è documentata negli artefatti correnti. |
+| Comunicazione persistente tra almeno due componenti | Parziale | Implementati producer Kafka sincroni con `RequireAll`, retry e commit espliciti dei consumer. Configurati i topic `edge-aggregates` e `cloud-partition-aggregates` e il volume `kafka-data`; i test del refactor non dimostrano recovery applicativo da crash. |
 | Scalabilità orizzontale | Parziale | Implementati consumer group e generazione di più Worker; la baseline configura 1 Worker e 6 partizioni di `edge-aggregates`. Restano da documentare gli esperimenti con 1, 2 e 4 Worker; 6 Worker costituiscono una prova aggiuntiva. |
 | Tolleranza ai guasti | Non selezionata | Il progetto è individuale e sceglie la scalabilità come requisito principale. |
 | Deployment automatizzato e configurabile | Parziale | `cmd/deploygen` genera Compose locali e distribuiti dalla topologia e dalla configurazione YAML. `prepare-pilot.sh` prepara le release multi-host; `run-experiment.sh` orchestra readiness, avvio comune, completamento EOS e raccolta degli artefatti. La verifica sperimentale su EC2 resta da documentare. |
@@ -29,10 +29,12 @@ Un requisito passa a `Soddisfatto` soltanto dopo una prova automatizzata o un
 esperimento riproducibile. La sola presenza di un container o di una configurazione
 non viene considerata implementazione funzionale.
 
-Le verifiche locali di questo refactor comprendono `gofmt`, `go vet ./...`,
-`go build ./...` e prove temporanee su contributi normali, duplicati, conflitti,
-Edge differenti, late record ed EOS. Le prove temporanee sono state rimosse;
-non attestano una run distribuita con broker reali o misure di scalabilità.
+Le verifiche del refactor sono mantenute nel repository: `go test ./...`,
+`gofmt`, `go vet ./...`, `go build ./...`, test Avro/progresso/EOS/deduplica,
+test di equivalenza W1/W2/W4/W6 e dei relativi Compose. Un test opt-in esercita
+il consumer group e i due passaggi Kafka reali; istruzioni nel
+[contratto Cloud/Global](cloud-partition-aggregation.md). Queste verifiche non
+sostituiscono misure di scalabilita o una run completa Simulator-MQTT-Edge su EC2.
 
 ## Vincoli sperimentali correnti
 
@@ -46,14 +48,15 @@ automaticamente. State store, exactly-once, transazioni Kafka e recovery
 avanzato sono fuori dal requisito di scalabilita scelto e non sono implementati.
 Questa e una limitazione architetturale accettata, non un bug.
 
-Cloud Worker e Global Aggregator deduplicano gli input nelle rispettive finestre
-in memoria. Nel Global Aggregator, stesso Edge e stesso `AggregateID` nella
-finestra aperta sono una no-op anche per attività e watermark; un ID differente
-dello stesso Edge nella stessa finestra resta errore. Gli ID vengono eliminati
-con la finestra; i record destinati a finestre già chiuse seguono la gestione
-late esistente. Il watermark resta basato sull'event time, mentre il
-processing-time serve alla rilevazione degli Edge idle. Gli EOS sono marker
-senza payload e non aggiornano attività, progresso event-time o watermark.
+Cloud Worker e Global deduplicano gli input nelle finestre pendenti, conservando
+anche l'ultimo record per sorgente. I conflitti e i nuovi record dietro progresso
+gia certificato invalidano la run; non esiste uno storico di deduplica illimitato.
+Il Cloud conosce la membership Edge -> partition usando lo stesso Hash del
+producer; finalizza tramite il minimo progresso degli Edge non terminati.
+Il Global conosce solo P0...P5: riduce finestre identiche dopo partial o certificati
+di contributo zero. EOS e progresso hanno ordine rispetto ai dati, mai semantica
+basata sul silenzio. Le partition restano sei per tutta la run; crash o rebalance
+con stato consumato richiedono il riavvio completo dell'esperimento.
 
 `macroarea_id` e un metadato legacy della topologia, sempre uguale a `none`. Non
 rappresenta un livello Fog e non viene letto dal Simulator o da `cmd/deploygen`.

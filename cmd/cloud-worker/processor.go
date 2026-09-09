@@ -7,6 +7,7 @@ import (
 	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 	"fmt"
+
 	"github.com/segmentio/kafka-go"
 )
 
@@ -20,6 +21,7 @@ type CloudMessageProcessor struct {
 func (p *CloudMessageProcessor) Initialize(ctx context.Context) error {
 	return p.publishOutput(ctx, p.aggregator.Initialize())
 }
+
 func (p *CloudMessageProcessor) Process(ctx context.Context, message kafka.Message) error {
 	kind, err := kafkautil.ParseRecordType(message.Headers)
 	if err != nil {

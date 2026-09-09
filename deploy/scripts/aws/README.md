@@ -99,8 +99,9 @@ completion; the next run begins by resetting them.
 
 `experiments/calibration-aws.yaml` parte da accelerazione **10000**, avvio con
 60s di anticipo, code Simulator/Edge 5000, tolleranza di avvio 10s e 1 Worker.
-Finestre Edge/Cloud 5m/15m, watermark 15m, idle timeout 5s, dataset e 13 siti
-restano invariati. Le quote AWS sono diverse dalla macchina locale: 10000 è un
+Finestre Edge/Cloud 5m/15m, dataset e 13 siti restano invariati. Il Cloud certifica
+il progresso per source partition; il Global riduce le stesse finestre senza
+watermark o idle timeout propri. Le quote AWS sono diverse dalla macchina locale: 10000 è un
 punto di partenza da misurare, non un carico già approvato per lo scaling.
 
 `cmd/deploygen` non supporta campi CPU/RAM nei YAML sperimentali: i quattro
@@ -243,9 +244,11 @@ risoluzione può differire dai campioni Docker: documentare throttling/surplus,
 senza attribuirli al numero di Worker.
 
 La simulazione rete `tc-netem` resta un requisito separato da implementare e
-misurare. Questa modifica non aggiunge Fog e non cambia watermark, semantiche
-MQTT/Kafka, EOS o aggregazioni. Le modifiche Go già presenti nel worktree devono
-essere valutate separatamente.
+misurare. Il refactor Cloud/Global non aggiunge Fog e preserva MQTT e il contratto
+Edge -> Kafka. Il topic di output e ora `cloud-partition-aggregates`; il Global
+conosce soltanto le sei source partition. Le regole di progresso/EOS e le
+incompatibilita con vecchie run sono nel
+[contratto Cloud/Global](../../../docs/cloud-partition-aggregation.md).
 
 ## Test locali senza avvio di container o accesso AWS
 
