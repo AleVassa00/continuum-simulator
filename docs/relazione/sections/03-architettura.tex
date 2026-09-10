@@ -1,0 +1,130 @@
+\section{Architettura e scelte progettuali}
+\label{sec:architettura}
+\subsection{Flusso dei dati e responsabilità}
+La Fig.~\ref{fig:architecture} rappresenta la pipeline. Ciascun sito comprende
+un broker Mosquitto e un Edge Gateway; il Simulator corrispondente pubblica
+JSON sul topic MQTT \code{sensors/<sensorID>/telemetry}. Il gateway valida le
+misure e genera un \code{EdgeAggregate} per zona e finestra non vuota di cinque
+minuti. Il record contiene eventi, conteggi validi e non validi, somma, media,
+minimo e massimo per ciascuna grandezza.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  node distance=4mm,
+  box/.style={draw,rounded corners=1pt,align=center,text width=6.8cm,
+    minimum height=7mm,font=\footnotesize,inner sep=3pt},
+  flow/.style={-{Latex[length=1.8mm]},semithick}]
+\node[box,fill=gray!7] (sim) {13 Simulator: replay di 150 sensori};
+\node[box,below=of sim,fill=blue!6] (edge) {13 siti Edge: Mosquitto + Gateway\\
+  validazione e aggregazione locale, finestre 5 min};
+\node[box,below=of edge] (k1) {Kafka: \texttt{edge-aggregates}\\6 partizioni, chiave \texttt{edge\_id}};
+\node[box,below=of k1,fill=orange!9] (workers) {$W$ Cloud Worker, stesso consumer group\\
+  aggregazione per partizione, finestre 15 min};
+\node[box,below=of workers] (k2) {Kafka: \texttt{cloud-partition-aggregates}\\
+  1 partizione fisica, 6 sorgenti logiche};
+\node[box,below=of k2,fill=orange!9] (global) {Global Aggregator\\
+  riduzione degli stessi intervalli di 15 min};
+\node[box,below=of global,fill=gray!7] (sink) {Sink: log JSON oppure PostgreSQL};
+\foreach \a/\b in {sim/edge,edge/k1,k1/workers,workers/k2,k2/global,global/sink}
+  \draw[flow] (\a) -- (\b);
+\end{tikzpicture}
+\caption{Architettura logica. I due topic risiedono sullo stesso broker Kafka.
+Le repliche dei worker non modificano le sei sorgenti logiche del Global.}
+\label{fig:architecture}
+\end{figure}
+
+Kafka disaccoppia la produzione Edge dal consumo Cloud e mantiene i record in
+un log persistente~\cite{kafka}. Il topic \code{edge-aggregates} ha sei
+partizioni. La chiave \code{edge\_id} e il partizionatore hash mantengono
+aggregati ed End of Stream (EOS) dello stesso Edge nella stessa partizione.
+Il numero di partizioni e la membership degli Edge rimangono invariati per
+l'intera run.
+
+I Cloud Worker condividono un consumer group: ciascuna partizione è assegnata
+a un solo membro del gruppo. Ogni worker mantiene uno stato separato per le
+partizioni assegnate e combina i contributi Edge su finestre di quindici
+minuti. Gli output sono \code{CloudPartitionAggregate}, identificati da
+partizione sorgente e confini temporali, pubblicati sul secondo topic Kafka.
+Il Global Aggregator combina i partial con la stessa coppia di confini e
+produce il risultato finale nel sink configurato.
+
+\subsection{Aggregazione componibile}
+Per una metrica $m$, ogni aggregato conserva il numero di misure valide $n_m$,
+il numero di misure non valide $u_m$ e la somma $s_m$, oltre agli estremi.
+La combinazione di contributi disgiunti $j$ applica
+\begin{equation}
+n_m=\sum_j n_{m,j},\qquad u_m=\sum_j u_{m,j},\qquad
+s_m=\sum_j s_{m,j}.
+\end{equation}
+La media si ottiene da $s_m/n_m$ se $n_m>0$; altrimenti media ed estremi sono
+nulli. Minimo e massimo si combinano considerando soltanto contributi validi.
+La somma dei conteggi validi e non validi deve coincidere con il numero di
+eventi dell'aggregato per ciascuna metrica.
+
+Conservare la somma evita la media non pesata delle medie locali, che sarebbe
+errata in presenza di numerosità differenti. L'operazione è componibile in
+aritmetica esatta; con valori floating point l'equivalenza numerica va
+verificata con una tolleranza. I cinque minuti Edge dividono esattamente i
+quindici minuti Cloud, per cui ogni aggregato locale appartiene a una sola
+finestra Cloud. Un aggregato che attraversa un confine Cloud viene rifiutato.
+
+\subsection{Progresso, contributi vuoti e completamento}
+L'Edge mantiene una finestra corrente in event time. L'arrivo di un evento
+della finestra successiva determina la pubblicazione della precedente; EOS
+chiude l'ultima. Gli eventi appartenenti a finestre già chiuse sono scartati
+e conteggiati. Il contratto richiede pertanto shard ordinati temporalmente;
+non è prevista la riapertura di finestre per dati tardivi.
+
+Una partizione Cloud può contenere Edge con velocità differenti. Il worker
+memorizza, per ogni Edge atteso, l'ultimo fine-finestra osservato e l'eventuale
+EOS. Finché un Edge non ha prodotto né dati né EOS, non è possibile
+certificarne il progresso. Tra gli Edge non terminati si considera il minimo
+dei fine-finestra, allineato al confine Cloud: solo gli intervalli interamente
+coperti da tale frontiera sono definitivi. La cessazione temporanea del
+traffico non equivale alla conclusione di una sorgente.
+
+Il worker pubblica prima i partial definitivi e poi un controllo di progresso
+che certifica l'assenza di ulteriori contributi precedenti alla frontiera.
+Quando tutti gli Edge di una partizione terminano, pubblica gli ultimi partial
+e infine EOS della partizione. Una partizione senza Edge produce direttamente
+EOS. L'ordine fra dati e controlli permette di rappresentare in modo sparso
+le finestre: se una sorgente certifica il superamento di un intervallo senza
+averne pubblicato un partial, il suo contributo è zero.
+
+Il Global conosce soltanto le sei partizioni sorgente. Per una finestra attende
+da ciascuna un partial oppure un controllo di progresso/EOS che certifichi il
+contributo zero. Non introduce nuove finestre, non ricalcola watermark e non
+usa timeout per dichiarare completi risultati incompleti. Il replay termina
+dopo gli EOS di tutte le partizioni e l'emissione delle finestre pendenti.
+
+\subsection{Parallelismo indipendente dal risultato}
+Con $W=1,2,4,6$ cambia il numero di esecutori, non quello delle partizioni
+sorgente (Tab.~\ref{tab:workers}). Anche con un solo worker la pipeline passa
+dal secondo topic e dal Global. In presenza di dati in tutte le partizioni si
+producono sei partial per finestra; in caso contrario alcuni contributi sono
+certificati come zero. Il Global non aggrega per identità del worker.
+
+\begin{table}[t]
+\caption{Distribuzione bilanciata delle sei partizioni. L'assegnazione
+effettiva degli identificativi è decisa dal consumer group.}
+\label{tab:workers}
+\centering
+\begin{tabular}{ccc}
+\toprule
+Worker & Partizioni per worker & Sorgenti logiche Global\\
+\midrule
+1 & 6 & 6\\
+2 & 3, 3 & 6\\
+4 & 2, 2, 1, 1 & 6\\
+6 & 1, 1, 1, 1, 1, 1 & 6\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ogni worker usa letture concorrenti ma un solo ciclo di elaborazione; il
+parallelismo computazionale cresce quindi tramite processi aggiuntivi. Sei
+partizioni costituiscono il limite del parallelismo utile del gruppo. La
+distribuzione delle partizioni non garantisce un uguale costo: il numero di
+Edge e il volume dei loro aggregati possono differire. Il broker condiviso e
+il Global restano inoltre possibili colli di bottiglia.

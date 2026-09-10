@@ -419,6 +419,7 @@ stage_role() {
         globalaggregator \
         kafkautil
       cp -R "${REPO_ROOT}/cmd/global-aggregator" "${destination}/cmd/global-aggregator"
+      cp -R "${REPO_ROOT}/cmd/kafka-lag-collector" "${destination}/cmd/kafka-lag-collector"
       cp "${REPO_ROOT}/deploy/docker/global-aggregator.Dockerfile" "${destination}/deploy/docker/"
       cp "${REPO_ROOT}/deploy/compose/distributed/cloud-core.generated.yml" "${destination}/deploy/compose/distributed/"
       ;;

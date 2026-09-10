@@ -1,0 +1,122 @@
+\section{Verifiche e valutazione sperimentale}
+\label{sec:valutazione}
+\subsection{Verifiche di correttezza}
+Le suite Go verificano codec Avro, attesa degli Edge lenti, partizioni vuote,
+progresso, EOS, duplicati e conflitti. Controllano inoltre l'ordine
+pubblicazione--commit e l'equivalenza della computazione con $W=1,2,4,6$.
+Il confronto riguarda gli aggregati e le statistiche prodotti, non il tempo
+di esecuzione. La suite ordinaria \code{go test ./... -count=1}, rieseguita
+l'11 settembre 2026 durante la preparazione della bozza, è stata superata.
+I programmi Simulator ed Edge non hanno test Go propri nella versione
+ispezionata: la copertura automatizzata non va estesa per inferenza a tutta
+la pipeline.
+
+Un test opt-in utilizza broker Kafka reali per esercitare consumer group e i
+due passaggi sul log; la verifica registrata nel documento di contratto del
+9 settembre riporta otto casi superati, con tredici Edge oppure un solo Edge
+e cinque partizioni vuote. Tale prova non è stata rieseguita per redigere
+questa bozza e non sostituisce un benchmark completo MQTT--Edge--Cloud.
+Gli script di deployment includono inoltre test Python per parser,
+configurazioni, quote e controlli di qualità. Le integrazioni opzionali
+richiedono dipendenze esplicitamente abilitate; gli esiti e gli eventuali
+test saltati devono accompagnare la verifica finale.
+
+\subsection{Evidenze preliminari disponibili}
+\label{sec:pilot}
+Nel workspace sono conservate due prove AWS, datate 9 e 10 settembre 2026,
+entrambe con un worker e accelerazione $A=10.000$. I riepiloghi riportano,
+in ciascuna prova, 2.106.784 eventi offerti, elaborati all'Edge e rappresentati
+nei risultati globali. Sono presenti 105.608 aggregati Edge e 2.710 finestre
+globali; i contatori di drop e di finestre globali incomplete sono nulli.
+
+Tuttavia entrambe le esecuzioni hanno \code{status=failed} e un esito
+negativo dei controlli di qualità (\code{quality\_status=fail}).
+Il motivo registrato è \code{orchestration\_failed}.
+Nella prova del 10 settembre il log di orchestrazione segnala Kafka
+\code{unhealthy} nel controllo conclusivo. L'uguaglianza dei conteggi è
+un'evidenza diagnostica utile, ma non annulla il fallimento del protocollo
+di validazione. Queste prove non sono considerate run valide della campagna;
+non vengono usate per calcolare speedup o sostenere conclusioni sulla
+scalabilità.
+
+Le due prove usano la strumentazione antecedente all'attuale collector Go
+del lag. Il costo della raccolta e la cadenza di campionamento rendono
+inappropriato un confronto diretto delle risorse del broker fra vecchie e
+nuove run. La campagna deve quindi essere ripetuta con release e
+strumentazione uniformi. Al momento della bozza non è disponibile una serie
+AWS valida e ripetuta con tutti i valori di $W$ né una valutazione con
+\code{tc-netem}.
+
+\subsection{Disegno della campagna da completare}
+\label{sec:metodo}
+Il primo passo è calibrare $A$ in modo che Simulator ed Edge sostengano il
+carico senza perdite e senza accumulare un ritardo di generazione crescente.
+La baseline locale usa $A=20.000$, i file di confronto Cloud $A=40.000$ e
+il pilota AWS $A=10.000$: sono parametri configurati, non capacità misurate.
+Il carico definitivo deve essere fissato dopo la calibrazione su EC2.
+
+Il confronto principale prevede $W=1,2,4$, con $W=6$ come punto aggiuntivo.
+Per ogni valore si mantengono uguali dataset, finestre, code, immagini,
+quote per replica, numero di partizioni e strumentazione. Si eseguono più
+livelli di carico e almeno cinque ripetizioni per configurazione,
+alternando l'ordine dei valori di $W$. Si riportano mediana e dispersione,
+con intervalli di confidenza ove il numero di osservazioni lo consenta.
+Il replay finito comprende i transitori di avvio e svuotamento: essi devono
+essere dichiarati, ed eventualmente analizzati anche separatamente.
+
+La prova a carico costante isola l'effetto delle repliche su tempo di
+completamento e backlog. Per dimostrare il requisito della traccia occorre
+anche aumentare il carico e verificare se più repliche mantengano comparabili
+i tempi di risposta. Il carico dei worker è il rate degli aggregati Edge,
+non soltanto quello degli eventi grezzi. A finestre fisse, aggiungere sensori
+a una zona già attiva può aumentare il lavoro Edge senza aumentare il numero
+di record Cloud. L'accelerazione del replay aumenta invece anche la frequenza
+di chiusura delle finestre rispetto al tempo reale.
+
+La rete deve essere valutata introducendo separatamente ritardo e limiti di
+banda nei collegamenti Simulator--Edge ed Edge--Cloud/Kafka, poi combinandoli
+in scenari controllati. I valori dei profili, le interfacce e le direzioni
+interessate dovranno essere registrati negli artefatti. Questa estensione
+\code{tc-netem} non è ancora implementata; nessun dato di questa bozza ne
+presuppone l'esecuzione.
+
+\subsection{Metriche e criteri di accettazione}
+Si distinguono eventi offerti, accettati nelle code, ricevuti, elaborati e
+inclusi nei risultati. Una run del confronto senza perdite deve soddisfare
+$N_{\mathrm{offerti}}=N_{\mathrm{Edge}}=N_{\mathrm{Global}}$, avere EOS completi,
+offset finali allineati, assenza di errori di protocollo, restart e OOM, e
+superare i controlli del runner. I confronti fra repliche devono verificare
+anche le statistiche per finestra, perché i soli conteggi non dimostrano
+l'equivalenza numerica dei risultati. Le run scartate vanno comunque censite.
+
+Il throughput utile end-to-end è il numero di eventi rappresentati nei
+risultati diviso per la durata dichiarata della misura. Il throughput Cloud
+va espresso anche in aggregati Edge/s. Per un workload fisso, lo speedup può
+essere espresso come $S_W=T_1/T_W$ e l'efficienza come $E_W=S_W/W$, specificando
+che $T_W$ include il pacing quando si usa la durata end-to-end. Una sorgente
+che impone il rate può rendere simili i tempi di completamento anche se la
+capacità interna aumenta; per questo si osservano anche lag e ritardi.
+
+Il lag Kafka è una differenza di offset, quindi un numero di record, non
+una latenza in secondi. I topic contengono anche controlli di progresso ed
+EOS. Il suo massimo è campionato e può sottostimare il picco; le query
+fallite o incomplete non devono essere sostituite con zero. CPU e RAM vanno
+riportate per ruolo e come totale delle repliche. Sugli host T3 occorre
+conservare anche le metriche dei crediti CPU e la modalità di funzionamento,
+per non attribuire al parallelismo effetti dovuti al throttling.
+
+Per i tempi di disponibilità delle finestre, sottrarre il timestamp storico
+\code{window\_end} da \code{emitted\_at} produrrebbe un intervallo privo di
+significato prestazionale. Una metrica da introdurre nella campagna usa
+invece il fine-finestra riportato sulla timeline accelerata:
+\begin{equation}
+D(w)=T_{\mathrm{emit}}(w)-\left(T_0+\frac{t_{\mathrm{end}}(w)-t_0}{A}\right).
+\label{eq:delay}
+\end{equation}
+Essa misura il ritardo rispetto alla chiusura nominale e include attesa delle
+sorgenti, code e servizio; non è la sola latenza di rete né la latenza di
+commit del sink. Richiede orologi sincronizzati. La finestra finale chiusa
+da EOS va analizzata separatamente, perché può terminare prima del suo
+confine nominale. Il collector corrente conserva i timestamp originali,
+ma non calcola questa metrica: i suoi percentili non sono ancora risultati
+disponibili.

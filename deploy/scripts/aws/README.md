@@ -211,10 +211,32 @@ la RAM totale dell'host, disponibile nei grezzi insieme a CPU, disco e rete.
 Il massimo lag è campionato e può non catturare il picco reale. Si accettano
 solo query riuscite con tutte le 6/1 partizioni; query fallite/incomplete non
 valgono zero. Il timestamp di completamento della query definisce l'intervallo
-di misura; la query non è una fotografia atomica. Le CLI Java aggiungono carico
-a Kafka: mantenere uguale la strumentazione. `METRICS_INTERVAL_SECONDS` (default
-5) è una pausa fra raccolte, non la frequenza esatta. I record dei topic includono
-anche EOS, non solo aggregati.
+di misura; la query non è una fotografia atomica. Il lag è la differenza fra
+log-end offset e offset committato dal consumer group, non una latenza in secondi.
+I record dei topic includono anche EOS, non solo aggregati.
+
+Il collector Go persistente legge soltanto gli offset (`OffsetFetch` e
+`ListOffsets`), senza entrare nei consumer group o fare commit. Viene avviato
+come container temporaneo dalla stessa immagine preparata del Global, con
+0.05 CPU e 64 MiB: condivide la rete di Kafka ma non il suo cgroup. Non avvia
+CLI Java nel broker; il costo di osservazione resta presente sull'host ma la
+CPU del collector non viene più conteggiata come CPU del container Kafka.
+Il runner lo rimuove alla chiusura e usa un helper analogo per lo snapshot finale.
+I nomi/formati degli artefatti e il parser restano invariati. Un offset non ancora
+committato è indisponibile, non zero.
+
+`METRICS_INTERVAL_SECONDS` (default 5) imposta la cadenza richiesta del lag;
+query lente saltano i tick senza accumulare richieste concorrenti (timeout di
+3 secondi per gruppo). Per le metriche host/Docker resta una pausa fra raccolte,
+non la frequenza esatta. Mantenere identica la strumentazione fra W1/W2/W4/W6;
+non confrontare direttamente la CPU Kafka con run che usavano le CLI Java.
+
+Il controllo lifecycle richiede Edge running/healthy prima del replay ed
+exited/0 dopo EOS; per gli Edge terminati non richiede una healthcheck positiva.
+Restart e OOM restano errori, mentre i broker MQTT devono restare running/healthy.
+Dopo questo aggiornamento è necessario ripetere `prepare-pilot.sh` per includere
+il collector nell'immagine e riallineare il fingerprint dei sorgenti, poi eseguire
+il runner. Le vecchie run e i relativi giudizi di qualità non vengono modificati.
 
 `global-windows.csv` conserva `window_start`, `window_end` ed `emitted_at`
 originali per tutte le finestre, inclusa l'ultima, senza calcolare ritardi derivati.

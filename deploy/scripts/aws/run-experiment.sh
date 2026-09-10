@@ -945,7 +945,13 @@ case "${role}" in
   edge)
     for edge_number in $(seq 0 12); do
       check_container "mqtt-edge-${edge_number}" running healthy
-      check_container "edge-${edge_number}" running healthy
+      if [[ "${phase}" == "before" ]]; then
+        check_container "edge-${edge_number}" running healthy
+      else
+        # Edge exits successfully after publishing its final aggregate and EOS.
+        # Healthchecks are meaningful only while the process is running.
+        check_container "edge-${edge_number}" exited none
+      fi
     done
     ;;
   simulator)

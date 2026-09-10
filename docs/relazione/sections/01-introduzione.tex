@@ -1,0 +1,52 @@
+\section{Introduzione e obiettivi}
+\label{sec:introduzione}
+Le osservazioni ambientali generate in zone differenti possono essere
+elaborate vicino alle sorgenti per descrivere la situazione locale e
+successivamente combinate per ottenere una vista dell'intero insieme
+monitorato. Trasferire al Cloud ogni singolo campione concentra in un unico
+livello sia la validazione sia il lavoro di aggregazione. Quando l'analisi
+richiede statistiche componibili, una prima elaborazione all'Edge permette
+invece di inviare riepiloghi temporali, conservando le informazioni necessarie
+al calcolo globale.
+
+\emph{Continuum Simulator} realizza questa separazione mediante una pipeline
+di servizi Go. Il caso di studio riguarda misure di temperatura, umidità e
+pressione ottenute da sensori BME280. L'analisi locale produce statistiche per
+zona; il risultato Cloud riassume le osservazioni di tutte le zone su un
+intervallo temporale comune. La media globale è riferita ai campioni validi
+ricevuti: non è una stima della temperatura media geografica europea, che
+richiederebbe un diverso modello di pesatura e di rappresentatività spaziale.
+
+Il progetto segue la traccia A2~\cite{traccia}. Essendo svolto individualmente,
+seleziona il requisito di \emph{scalabilità orizzontale} fra le due alternative
+previste, scalabilità e tolleranza ai guasti. La domanda sperimentale è se
+l'aggiunta di repliche Cloud permetta di sostenere un maggiore carico senza
+degradare i tempi di disponibilità dei risultati. Il placement dei componenti
+è deciso a progetto e il numero di worker viene fissato prima di ogni
+esecuzione; non è implementato autoscaling durante il replay.
+
+Le principali scelte sviluppate nel progetto sono una topologia derivata dai
+dati, l'aggregazione gerarchica di statistiche componibili e un protocollo di
+finalizzazione basato sul progresso effettivo delle sorgenti. La
+parallelizzazione Cloud conserva sei partizioni logiche anche quando cambia
+il numero degli esecutori. In questo modo i confronti fra configurazioni
+mantengono invariata la computazione richiesta e il significato del risultato.
+
+\section{Requisiti e perimetro}
+\label{sec:requisiti}
+La traccia richiede almeno i livelli Edge e Cloud, l'uso di Go, comunicazione
+persistente fra componenti, deployment automatizzato e configurabile,
+esecuzione con Docker Compose su EC2 e valutazione delle comunicazioni sotto
+condizioni di rete emulate~\cite{traccia}. Il progetto adotta processi
+containerizzati, MQTT per l'ingresso delle misure e Kafka nei due passaggi
+Cloud. La persistenza richiesta è affidata a Kafka; la telemetria MQTT usa una
+semantica che ammette perdite, discusse nella Sez.~\ref{sec:limiti}.
+
+Non viene introdotto un livello Fog. Le tre grandezze considerate sono
+riassumibili con conteggi, somme ed estremi: nella soluzione corrente non
+emerge un'ulteriore elaborazione intermedia con una responsabilità distinta.
+La scelta mantiene esplicite l'analisi locale e la sintesi globale e riduce i
+componenti da configurare e misurare. Le zone Edge sono domini logici: più zone
+possono condividere un host, con limiti di CPU e memoria per container. Le
+coordinate dei sensori definiscono i gruppi di dati, non la posizione fisica
+delle macchine EC2 né il ritardo della rete.

@@ -59,28 +59,123 @@ class ShellTests(unittest.TestCase):
             self.assertIn("manca EDGE_MEMORY", result.stderr)
 
     def test_collector_once_and_failed_query(self):
-        # Exported functions mock only the external Docker/timeout commands.
+        # Mock the Docker boundary, not the launcher's lifecycle or output.
         command = '''
 docker() {
-  local group="${!#}" topic count
-  if [[ "$group" == cloud-workers ]]; then topic=edge-aggregates; count=6;
-  else topic=cloud-partition-aggregates; count=1; fi
-  for ((p=0; p<count; p++)); do echo "$group $topic $p 10 10 0 consumer host client"; done
-  return "${MOCK_QUERY_EXIT:-0}"
+  echo "docker $*" >&2
+  case "$1" in
+    inspect)
+      if [[ "$3" == '{{.Image}}' ]]; then echo sha256:prepared-image;
+      else echo "${MOCK_QUERY_EXIT:-0}"; fi ;;
+    create) echo helper-id ;;
+    start)
+      for group in cloud-workers global-aggregator; do
+        echo "===== group $group sample 2026-09-09T19:00:00Z ====="
+        if [[ "$group" == cloud-workers ]]; then topic=edge-aggregates; count=6;
+        else topic=cloud-partition-aggregates; count=1; fi
+        if [[ "${MOCK_QUERY_EXIT:-0}" == 0 ]]; then
+          for ((p=0; p<count; p++)); do echo "$group $topic $p 10 10 0 - - -"; done
+        fi
+        echo "===== query_exit ${MOCK_QUERY_EXIT:-0} at 2026-09-09T19:00:01Z ====="
+      done ;;
+    rm) echo removed-helper >&2 ;;
+    *) return 99 ;;
+  esac
 }
-timeout() { shift; "$@"; }
-export -f docker timeout
+export -f docker
 bash deploy/scripts/aws/collect-kafka-lag.sh 5 offline-test once
 '''
         from test_artifacts import artifacts
         result = self.shell(command)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(artifacts.parse_lag(result.stdout)), 7)
+        self.assertEqual(result.stderr.count("docker create "), 1)
+        self.assertIn("--network container:kafka --cpus 0.05", result.stderr)
+        self.assertIn("sha256:prepared-image -broker localhost:29092 -interval 5s -mode once", result.stderr)
+        self.assertNotIn("docker exec", result.stderr)
         result = self.shell(command, MOCK_QUERY_EXIT="1")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual(artifacts.parse_lag(result.stdout), [])
         result = self.shell('bash deploy/scripts/aws/collect-kafka-lag.sh 5 offline-test invalid')
         self.assertEqual(result.returncode, 2)
+
+    def test_collector_cleanup_on_signal(self):
+        command = '''
+set -eu
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+export MOCK_TRACE="$scratch/trace" MOCK_READY="$scratch/ready" MOCK_STOP="$scratch/stop"
+docker() {
+  echo "$1" >>"$MOCK_TRACE"
+  case "$1" in
+    inspect) echo sha256:prepared-image ;;
+    create) echo helper-id ;;
+    start)
+      touch "$MOCK_READY"
+      while [[ ! -e "$MOCK_STOP" ]]; do sleep 0.05; done ;;
+    rm) [[ "$*" == 'rm -f helper-id' ]]; touch "$MOCK_STOP" ;;
+    *) return 99 ;;
+  esac
+}
+export -f docker
+bash deploy/scripts/aws/collect-kafka-lag.sh 5 "offline-signal-$$" loop &
+collector=$!
+for ((attempt=0;attempt<100;attempt++)); do
+  [[ ! -e "$MOCK_READY" ]] || break
+  sleep 0.05
+done
+[[ -e "$MOCK_READY" ]]
+kill -TERM "$collector"
+wait "$collector"
+[[ ! -e "/tmp/continuum-kafka-lag-offline-signal-$$.pid" ]]
+cat "$MOCK_TRACE"
+'''
+        result = self.shell(command)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["inspect", "create", "start", "rm"])
+
+    def test_runner_edge_lifecycle(self):
+        command = '''
+source deploy/scripts/aws/run-experiment.sh
+WORKER_COUNT=1
+for role in "${ROLES[@]}"; do PUBLIC_IPS["$role"]=offline-host; done
+ssh_run() { shift; bash -c "$*"; }
+capture_container_states() { :; }
+docker() {
+  local name="${!#}" field="$3" state=running health=healthy
+  [[ "$name" != kafka-init ]] || state=exited
+  if [[ "$MOCK_PHASE" == after ]]; then
+    case "$name" in edge-*|simulator-*|global-aggregator) state=exited; health=unhealthy ;; esac
+  fi
+  if [[ "$name" == "${MOCK_TARGET:-edge-0}" && "$field" == "${MOCK_FIELD:-}" ]]; then
+    echo "$MOCK_VALUE"; return
+  fi
+  case "$field" in
+    '{{.State.Status}}') echo "$state" ;;
+    '{{.RestartCount}}'|'{{.State.ExitCode}}') echo 0 ;;
+    '{{.State.OOMKilled}}') echo false ;;
+    *) echo "$health" ;;
+  esac
+}
+export -f docker
+validate_container_lifecycle "$MOCK_PHASE"
+'''
+        for phase in ("before", "after"):
+            result = self.shell(command, MOCK_PHASE=phase)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        for phase, target, field, value in (
+            ("before", "edge-0", "{{.State.Status}}", "exited"),
+            ("after", "edge-0", "{{.State.Status}}", "running"),
+            ("after", "edge-0", "{{.State.ExitCode}}", "1"),
+            ("after", "edge-0", "{{.RestartCount}}", "1"),
+            ("after", "edge-0", "{{.State.OOMKilled}}", "true"),
+            ("after", "mqtt-edge-0", "{{.State.Status}}", "exited"),
+        ):
+            with self.subTest(phase=phase, field=field, value=value):
+                result = self.shell(command, MOCK_PHASE=phase, MOCK_TARGET=target,
+                                    MOCK_FIELD=field, MOCK_VALUE=value)
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn(target, result.stderr)
 
     def test_runner_normalized_compose_keeps_replay_timestamp(self):
         for role in ("cloud-core", "workers", "edge", "simulator"):

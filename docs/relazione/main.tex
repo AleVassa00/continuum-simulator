@@ -1,0 +1,62 @@
+\documentclass[conference,a4paper]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs,array,tabularx}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{pdftitle={Continuum Simulator: monitoraggio ambientale e aggregazione distribuita Edge-Cloud},
+pdfauthor={Alessandro Vassallo},pdfsubject={Relazione progetto A2 - Bozza},
+pdfkeywords={compute continuum, Go, Kafka, Edge-Cloud, scalabilità}}
+\graphicspath{{figures/}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\setlength{\emergencystretch}{1em}
+
+\title{Continuum Simulator: monitoraggio ambientale\\
+e aggregazione distribuita Edge--Cloud}
+\author{\IEEEauthorblockN{Alessandro Vassallo -- Matricola 0366572}
+\IEEEauthorblockA{Università degli Studi di Roma Tor Vergata\\
+Sistemi Distribuiti e Cloud Computing -- A.A. 2025/26}
+\thanks{Bozza di lavoro dell'11 settembre 2026. La campagna sperimentale di scalabilità e la valutazione delle condizioni di rete sono da completare.}}
+
+\begin{document}
+\pagestyle{plain}
+\maketitle
+\thispagestyle{plain}
+\begin{abstract}
+Il monitoraggio di sensori distribuiti richiede di combinare l'elaborazione
+locale delle osservazioni con una vista complessiva delle zone monitorate.
+Questo lavoro presenta un'applicazione in Go che riproduce misure ambientali
+Sensor.Community e distribuisce la computazione tra Edge e Cloud. Tredici
+gateway validano temperatura, umidità e pressione e producono statistiche su
+finestre di cinque minuti. Nel Cloud, worker appartenenti allo stesso consumer
+group Kafka aggregano i dati su finestre di quindici minuti; un componente
+finale combina i contributi delle partizioni. L'identità degli aggregati è
+indipendente dal numero di worker, mentre un protocollo di progresso e fine
+replay consente di distinguere contributi assenti da contributi ancora attesi.
+La relazione descrive la costruzione del workload, le scelte di comunicazione,
+il deployment automatizzato e le verifiche disponibili. Le prove AWS
+preliminari conservano i conteggi degli eventi, ma non superano i controlli di
+orchestrazione; non vengono quindi utilizzate per affermare la scalabilità.
+Sono definiti il metodo per la successiva valutazione e i limiti relativi a
+perdite MQTT, stato volatile e ripristino dopo un guasto.
+\end{abstract}
+\begin{IEEEkeywords}
+compute continuum, Edge--Cloud, Go, Kafka, aggregazione, scalabilità
+\end{IEEEkeywords}
+\input{sections/01-introduzione}
+\input{sections/02-dataset}
+\input{sections/03-architettura}
+\input{sections/04-implementazione}
+\input{sections/05-valutazione}
+\input{sections/06-limiti}
+\input{references}
+\end{document}

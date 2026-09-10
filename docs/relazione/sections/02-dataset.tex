@@ -1,0 +1,63 @@
+\section{Dataset e costruzione del workload}
+\label{sec:dataset}
+\subsection{Popolazione e topologia geografica}
+Il dataset locale deriva dalle osservazioni BME280 di Sensor.Community del
+mese di gennaio 2025~\cite{sensorcommunity}. Il notebook di preparazione legge
+il CSV a blocchi, valida timestamp, identificativi e coordinate, e considera
+l'intervallo $[1\text{ gennaio},1\text{ febbraio})$ in UTC. La validazione
+semantica delle tre misure resta invece una responsabilità dei gateway.
+
+La popolazione europea è definita operativamente dal rettangolo geografico
+con latitudine fra $34^\circ$ e $72^\circ$ e longitudine fra $-25^\circ$ e
+$45^\circ$. Questo filtro seleziona 5.102 sensori localizzabili. Le posizioni
+medie per sensore, inizialmente in WGS84, sono proiettate nel sistema metrico
+EPSG:3035 prima di applicare K-Means. Si confrontano $k=5,\ldots,15$, con seed
+42 e 20 inizializzazioni; il massimo Silhouette Score seleziona $k=13$, con
+valore circa $0{,}521$ (Fig.~\ref{fig:workload}). L'inertia e le distanze dai
+centroidi sono diagnostiche aggiuntive, non vincoli rigidi di progetto.
+
+La topologia è calcolata sull'intera popolazione prima del campionamento
+sperimentale. I cluster sono rinominati da ovest verso est per ottenere
+identificativi stabili da \code{edge-0} a \code{edge-12}. Il raggio massimo,
+circa 1.167 km, evidenzia che questi gruppi descrivono zone di aggregazione
+geografica; non modellano la copertura radio di un singolo gateway.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{workload.pdf}
+\caption{A sinistra, scelta di $k$ sulla popolazione europea completa. A
+destra, numero di osservazioni nei tredici shard del replay sperimentale.
+Il bilanciamento del numero di sensori non implica un uguale volume di eventi.
+Figure ricavate dai metadati del notebook, non da misure di prestazione.}
+\label{fig:workload}
+\end{figure*}
+
+\subsection{Campionamento e replay}
+Dalla topologia fissata vengono selezionati 150 sensori senza sostituzione,
+utilizzando ancora seed 42. Ogni zona riceve una quota di base di 11 sensori;
+i sette posti residui sono assegnati alle zone con popolazione maggiore.
+Si ottengono quindi 11 o 12 sensori per Edge. Il campionamento rende
+confrontabile la copertura dei domini, ma non riproduce proporzionalmente
+la densità della popolazione originale.
+
+Il replay contiene 2.106.784 osservazioni, ripartite offline in tredici CSV.
+Il riepilogo degli shard riporta timestamp dal 1 gennaio 2025 alle 01:11:16
+al 29 gennaio alle 23:59:58 UTC: l'intervallo effettivamente osservato non
+coincide con l'intero mese usato come filtro. Il numero di righe per zona varia
+da 124.410 a 221.171. Il rate naturale di $0{,}7866$ eventi/s riportato dal
+notebook usa come denominatore i 31 giorni del mese; per le misure del replay
+occorre invece usare la durata effettiva della run.
+
+Ogni processo Simulator legge soltanto lo shard assegnato. Il deployment
+fornisce un'epoca comune $t_0$, un istante reale di avvio $T_0$ e il fattore di
+accelerazione $A$. Per un evento con timestamp originale $t_e$, l'istante
+programmato di offerta è
+\begin{equation}
+T_{\mathrm{sched}}(t_e)=T_0+\frac{t_e-t_0}{A}.
+\label{eq:replay}
+\end{equation}
+I timestamp degli eventi non vengono riscritti: le finestre applicative restano
+espresse in event time. L'accelerazione comprime soltanto i tempi di
+generazione. Il simulatore misura anche il ritardo rispetto al programma;
+un generatore in ritardo non può essere interpretato come una sorgente capace
+di sostenere il carico nominalmente configurato.

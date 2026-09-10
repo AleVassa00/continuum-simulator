@@ -1,0 +1,93 @@
+\section{Implementazione e piattaforma software}
+\label{sec:implementazione}
+\subsection{Organizzazione e contratti}
+La directory \code{cmd} contiene i programmi Simulator, Edge, Cloud Worker
+e Global Aggregator. In \code{internal}, i package \code{model},
+\code{cloudworker} e \code{globalaggregator} separano i contratti e
+l'elaborazione dall'accesso ai broker. La Tab.~\ref{tab:software} riporta le dipendenze
+dirette dichiarate in \code{go.mod}; il modulo richiede Go 1.25.0.
+
+\begin{table}[t]
+\caption{Librerie Go direttamente utilizzate dal progetto.}
+\label{tab:software}
+\centering\footnotesize
+\begin{tabularx}{\columnwidth}{@{}l l Y@{}}
+\toprule
+Libreria & Versione & Responsabilità\\
+\midrule
+Paho MQTT & 1.5.1 & Client MQTT Simulator/Edge\\
+\code{kafka-go} & 0.4.51 & Producer, consumer group e offset\\
+\code{goavro/v2} & 2.15.0 & Codifica e decodifica Avro\\
+\code{pgx/v5} & 5.10.0 & Sink PostgreSQL e pool connessioni\\
+\code{yaml.v3} & 3.0.1 & Lettura configurazioni esperimenti\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+La telemetria MQTT e il sink di log usano JSON. I dati Kafka sono record Avro
+binari con schema incorporato nei binari, senza Schema Registry o prefissi
+aggiuntivi. Avro descrive esplicitamente campi e tipi del record~\cite{avro};
+nel progetto producer e consumer devono condividere la stessa versione degli
+schemi. Le metriche nullable distinguono l'assenza di valori validi da un
+valore numerico nullo. I timestamp sono rappresentati come nanosecondi Unix e
+i contatori sono controllati prima della conversione da \code{uint64} a
+interi Avro con segno. Il decoder rifiuta record malformati e byte residui.
+
+La validazione Edge ammette temperatura fra $-40$ e $85\,{}^\circ$C, umidità
+relativa fra 0 e 100\%, pressione fra 30.000 e 110.000 Pa. Una misura
+mancante, non finita o fuori intervallo incrementa il relativo conteggio di
+invalidità senza necessariamente eliminare le altre misure dell'evento.
+Un evento con struttura o identificativi non validi è invece scartato e
+registrato nelle metriche operative.
+
+\subsection{Code, pubblicazione e deduplica}
+Simulator ed Edge impiegano code di ingresso limitate. Quando la coda è piena,
+la nuova telemetria è scartata e il contatore di drop viene incrementato.
+Nel Simulator il pacing continua indipendentemente dalla velocità di egress.
+La telemetria MQTT usa QoS 0; l'EOS usa QoS 1 ed è accodato dopo i dati già
+accettati, attendendo il completamento della pubblicazione. All'Edge uno slot
+aggiuntivo è riservato all'EOS, che non può essere perso per saturazione della
+capacità destinata alla telemetria. La readiness del gateway diventa positiva
+soltanto dopo connessione e subscription ai topic richiesti.
+
+I writer Kafka sono sincroni e richiedono gli acknowledgment del broker.
+L'ultimo aggregato Edge precede il suo EOS nello stesso flusso ordinato. I
+worker committano l'offset successivo solo dopo l'elaborazione e la
+pubblicazione degli eventuali output; il Global effettua il commit dopo
+l'elaborazione e la scrittura nel sink.
+
+Worker e Global riconoscono i duplicati nelle finestre pendenti e conservano
+anche l'ultimo record per sorgente. Un duplicato identico non modifica lo
+stato; un duplicato conflittuale o un nuovo contributo precedente al progresso
+già certificato causa errore. Non è mantenuto uno storico illimitato. Nel
+sink PostgreSQL l'identificativo dell'aggregato è univoco e l'inserimento usa
+\code{ON CONFLICT DO NOTHING}. Queste scelte non realizzano una transazione
+atomica fra stato applicativo, output e offset.
+
+\subsection{Deployment e riproducibilità}
+\code{cmd/deploygen} genera i file Compose a partire dalla topologia e dalla
+configurazione YAML. L'infrastruttura Terraform prevede quattro host EC2:
+Simulator, Edge, Cloud Core e Workers. Cloud Core ospita Kafka e il Global;
+l'host Workers ospita le repliche da confrontare. Più siti Edge condividono
+quindi una macchina, mentre i confini Simulator--Edge e Edge--Cloud attraversano
+host distinti. Le configurazioni predefinite indicano istanze \code{t3.small}
+per tre ruoli e \code{t3.medium} per Cloud Core; una valutazione finale deve
+riportare i valori effettivi della campagna.
+
+Il profilo pilota limita ogni worker a 0,25 CPU e 128 MiB, ogni gateway a
+0,08 CPU e 64 MiB, Kafka a 1 CPU e 2.048 MiB e il Global a 0,50 CPU e 256 MiB.
+Le quote sono tetti di utilizzo, non core fisici riservati. Aumentare $W$
+aumenta il budget aggregato dei worker, ma la capacità dell'host rimane un
+vincolo. I template locali utilizzano Apache Kafka 4.3.0; il manifest delle
+immagini identifica il software effettivamente distribuito.
+
+Lo script \code{prepare-pilot.sh} prepara la release; \code{run-experiment.sh}
+coordina readiness, stabilizzazione del gruppo, avvio comune, attesa degli EOS
+e raccolta degli artefatti. I risultati includono configurazione effettiva,
+hash di provenienza, log, statistiche dei container e offset Kafka. Un
+collector Go dedicato legge gli offset senza entrare nei consumer group;
+le sue risorse restano separate da quelle del broker. I riepiloghi sono
+prodotti da script Python. Il notebook offline usa pandas, NumPy,
+scikit-learn, pyproj e Matplotlib; Bash, Docker Compose e Terraform supportano
+preparazione e deployment. Non è richiesto un framework di stream processing
+esterno: windowing e finalizzazione sono implementati nel codice Go.

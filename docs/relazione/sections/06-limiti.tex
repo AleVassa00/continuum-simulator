@@ -1,0 +1,59 @@
+\section{Limitazioni e discussione}
+\label{sec:limiti}
+\subsection{Persistenza e guasti}
+La persistenza del log Kafka non implica il ripristino dello stato delle
+finestre. Worker e Global mantengono gli aggregati in RAM e committano gli
+offset dopo ogni elaborazione; non esiste un checkpoint coordinato fra
+offset e stato. Un crash può quindi perdere contributi già consumati e
+committati, che non verrebbero riletti al riavvio. Non è garantita una
+semantica exactly-once end-to-end. Il sink PostgreSQL finale non è uno
+state store degli aggregatori.
+
+Per questo motivo un rebalance dopo l'inizio dell'elaborazione invalida la
+run; il worker rifiuta inoltre la ripartenza da offset già committati.
+Le repliche devono essere pronte prima del replay e restare stabili fino al
+termine. Un errore richiede una nuova esecuzione completa con topic e offset
+puliti. Il broker Kafka è singolo, con fattore di replica uno: gli
+acknowledgment richiesti non realizzano alta disponibilità. La tolleranza ai
+guasti non è il requisito individuale selezionato.
+
+\subsection{Completezza, carico e rappresentatività}
+QoS 0 e code limitate possono perdere telemetria. Il protocollo EOS certifica
+il completamento del flusso accettato dai componenti, non il recupero degli
+eventi persi a monte. Le run senza perdite devono quindi essere identificate
+tramite riconciliazione dei contatori e controlli sui risultati. Negli
+esperimenti di saturazione o rete degradata le perdite sono a loro volta
+un risultato da riportare; un throughput apparentemente stabile ottenuto
+scartando dati non soddisfa il requisito di scalabilità.
+
+L'attesa di tutte le sorgenti evita risultati prematuri ma può trattenere
+finestre in memoria quando un Edge non avanza. Un timeout del runner
+interrompe una prova incompleta senza autorizzare il Global a ignorare la
+sorgente. Non sono implementati checkpoint, migrazione dello stato o una
+politica di esclusione dinamica degli Edge.
+
+% Bilanciamento manuale dell'ultima pagina della bozza; rimuovere se cambia il testo.
+\newpage
+Il workload bilancia i sensori per zona e riguarda un solo tipo di dispositivo
+in un solo mese. Le medie sono pesate per numero di campioni validi: sensori
+più frequenti contribuiscono maggiormente. I risultati non possono essere
+generalizzati automaticamente ad altri dataset, algoritmi più costosi o
+installazioni geograficamente distribuite. Inoltre, la condivisione degli
+host e i limiti per container introducono contesa; la scalabilità delle
+repliche entro un host non dimostra un'illimitata capacità di espansione.
+
+\section{Conclusioni}
+L'applicazione realizza una pipeline Edge--Cloud in Go con validazione locale,
+aggregazione gerarchica e comunicazione persistente nei passaggi Kafka. La
+separazione fra partizioni logiche ed esecutori mantiene invariato il
+significato degli output al variare delle repliche. Progresso ed EOS
+permettono di concludere le finestre soltanto quando ogni contributo è
+determinato, includendo le sorgenti senza dati.
+
+Le verifiche funzionali e gli artefatti preliminari forniscono una base per
+la valutazione, ma non consentono ancora di concludere che la scalabilità
+richiesta sia dimostrata. Il completamento del lavoro richiede una campagna
+EC2 valida e ripetuta, l'analisi dei tempi di disponibilità dei risultati e
+la valutazione di latenza e banda emulate. Le conclusioni quantitative
+dovranno essere aggiornate dopo tali esperimenti, conservando espliciti i
+limiti dello stato volatile e della telemetria con possibili perdite.
