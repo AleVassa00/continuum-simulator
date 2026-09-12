@@ -13,13 +13,13 @@ import (
 )
 
 type CloudWorkerConfig struct {
-	Membership  map[int][]string
-	KafkaBroker string
-	InputTopic  string
-	OutputTopic string
-	GroupID     string
-	WorkerID    string
-	WindowSize  time.Duration
+	KafkaBroker    string
+	InputTopic     string
+	OutputTopic    string
+	GroupID        string
+	WorkerID       string
+	WindowSize     time.Duration
+	WatermarkDelay time.Duration
 }
 
 func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
@@ -37,19 +37,19 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	if err != nil || count != model.SourcePartitionCount {
 		return CloudWorkerConfig{}, fmt.Errorf("SOURCE_PARTITION_COUNT must be 6")
 	}
-	membership, err := cloudworker.BuildMembership(strings.Split(os.Getenv("CLOUD_EXPECTED_EDGE_IDS"), ","))
+	watermarkDelay, err := loadCloudWatermarkDelay()
 	if err != nil {
 		return CloudWorkerConfig{}, err
 	}
 
 	return CloudWorkerConfig{
-		Membership:  membership,
-		KafkaBroker: kafkaBroker,
-		InputTopic:  inputTopic,
-		OutputTopic: outputTopic,
-		GroupID:     groupID,
-		WorkerID:    workerID,
-		WindowSize:  windowSize,
+		KafkaBroker:    kafkaBroker,
+		InputTopic:     inputTopic,
+		OutputTopic:    outputTopic,
+		GroupID:        groupID,
+		WorkerID:       workerID,
+		WindowSize:     windowSize,
+		WatermarkDelay: watermarkDelay,
 	}, nil
 }
 
@@ -59,7 +59,7 @@ func loadCloudWindowSize() (
 ) {
 	value := envutil.OrDefault(
 		"CLOUD_WINDOW_SIZE",
-		"15m",
+		cloudworker.DefaultWindowSize.String(),
 	)
 
 	windowSize, err := time.ParseDuration(
@@ -82,6 +82,18 @@ func loadCloudWindowSize() (
 	}
 
 	return windowSize, nil
+}
+
+func loadCloudWatermarkDelay() (time.Duration, error) {
+	value := envutil.OrDefault("CLOUD_WATERMARK_DELAY", cloudworker.DefaultWatermarkDelay.String())
+	delay, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid CLOUD_WATERMARK_DELAY %q: %w", value, err)
+	}
+	if delay < 0 {
+		return 0, fmt.Errorf("CLOUD_WATERMARK_DELAY must be nonnegative")
+	}
+	return delay, nil
 }
 
 func loadInputTopic() string {

@@ -20,7 +20,7 @@ func TestGlobalAcceptsOnlyPartitionContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, msg := range []kafka.Message{
-		{Key: []byte("edge-0"), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEndOfReplay)}}},
+		{Key: []byte("0"), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeSourcePartitionEndOfInput)}}},
 		{Key: []byte("1"), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypePartitionProgress)}}},
 		{Key: []byte("6"), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypePartitionEndOfReplay)}}},
 	} {

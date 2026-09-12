@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ type EdgeConfig struct {
 	KafkaTopic           string
 	WindowSize           time.Duration
 	IngressQueueCapacity int
+	CompletionURL        string
 }
 
 func loadEdgeConfig() (EdgeConfig, error) {
@@ -51,6 +53,15 @@ func loadEdgeConfig() (EdgeConfig, error) {
 		return EdgeConfig{}, err
 	}
 
+	completionURL := strings.TrimSpace(os.Getenv("EDGE_COMPLETION_URL"))
+	if completionURL == "" {
+		completionURL = "http://partition-coordinator:8081/completed"
+	}
+	endpoint, err := url.Parse(completionURL)
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil {
+		return EdgeConfig{}, fmt.Errorf("EDGE_COMPLETION_URL must be an HTTP(S) endpoint without credentials")
+	}
+
 	return EdgeConfig{
 		EdgeID:               edgeID,
 		MQTTBroker:           mqttBroker,
@@ -58,6 +69,7 @@ func loadEdgeConfig() (EdgeConfig, error) {
 		KafkaTopic:           kafkaTopic,
 		WindowSize:           windowSize,
 		IngressQueueCapacity: ingressCapacity,
+		CompletionURL:        completionURL,
 	}, nil
 }
 

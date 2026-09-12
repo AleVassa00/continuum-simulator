@@ -61,9 +61,10 @@ type composeEdge struct {
 type composeTemplateData struct {
 	ExperimentName string
 
-	CloudWorkers    []composeCloudWorker
-	CloudWindowSize string
-	ExpectedEdgeIDs string
+	CloudWorkers        []composeCloudWorker
+	CloudWindowSize     string
+	CloudWatermarkDelay string
+	ExpectedEdgeIDs     string
 
 	Edges                    []composeEdge
 	EdgeWindowSize           string
@@ -475,9 +476,10 @@ func buildCompose(edges []EdgeDeployment, config experiment.EffectiveConfig) str
 	data := composeTemplateData{
 		ExperimentName: config.Experiment.Name,
 
-		CloudWorkers:    cloudWorkers,
-		CloudWindowSize: config.Cloud.WindowSize.String(),
-		ExpectedEdgeIDs: expectedEdgeIDs,
+		CloudWorkers:        cloudWorkers,
+		CloudWindowSize:     config.Cloud.WindowSize.String(),
+		CloudWatermarkDelay: config.Cloud.ResolvedWatermarkDelay().String(),
+		ExpectedEdgeIDs:     expectedEdgeIDs,
 
 		Edges:                    composeEdges,
 		EdgeWindowSize:           config.Edge.WindowSize.String(),
@@ -500,9 +502,10 @@ func buildDistributedComposes(edges []EdgeDeployment, config experiment.Config) 
 	data := composeTemplateData{
 		ExperimentName: config.Experiment.Name,
 
-		CloudWorkers:    cloudWorkers,
-		CloudWindowSize: config.Cloud.WindowSize.String(),
-		ExpectedEdgeIDs: expectedEdgeIDs,
+		CloudWorkers:        cloudWorkers,
+		CloudWindowSize:     config.Cloud.WindowSize.String(),
+		CloudWatermarkDelay: config.Cloud.ResolvedWatermarkDelay().String(),
+		ExpectedEdgeIDs:     expectedEdgeIDs,
 
 		Edges:                    composeEdges,
 		EdgeWindowSize:           config.Edge.WindowSize.String(),

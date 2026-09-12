@@ -46,9 +46,9 @@ func runEdgeLoop(ingress *EdgeIngress, aggregator *WindowAggregator, output chan
 				}
 			}
 
-			if err := emitEdgeOutput(output, egressStopped, EdgeOutputRecord{Kind: EdgeOutputEndOfReplay}); err != nil {
-				return err
-			}
+			// Simulator EOS only: the Kafka stream contains data, never per-Edge EOS.
+			// runEdge reports completion only after the Kafka egress has drained.
+			stats.endOfReplayProcessed.Add(1)
 
 			return nil
 

@@ -12,6 +12,12 @@ import (
 )
 
 // ParseRecordType estrae il tipo di record dagli header di un messaggio Kafka.
+// PartitionForEdge is used by orchestration, never by Cloud window completeness.
+// It must match the Edge writer's kafka.Hash balancer on the fixed six partitions.
+func PartitionForEdge(edgeID string) int {
+	return (&kafka.Hash{}).Balance(kafka.Message{Key: []byte(edgeID)}, 0, 1, 2, 3, 4, 5)
+}
+
 func ParseRecordType(headers []kafka.Header) (string, error) {
 	var recordType string
 

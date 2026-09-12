@@ -7,6 +7,7 @@ import (
 	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 	"fmt"
+	"log/slog"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -16,10 +17,6 @@ type CloudMessageProcessor struct {
 	outputTopic    string
 	workerID       string
 	publishMessage KafkaMessagePublisher
-}
-
-func (p *CloudMessageProcessor) Initialize(ctx context.Context) error {
-	return p.publishOutput(ctx, p.aggregator.Initialize())
 }
 
 func (p *CloudMessageProcessor) Process(ctx context.Context, message kafka.Message) error {
@@ -38,16 +35,30 @@ func (p *CloudMessageProcessor) Process(ctx context.Context, message kafka.Messa
 			return fmt.Errorf("Kafka key does not match EdgeAggregate edge_id")
 		}
 		out, err = p.aggregator.Add(message.Partition, input)
-	case model.RecordTypeEndOfReplay:
+	case model.RecordTypeSourcePartitionEndOfInput:
 		if len(message.Value) != 0 {
-			return fmt.Errorf("Edge EOS must have empty payload")
+			return fmt.Errorf("source partition EOS must have empty payload")
 		}
-		out, err = p.aggregator.EndEdge(message.Partition, string(message.Key))
+		partition, keyErr := model.ParsePartitionKey(message.Key)
+		if keyErr != nil {
+			return keyErr
+		}
+		if partition != message.Partition || string(message.Key) != model.PartitionKey(partition) {
+			return fmt.Errorf("source partition EOS key does not match actual partition %d", message.Partition)
+		}
+		out, err = p.aggregator.EndPartitionInput(message.Partition)
 	default:
 		return fmt.Errorf("unexpected Cloud record_type %q", kind)
 	}
 	if err != nil {
 		return err
+	}
+	if late := out.Late; late != nil {
+		slog.WarnContext(ctx, "CLOUD_LATE_RECORD_DROPPED",
+			"worker", p.workerID, "source_partition", out.SourcePartition,
+			"offset", message.Offset, "aggregate_id", late.AggregateID, "edge_id", late.EdgeID,
+			"events", late.Events,
+			"cloud_window_end", late.CloudWindowEnd, "watermark", late.Watermark)
 	}
 	return p.publishOutput(ctx, out)
 }

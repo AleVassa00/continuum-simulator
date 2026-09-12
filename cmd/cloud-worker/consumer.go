@@ -43,7 +43,9 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 		}
 		if err != nil {
 
-			if !processed.Load() && errors.Is(err, kafka.RebalanceInProgress) {
+			// A fresh broker may still be initializing __consumer_offsets. Retrying
+			// group setup is safe only before any source input has been processed.
+			if !processed.Load() && (errors.Is(err, kafka.RebalanceInProgress) || errors.Is(err, kafka.GroupCoordinatorNotAvailable)) {
 				continue
 			}
 			return err
@@ -90,16 +92,13 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 
 	for _, assignment := range gen.Assignments[config.InputTopic] {
 
-		a, err := cloudworker.NewPartitionAggregator(assignment.ID, config.Membership[assignment.ID], config.WindowSize)
+		a, err := cloudworker.NewPartitionAggregator(assignment.ID, config.WindowSize, config.WatermarkDelay)
 		if err != nil {
 			return err
 		}
 
 		p := &CloudMessageProcessor{aggregator: a, workerID: config.WorkerID, outputTopic: config.OutputTopic, publishMessage: publish}
 		processors[assignment.ID] = p
-		if err := p.Initialize(ctx); err != nil {
-			return err
-		}
 
 		reader := kafka.NewReader(kafka.ReaderConfig{
 			Brokers: []string{config.KafkaBroker}, Topic: config.InputTopic, Partition: assignment.ID,

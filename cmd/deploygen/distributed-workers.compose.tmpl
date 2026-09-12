@@ -13,7 +13,7 @@ services:
       KAFKA_OUTPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "cloud-workers"
       CLOUD_WINDOW_SIZE: "{{$.CloudWindowSize}}"
-      CLOUD_EXPECTED_EDGE_IDS: "{{$.ExpectedEdgeIDs}}"
+      CLOUD_WATERMARK_DELAY: "{{$.CloudWatermarkDelay}}"
       SOURCE_PARTITION_COUNT: "6"
       WORKER_ID: "{{.WorkerID}}"
 

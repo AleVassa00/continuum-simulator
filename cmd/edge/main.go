@@ -31,7 +31,11 @@ func runEdge() error {
 	stats := &EdgeStats{}
 
 	kafkaWriter := newKafkaWriter(config.KafkaBroker, config.KafkaTopic)
+	writerClosed := false
 	defer func() {
+		if writerClosed {
+			return
+		}
 		if err := kafkaWriter.Close(); err != nil {
 			fmt.Printf(
 				"%s: errore chiusura Kafka writer: %v\n",
@@ -77,5 +81,21 @@ func runEdge() error {
 
 	printEdgeSummary(config.EdgeID, stats.SnapshotWithQueue(ingress))
 	printEdgeStatsJSON(config.EdgeID, stats.SnapshotWithQueue(ingress))
-	return pipelineErr
+	if pipelineErr != nil {
+		return pipelineErr
+	}
+	if stats.endOfReplayProcessed.Load() != 1 {
+		return fmt.Errorf("Edge %s stopped without Simulator EOS; no completion notified", config.EdgeID)
+	}
+	// All synchronous WriteMessages calls have succeeded and the producer is closed
+	// before control-plane completion can authorize a source-partition terminal marker.
+	writerClosed = true
+	if err := kafkaWriter.Close(); err != nil {
+		return fmt.Errorf("Edge %s: Kafka writer close failed: %w", config.EdgeID, err)
+	}
+	if err := notifyEdgeCompletion(context.Background(), config.CompletionURL, config.EdgeID); err != nil {
+		return err
+	}
+	fmt.Printf("EDGE_PRODUCTION_COMPLETED edge=%s\n", config.EdgeID)
+	return nil
 }

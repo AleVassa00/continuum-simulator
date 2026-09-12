@@ -67,8 +67,10 @@ type GlobalAggregate struct {
 }
 
 // PartitionProgress certifies that all nonempty partials ending at or before
-// CompleteThrough have already been published on the same ordered stream.
-// Missing partials in that range are therefore zero contributions.
+// CompleteThrough (the source partition event-time watermark) have already been
+// published on the same ordered stream. Later arrivals for those closed windows
+// are dropped by Cloud. Missing partials therefore mean zero accepted contribution,
+// not proof that every original Edge event has arrived.
 type PartitionProgress struct {
 	SourcePartition int
 	CompleteThrough time.Time

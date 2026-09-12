@@ -12,6 +12,7 @@ import (
 	"continuum/internal/avrocodec"
 	"continuum/internal/cloudworker"
 	"continuum/internal/globalaggregator"
+	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 
 	"github.com/segmentio/kafka-go"
@@ -55,13 +56,9 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 				for e := 0; e < edgeCount; e++ {
 					ids = append(ids, fmt.Sprintf("edge-%d", e))
 				}
-				membership, err := cloudworker.BuildMembership(ids)
-				if err != nil {
-					t.Fatal(err)
-				}
 				done := make(chan error, workers)
 				for w := 0; w < workers; w++ {
-					cfg := CloudWorkerConfig{KafkaBroker: broker, InputTopic: input, OutputTopic: output, GroupID: group, WorkerID: fmt.Sprintf("executor-%d", w), WindowSize: 15 * time.Minute, Membership: membership}
+					cfg := CloudWorkerConfig{KafkaBroker: broker, InputTopic: input, OutputTopic: output, GroupID: group, WorkerID: fmt.Sprintf("executor-%d", w), WindowSize: cloudworker.DefaultWindowSize, WatermarkDelay: cloudworker.DefaultWatermarkDelay}
 					go func() {
 						writer := newKafkaWriter(broker, output)
 						writer.Transport = transport
@@ -117,19 +114,28 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 				producer.Transport = transport
 				defer producer.Close()
 				wantOffsets := make([]int64, 6)
-				for e, id := range ids {
-					for minute := 0; minute < 35; minute += 5 {
+				for minute := 0; minute < 35; minute += 5 {
+					for e, id := range ids {
 						m := edgeInput(t, id, minute, uint64(e+1))
 						if err := producer.WriteMessages(ctx, m); err != nil {
 							t.Fatal(err)
 						}
 						wantOffsets[m.Partition]++
 					}
-					m := edgeEOS(id)
-					if err := producer.WriteMessages(ctx, m); err != nil {
+				}
+				// Source EOS uses the decimal partition key but must be routed to
+				// that actual partition, independently of the Edge Hash balancer.
+				// All Edge writes have completed before any partition is ended.
+				eosProducer := newKafkaWriter(broker, input)
+				eosProducer.Transport = transport
+				eosProducer.Balancer = sourcePartitionBalancer{}
+				defer eosProducer.Close()
+				for p := 0; p < model.SourcePartitionCount; p++ {
+					m := sourceEOS(p)
+					if err := eosProducer.WriteMessages(ctx, m, m); err != nil {
 						t.Fatal(err)
 					}
-					wantOffsets[m.Partition]++
+					wantOffsets[p] += 2
 				}
 				var globals []model.GlobalAggregate
 				g, err := globalaggregator.New(func(_ context.Context, a model.GlobalAggregate) error {
@@ -162,13 +168,11 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				activePartitions := 0
-				for _, members := range membership {
-					if len(members) > 0 {
-						activePartitions++
-					}
+				activePartitions := map[int]bool{}
+				for _, id := range ids {
+					activePartitions[kafkautil.PartitionForEdge(id)] = true
 				}
-				if len(partials) != 3*activePartitions || len(globals) != 3 {
+				if len(partials) != 3*len(activePartitions) || len(globals) != 3 {
 					t.Fatalf("partials=%d globals=%d", len(partials), len(globals))
 				}
 				var events uint64
@@ -185,7 +189,7 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					t.Fatal("Global results depend on worker count")
 				}
 				// EOS publication precedes commit: wait for the broker to confirm
-				// the exact NEXT offset of every populated input partition.
+				// the exact NEXT offset of every input partition, including empty ones.
 				pollKafka(t, ctx, func() bool {
 					r, err := client.OffsetFetch(ctx, &kafka.OffsetFetchRequest{GroupID: group, Topics: map[string][]int{input: {0, 1, 2, 3, 4, 5}}})
 					if err != nil || r.Error != nil || len(r.Topics[input]) != 6 {
@@ -196,7 +200,7 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 							return false
 						}
 						want := wantOffsets[p.Partition]
-						if want > 0 && p.CommittedOffset != want {
+						if p.CommittedOffset != want {
 							return false
 						}
 					}
@@ -205,6 +209,17 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 			})
 		}
 	}
+}
+
+type sourcePartitionBalancer struct{}
+
+func (sourcePartitionBalancer) Balance(message kafka.Message, partitions ...int) int {
+	for _, partition := range partitions {
+		if partition == message.Partition {
+			return partition
+		}
+	}
+	panic(fmt.Sprintf("source EOS partition %d unavailable", message.Partition))
 }
 
 func pollKafka(t *testing.T, ctx context.Context, ready func() bool) {

@@ -44,6 +44,7 @@ def fixture(root):
               "end_of_replay_processed": 1, "max_ingress_queue_utilization_pct": 20} for i in range(2)]
     for role, marker, rows in (("simulator", "SIMULATOR_STATS", simulators), ("edge", "EDGE_STATS", edges)):
         (root / "logs" / f"{role}.log").write_text("\n".join(marker + " " + json.dumps(row) for row in rows), encoding="utf-8")
+    (root / "logs/workers.log").write_text("", encoding="utf-8")
     metric = {"valid": 2, "invalid": 0, "sum": 10, "average": 5, "min": 5, "max": 5}
     windows = [{"aggregate_id": f"global-{i}", "window_start": f"2025-01-01T00:{i*15:02}:00Z",
                 "window_end": f"2025-01-01T00:{(i+1)*15:02}:00Z", "emitted_at": "2026-09-07T00:00:01Z",
@@ -125,6 +126,62 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["quality_status"], "fail")
         self.assertEqual(result["offered_minus_global_events"], 2)
+
+    def late_line(self, events=2, offset=9):
+        return (f'2026-09-07T00:00:01Z WARN CLOUD_LATE_RECORD_DROPPED worker=cloud-worker-0 '
+                f'source_partition=0 offset={offset} aggregate_id="late-0" edge_id=edge-0 events={events} '
+                'cloud_window_end=2025-01-01T00:15:00Z watermark=2025-01-01T00:20:00Z\n')
+
+    def reduce_global_events(self):
+        path = self.root / "logs/cloud-core.log"
+        path.write_text(path.read_text().replace('"events": 2', '"events": 1'), encoding="utf-8")
+
+    def test_expected_late_discards_are_reported_and_quality_passes(self):
+        self.reduce_global_events()
+        (self.root / "logs/workers.log").write_text(self.late_line(), encoding="utf-8")
+        result = artifacts.summarize(self.root)
+        self.assertEqual(result["quality_status"], "pass")
+        self.assertEqual(result["offered_minus_global_events"], 2)
+        self.assertEqual(result["processed_minus_global_events"], 2)
+        self.assertEqual(result["cloud_late_aggregates_total"], 1)
+        self.assertEqual(result["cloud_late_events_total"], 2)
+        self.assertEqual(result["processed_minus_global_and_late_events"], 0)
+        self.assertEqual(result["conservation_status"], "balanced_assuming_no_accepted_replays")
+        process = subprocess.run([sys.executable, str(Path(artifacts.__file__)), str(self.root)], capture_output=True, text=True)
+        self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_repeated_late_ids_do_not_expand_loss_allowance(self):
+        self.reduce_global_events()
+        path = self.root / "logs/workers.log"
+        path.write_text(self.late_line(events=1) + self.late_line(events=1, offset=10), encoding="utf-8")
+        result = artifacts.summarize(self.root)
+        self.assertEqual(result["cloud_late_event_attempts_total"], 2)
+        self.assertEqual(result["cloud_late_events_total"], 1)
+        self.assertEqual(result["processed_minus_global_and_late_events"], 1)
+        self.assertEqual(result["quality_status"], "fail")
+        path.write_text(self.late_line() + self.late_line(offset=10), encoding="utf-8")
+        result = artifacts.summarize(self.root)
+        self.assertEqual(result["quality_status"], "pass")
+        self.assertEqual(result["cloud_late_events_total"], 2)
+        self.assertEqual(result["conservation_status"], "unverified_duplicate_late")
+
+    def test_accepted_replay_does_not_claim_more_lost_events_than_gap(self):
+        (self.root / "logs/workers.log").write_text(self.late_line(), encoding="utf-8")
+        result = artifacts.summarize(self.root)
+        self.assertEqual(result["processed_minus_global_and_late_events"], -2)
+        self.assertEqual(result["quality_status"], "fail")
+        self.assertEqual(result["conservation_status"], "mismatch")
+
+    def test_late_evidence_must_be_complete_and_consistent(self):
+        path = self.root / "logs/workers.log"
+        for log in (self.late_line().replace("events=2 ", ""),
+                    self.late_line() + self.late_line(events=1)):
+            path.write_text(log, encoding="utf-8")
+            with self.assertRaises(ValueError):
+                artifacts.summarize(self.root)
+        path.unlink()
+        with self.assertRaises(OSError):
+            artifacts.summarize(self.root)
 
     def test_duplicate_stats_rejected(self):
         path = self.root / "logs/edge.log"

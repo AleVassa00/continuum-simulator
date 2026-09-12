@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Export AWS run artifacts using only the Python standard library.
 
-Exit 0: complete measurements and loss-free run; 2: measured but fails quality
+Exit 0: complete measurements and policy-accounted run (may discard late data);
+2: measured but fails quality
 checks; 1: missing/malformed measurements. Never turn missing data into zeros.
 """
 import argparse
@@ -11,6 +12,7 @@ import json
 import math
 from pathlib import Path
 import re
+import shlex
 import statistics
 
 
@@ -54,6 +56,41 @@ def unique_sites(rows, expected, label):
     ids = [row["edge_id"] for row in rows]
     if len(ids) != len(set(ids)) or set(ids) != set(expected):
         raise ValueError(f"{label}: expected one row per site {sorted(expected)}, got {ids}")
+
+
+def late_records(text, expected):
+    """Deduplicate late aggregate IDs, never use retry attempts as a loss allowance.
+
+    Closed-window state is evicted by Cloud. Its late logs cannot distinguish a
+    previously accepted aggregate replay from a first-time discard. Conservation
+    using these IDs therefore assumes no previously accepted replays; repeated
+    late IDs are reported explicitly as ambiguous evidence, not extra losses.
+    """
+    marker = "CLOUD_LATE_RECORD_DROPPED"
+    unique = {}
+    attempts = events = 0
+    for line in text.splitlines():
+        if marker not in line:
+            continue
+        fields = dict(token.split("=", 1) for token in shlex.split(line.split(marker, 1)[1]) if "=" in token)
+        required = ("worker", "source_partition", "offset", "aggregate_id", "edge_id", "events", "cloud_window_end", "watermark")
+        if any(not fields.get(key) for key in required):
+            raise ValueError("Late record missing required fields (including events)")
+        row = {key: fields[key] for key in required}
+        for key in ("events", "source_partition", "offset"):
+            row[key] = int(row[key])
+        if row["events"] <= 0 or not 0 <= row["source_partition"] < 6 or row["offset"] < 0 or row["edge_id"] not in expected:
+            raise ValueError(f"Invalid late record: {row}")
+        # slog renders time.Time in RFC3339; reject malformed evidence.
+        timestamp(row["cloud_window_end"])
+        timestamp(row["watermark"])
+        previous = unique.get(row["aggregate_id"])
+        if previous and any(previous[key] != row[key] for key in ("edge_id", "events", "source_partition", "cloud_window_end")):
+            raise ValueError(f"Conflicting late aggregate ID: {row['aggregate_id']}")
+        unique.setdefault(row["aggregate_id"], row)
+        attempts += 1
+        events += row["events"]
+    return list(unique.values()), attempts, events
 
 
 def number_unit(value):
@@ -162,10 +199,11 @@ def summarize(directory):
         raise ValueError("Acceleration must be finite and positive")
     start = timestamp(metadata["replay_start_at"])
     logs = {role: (directory / "logs" / f"{role}.log").read_text(encoding="utf-8-sig")
-            for role in ("simulator", "edge", "cloud-core")}
+            for role in ("simulator", "edge", "cloud-core", "workers")}
     simulators = records(logs["simulator"], "SIMULATOR_STATS")
     edges = records(logs["edge"], "EDGE_STATS")
     globals_ = records(logs["cloud-core"], "GLOBAL_AGGREGATE")
+    late, late_attempts, late_event_attempts = late_records(logs["workers"], expected)
     unique_sites(simulators, expected, "SIMULATOR_STATS")
     unique_sites(edges, expected, "EDGE_STATS")
     if not globals_:
@@ -203,6 +241,21 @@ def summarize(directory):
     summary["global_events_total"] = sum(row["events"] for row in globals_)
     summary["offered_minus_global_events"] = summary["simulator_offered_total"] - summary["global_events_total"]
     summary["processed_minus_global_events"] = summary["edge_processed_total"] - summary["global_events_total"]
+    summary["cloud_late_aggregates_total"] = len(late)
+    summary["cloud_late_events_total"] = sum(row["events"] for row in late)
+    summary["cloud_late_record_attempts_total"] = late_attempts
+    summary["cloud_late_event_attempts_total"] = late_event_attempts
+    summary["cloud_late_duplicate_logs_total"] = late_attempts - len(late)
+    summary["offered_minus_global_and_late_events"] = summary["offered_minus_global_events"] - summary["cloud_late_events_total"]
+    summary["processed_minus_global_and_late_events"] = summary["processed_minus_global_events"] - summary["cloud_late_events_total"]
+    summary["conservation_status"] = (
+        "mismatch" if summary["processed_minus_global_and_late_events"] != 0 else
+        "unverified_duplicate_late" if summary["cloud_late_duplicate_logs_total"] else
+        "balanced_assuming_no_accepted_replays" if late else "balanced")
+    summary["conservation_assumption"] = (
+        "Unique late IDs were not already accepted before window closure; current logs cannot verify this. "
+        "Quality pass permits reported late discards and does not imply all original events reached Global."
+        if late else "")
     summary["global_windows_total"] = len(globals_)
     summary["global_duplicate_ids_total"] = len(globals_) - len({row["aggregate_id"] for row in globals_})
     summary["global_incomplete_windows_total"] = sum(row["contributing_partitions"] != 6 or
@@ -210,7 +263,7 @@ def summarize(directory):
     summary["global_protocol_errors_total"] = logs["cloud-core"].count("global protocol error")
     for key in ("simulator_locally_dropped_total", "simulator_mqtt_errors_total", "simulator_eos_failures_total",
                 "edge_ingress_queue_dropped_total", "edge_invalid_total", "edge_out_of_order_dropped_total",
-                "edge_post_eos_dropped_total", "offered_minus_global_events", "processed_minus_global_events",
+                "edge_post_eos_dropped_total", "offered_minus_global_and_late_events", "processed_minus_global_and_late_events",
                 "global_duplicate_ids_total", "global_incomplete_windows_total", "global_protocol_errors_total"):
         if summary[key] != 0:
             failures.append(key)
@@ -276,6 +329,8 @@ def summarize(directory):
     summary["quality_failures"] = ";".join(failures)
     write_csv(directory / "simulator-stats.csv", simulators)
     write_csv(directory / "edge-stats.csv", edges)
+    write_csv(directory / "cloud-late-aggregates.csv", late,
+              ["worker", "source_partition", "offset", "aggregate_id", "edge_id", "events", "cloud_window_end", "watermark"])
     write_csv(directory / "global-windows.csv", window_rows)
     write_csv(directory / "container-stats.csv", container_summary,
               ["role", "container", "samples", "cpu_avg_pct", "cpu_max_pct", "memory_avg_mib", "memory_max_mib"])

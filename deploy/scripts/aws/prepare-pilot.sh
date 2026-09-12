@@ -91,14 +91,14 @@ calculate_source_sha256() {
 
 load_resource_profile() {
   local line key value prefix suffix
-  local -a prefixes=(SIMULATOR EDGE MQTT CLOUD_WORKER KAFKA KAFKA_INIT GLOBAL)
+  local -a prefixes=(SIMULATOR EDGE MQTT CLOUD_WORKER KAFKA KAFKA_INIT GLOBAL COORDINATOR)
   declare -A values=()
   RESOURCE_PROFILE_PATH="$(resolve_file "${RESOURCE_PROFILE_INPUT}")" ||
     die "resource profile non trovato: ${RESOURCE_PROFILE_INPUT}"
   while IFS= read -r line || [[ -n "${line}" ]]; do
     line="${line%$'\r'}"
     [[ -z "${line}" || "${line}" == \#* ]] && continue
-    [[ "${line}" =~ ^(SIMULATOR|EDGE|MQTT|CLOUD_WORKER|KAFKA|KAFKA_INIT|GLOBAL)_(CPUS|MEMORY)=([0-9.mMgG]+)$ ]] ||
+    [[ "${line}" =~ ^(SIMULATOR|EDGE|MQTT|CLOUD_WORKER|KAFKA|KAFKA_INIT|GLOBAL|COORDINATOR)_(CPUS|MEMORY)=([0-9.mMgG]+)$ ]] ||
       die "resource profile: ammesse solo assegnazioni numeriche CPUS/MEMORY note"
     key="${line%%=*}"
     value="${line#*=}"
@@ -112,6 +112,9 @@ load_resource_profile() {
     fi
     values["${key}"]="${value}"
   done <"${RESOURCE_PROFILE_PATH}"
+  # Older profiles remain valid; explicit coordinator limits override these defaults.
+  values[COORDINATOR_CPUS]="${values[COORDINATOR_CPUS]:-0.1}"
+  values[COORDINATOR_MEMORY]="${values[COORDINATOR_MEMORY]:-64m}"
   RESOURCE_PROFILE_VALUES=""
   for prefix in "${prefixes[@]}"; do
     for suffix in CPUS MEMORY; do
@@ -436,8 +439,9 @@ stage_role() {
       cp "${REPO_ROOT}/deploy/compose/distributed/workers.generated.yml" "${destination}/deploy/compose/distributed/"
       ;;
     edge)
-      copy_internal_packages "${destination}" avrocodec model mqtttopic
+      copy_internal_packages "${destination}" avrocodec model mqtttopic partitioncompletion kafkautil envutil
       cp -R "${REPO_ROOT}/cmd/edge" "${destination}/cmd/edge"
+      cp -R "${REPO_ROOT}/cmd/partition-coordinator" "${destination}/cmd/partition-coordinator"
       cp "${REPO_ROOT}/deploy/docker/edge.Dockerfile" "${destination}/deploy/docker/"
       cp "${REPO_ROOT}/deploy/compose/distributed/edge.generated.yml" "${destination}/deploy/compose/distributed/"
       mkdir -p "${destination}/deploy/mosquitto"

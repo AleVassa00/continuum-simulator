@@ -37,8 +37,10 @@ class ShellTests(unittest.TestCase):
                             'printf "%s" "$RESOURCE_PROFILE_VALUES"; calculate_source_sha256')
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines()
-        self.assertEqual(len(lines), 15)
+        self.assertEqual(len(lines), 17)
         self.assertIn("CLOUD_WORKER_CPUS=0.25", lines)
+        self.assertIn("COORDINATOR_CPUS=0.1", lines)
+        self.assertIn("COORDINATOR_MEMORY=64m", lines)
         self.assertRegex(lines[-1], r"^[0-9a-f]{64}$")
 
     def test_invalid_profiles_rejected_without_execution(self):
@@ -57,6 +59,17 @@ class ShellTests(unittest.TestCase):
                                 RESOURCE_PROFILE=path.as_posix())
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("manca EDGE_MEMORY", result.stderr)
+
+    def test_coordinator_profile_overrides(self):
+        original = (REPO / "deploy/resources/aws-pilot.env").read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.env"
+            path.write_text(original + "\nCOORDINATOR_CPUS=0.15\nCOORDINATOR_MEMORY=96m\n", encoding="utf-8")
+            result = self.shell('source deploy/scripts/aws/prepare-pilot.sh; load_resource_profile; '
+                                'printf "%s" "$RESOURCE_PROFILE_VALUES"', RESOURCE_PROFILE=path.as_posix())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("COORDINATOR_CPUS=0.15", result.stdout)
+            self.assertIn("COORDINATOR_MEMORY=96m", result.stdout)
 
     def test_collector_once_and_failed_query(self):
         # Mock the Docker boundary, not the launcher's lifecycle or output.
@@ -170,6 +183,10 @@ validate_container_lifecycle "$MOCK_PHASE"
             ("after", "edge-0", "{{.RestartCount}}", "1"),
             ("after", "edge-0", "{{.State.OOMKilled}}", "true"),
             ("after", "mqtt-edge-0", "{{.State.Status}}", "exited"),
+            ("before", "partition-coordinator", "{{.State.Status}}", "exited"),
+            ("after", "partition-coordinator", "{{.RestartCount}}", "1"),
+            ("after", "partition-coordinator", "{{.State.OOMKilled}}", "true"),
+            ("after", "partition-coordinator", "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", "unhealthy"),
         ):
             with self.subTest(phase=phase, field=field, value=value):
                 result = self.shell(command, MOCK_PHASE=phase, MOCK_TARGET=target,
@@ -244,7 +261,9 @@ class ComposeTests(unittest.TestCase):
             with self.subTest(workers=workers), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "dataset/output").mkdir(parents=True)
-                shutil.copyfile(REPO / "dataset/output/kmeans_topology.csv", root / "dataset/output/kmeans_topology.csv")
+                # Synthetic topology keeps deployment tests independent of datasets.
+                (root / "dataset/output/kmeans_topology.csv").write_text(
+                    "edge_id\n" + "".join(f"edge-{i}\n" for i in range(13)), encoding="utf-8")
                 (root / "experiment.yaml").write_text(original.replace("workers: 1", f"workers: {workers}"), encoding="utf-8")
                 result = subprocess.run([DEPLOYGEN, "-mode", "distributed", "-experiment", "experiment.yaml"],
                                         cwd=root, capture_output=True, text=True)
@@ -253,7 +272,7 @@ class ComposeTests(unittest.TestCase):
                 env = {**os.environ, "DEPLOYMENT_ID": "offline-check", "EDGE_HOST": "10.0.0.2",
                        "CLOUD_KAFKA_HOST": "10.0.0.3", "KAFKA_ADVERTISED_HOST": "10.0.0.3",
                        "REPLAY_START_AT": "2026-09-07T00:00:00Z"}
-                for role, count in (("simulator", 13), ("edge", 26), ("cloud-core", 3), ("workers", workers)):
+                for role, count in (("simulator", 13), ("edge", 27), ("cloud-core", 3), ("workers", workers)):
                     filename = f"{role}.generated.yml"
                     path = root / "deploy/compose/distributed" / filename
                     self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), manifest["compose_sha256"][filename])

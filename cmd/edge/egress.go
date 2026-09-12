@@ -15,7 +15,6 @@ type EdgeOutputKind byte
 
 const (
 	EdgeOutputAggregate EdgeOutputKind = iota
-	EdgeOutputEndOfReplay
 )
 
 type EdgeOutputRecord struct {
@@ -50,10 +49,6 @@ func (egress *KafkaEgress) Run() error {
 				return err
 			}
 
-		case EdgeOutputEndOfReplay:
-			if err := egress.publishEndOfReplay(); err != nil {
-				return err
-			}
 		default:
 			return fmt.Errorf("tipo Edge output sconosciuto: %d", record.Kind)
 		}
@@ -96,33 +91,6 @@ func (egress *KafkaEgress) publishAggregate(aggregate model.EdgeAggregate) error
 	)
 
 	egress.stats.aggregatesEmitted.Add(1)
-
-	return nil
-}
-
-func (egress *KafkaEgress) publishEndOfReplay() error {
-	headers := []kafka.Header{
-		{
-			Key:   model.RecordTypeHeader,
-			Value: []byte(model.RecordTypeEndOfReplay),
-		},
-	}
-
-	message := kafka.Message{
-		Key:     []byte(egress.edgeID),
-		Value:   []byte{},
-		Headers: headers,
-		Time:    time.Now().UTC(),
-	}
-
-	if err := egress.writer.WriteMessages(context.Background(), message); err != nil {
-		return fmt.Errorf("pubblicazione Kafka EndOfReplay edge=%s fallita: %w",
-			egress.edgeID,
-			err,
-		)
-	}
-
-	egress.stats.endOfReplayProcessed.Add(1)
 
 	return nil
 }

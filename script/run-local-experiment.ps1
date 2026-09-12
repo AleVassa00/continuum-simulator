@@ -145,6 +145,77 @@ function Get-ExperimentName {
     return $match.Groups[1].Value.Trim().Trim('"').Trim("'")
 }
 
+function Get-RunContainerState {
+    param([string]$Name)
+    $inspection = (& docker inspect --format '{{json .}}' $Name 2>$null) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw "Container $Name non trovato." }
+    $container = $inspection | ConvertFrom-Json
+    if ($container.RestartCount -ne 0 -or $container.State.OOMKilled) {
+        throw "Lifecycle non valido per $Name`: restart=$($container.RestartCount) OOM=$($container.State.OOMKilled)"
+    }
+    return $container.State
+}
+
+function Wait-RunContainerHealthy {
+    param([string]$Name, [int]$WaitSeconds = 300)
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $state = Get-RunContainerState -Name $Name
+        if ($state.Status -ne "running" -or $state.Health.Status -eq "unhealthy") {
+            throw "$Name non pronto: state=$($state.Status) health=$($state.Health.Status)"
+        }
+        if ($state.Health.Status -eq "healthy") { return }
+        Start-Sleep -Seconds 2
+    }
+    throw "Timeout readiness di $Name."
+}
+
+function Wait-CloudWorkerGroup {
+    param([int]$ExpectedWorkers, [int]$WaitSeconds = 300)
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $groupState = (& docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh `
+            --bootstrap-server kafka:29092 --describe --group cloud-workers --state 2>$null) -join "`n"
+        if ($LASTEXITCODE -eq 0) {
+            foreach ($line in ($groupState -split "`n")) {
+                $fields = $line.Trim() -split '\s+'
+                if ($fields.Count -ge 3 -and $fields[0] -eq "cloud-workers" -and
+                    $fields[-2] -eq "Stable" -and $fields[-1] -eq [string]$ExpectedWorkers) { return }
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw "Consumer group cloud-workers non Stable con $ExpectedWorkers membri."
+}
+
+function Get-PartitionCoordinatorStatus {
+    $state = Get-RunContainerState -Name "partition-coordinator"
+    if ($state.Status -ne "running" -or $state.Health.Status -ne "healthy") {
+        throw "partition-coordinator non running/healthy."
+    }
+    $response = (& docker exec partition-coordinator wget -q -T 5 -O - http://localhost:8081/status) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw "GET partition-coordinator/status fallita." }
+    $status = $response | ConvertFrom-Json
+    if ($status.complete -isnot [bool] -or $status.failed -isnot [bool] -or $status.failed) {
+        throw "partition-coordinator status non valido o failed: $response"
+    }
+    return $status
+}
+
+function Test-WorkloadContainersCompleted {
+    param([string[]]$Names)
+    $complete = $true
+    foreach ($name in $Names) {
+        $state = Get-RunContainerState -Name $name
+        if ($state.Status -eq "exited" -and $state.ExitCode -eq 0) { continue }
+        if ($state.Status -ne "running") {
+            throw "$name terminato in stato $($state.Status), exit=$($state.ExitCode)."
+        }
+        $complete = $false
+    }
+    return $complete
+}
+
 function Start-MetricsCollector {
     param(
         [Parameter(Mandatory = $true)]
@@ -1296,6 +1367,7 @@ $RunFinishedAt = $null
 $Status = "failed"
 $Failure = $null
 $MetricsJob = $null
+$CoordinatorStarted = $false
 
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Green
@@ -1353,12 +1425,26 @@ try {
     )
 
     Write-Host "`nAvvio infrastruttura senza Simulator..." -ForegroundColor Yellow
+    $CoordinatorStarted = $true
     Invoke-External "docker" @(
         "compose",
         "-f", $ComposePath,
         "up",
         "-d"
     )
+
+    # The listener is healthy before /start; only activation enables empty EOS.
+    Wait-CloudWorkerGroup -ExpectedWorkers $EffectiveWorkers
+    Wait-RunContainerHealthy -Name "partition-coordinator"
+    $services = @(& docker compose -f $ComposePath --profile replay config --services)
+    if ($LASTEXITCODE -ne 0) { throw "Impossibile leggere i servizi Compose." }
+    $edgeServices = @($services | Where-Object { $_ -match '^edge-\d+$' })
+    $simulatorServices = @($services | Where-Object { $_ -match '^simulator-edge-\d+$' })
+    if ($edgeServices.Count -eq 0 -or $edgeServices.Count -ne $simulatorServices.Count) {
+        throw "Servizi Edge/Simulator mancanti o non allineati."
+    }
+    foreach ($edgeService in $edgeServices) { Wait-RunContainerHealthy -Name $edgeService }
+    Invoke-External "docker" @("exec", "partition-coordinator", "wget", "-q", "-T", "10", "-O", "-", "--post-data=", "http://localhost:8081/start")
 
     # Rigenerazione intenzionale dopo l'avvio dell'infrastruttura:
     # deploygen calcola un nuovo REPLAY_START_AT usando start_lead_time.
@@ -1386,13 +1472,14 @@ try {
     $SimulatorsLaunchedAt = (Get-Date).ToUniversalTime()
 
     Write-Host "`nAvvio dei Simulator..." -ForegroundColor Yellow
-    Invoke-External "docker" @(
+    Invoke-External "docker" (@(
         "compose",
         "-f", $ComposePath,
         "--profile", "replay",
         "up",
-        "-d"
-    )
+        "-d",
+        "--no-deps"
+    ) + $simulatorServices)
 
     # REPLAY_START_AT è il vero inizio del workload. Il compose up dei Simulator
     # avviene prima e include intenzionalmente il lead time.
@@ -1405,6 +1492,8 @@ try {
     $globalExited = $false
 
     while ((Get-Date) -lt $deadline) {
+        $coordinatorStatus = Get-PartitionCoordinatorStatus
+        $workloadComplete = Test-WorkloadContainersCompleted -Names ($edgeServices + $simulatorServices)
         $state = (& docker inspect --format "{{.State.Status}}" global-aggregator 2>$null)
         if ($LASTEXITCODE -ne 0) {
             throw "Container global-aggregator non trovato durante la run."
@@ -1413,8 +1502,15 @@ try {
         $state = ($state | Out-String).Trim()
 
         if ($state -eq "exited") {
-            $globalExited = $true
-            break
+            $globalState = Get-RunContainerState -Name "global-aggregator"
+            if ($globalState.ExitCode -ne 0) { throw "Global Aggregator terminato con exit code $($globalState.ExitCode)." }
+            if ($workloadComplete -and $coordinatorStatus.complete) {
+                $globalExited = $true
+                break
+            }
+        }
+        elseif ($state -ne "running") {
+            throw "Global Aggregator in stato non valido: $state"
         }
 
         Start-Sleep -Seconds 2
@@ -1445,6 +1541,12 @@ catch {
 }
 finally {
     $RunFinishedAt = (Get-Date).ToUniversalTime()
+
+    # A failed run must not keep emitting completion records, including when
+    # -KeepContainers preserves the other containers for diagnosis.
+    if ($CoordinatorStarted -and $Status -ne "success") {
+        & docker stop --time 10 partition-coordinator 2>&1 | Out-Host
+    }
 
     Stop-MetricsCollector -Job $MetricsJob -StopFile $StopMetricsFile
     Remove-Item $StopMetricsFile -Force -ErrorAction SilentlyContinue

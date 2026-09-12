@@ -35,6 +35,7 @@ RUN_STATUS="failed"
 ADDRESSES_LOADED="false"
 METRICS_STARTED="false"
 KAFKA_METRICS_STARTED="false"
+COORDINATOR_STARTED="false"
 
 validate_positive_integer() {
   local name="$1"
@@ -288,6 +289,9 @@ finalize_run() {
 
   trap - EXIT
   set +e
+  if [[ "${exit_code}" != "0" && "${COORDINATOR_STARTED}" == "true" ]]; then
+    ssh_run "${PUBLIC_IPS[edge]}" docker stop --time 10 partition-coordinator >/dev/null 2>&1 || true
+  fi
   stop_metric_collectors
   if [[ -n "${ARTIFACT_DIR}" ]]; then
     if [[ "${KAFKA_METRICS_STARTED}" == "true" ]]; then
@@ -760,10 +764,32 @@ REMOTE
 
 start_edges() {
   log "5/9 avvio Edge Host"
+  COORDINATOR_STARTED="true"
   ssh_run "${PUBLIC_IPS[edge]}" 'set -euo pipefail
 cd /opt/continuum/current
 docker compose --env-file .env -f deploy/compose/distributed/edge.generated.yml up -d'
   collect_normalized_compose edge
+}
+
+coordinator_status() {
+  local status
+  status="$(ssh_run "${PUBLIC_IPS[edge]}" 'set -euo pipefail
+state="$(docker inspect --format "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{.RestartCount}}|{{.State.OOMKilled}}" partition-coordinator)"
+[[ "$state" == "running|healthy|0|false" ]] || { echo "partition-coordinator lifecycle non valido: $state" >&2; exit 1; }
+docker exec partition-coordinator wget -q -T 5 -O - http://localhost:8081/status')" || return 1
+  jq -e '(.complete | type == "boolean") and .failed == false' <<<"${status}" >/dev/null || {
+    log "partition-coordinator status non valido o failed: ${status}" >&2
+    return 1
+  }
+  printf '%s\n' "${status}"
+}
+
+activate_partition_coordinator() {
+  # Called only after the complete worker group is Stable. /readyz intentionally
+  # precedes activation; no partition EOS may be emitted before this POST.
+  coordinator_status >/dev/null
+  ssh_run "${PUBLIC_IPS[edge]}" docker exec partition-coordinator \
+    wget -q -T 10 -O - --post-data= http://localhost:8081/start >/dev/null
 }
 
 wait_for_edges() {
@@ -821,6 +847,7 @@ docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 
   verify_kafka_tcp_from_role workers
   wait_for_worker_group "${KAFKA_READY_TIMEOUT_SECONDS}"
   wait_for_edges
+  coordinator_status >/dev/null
   ssh_run "${PUBLIC_IPS[workers]}" bash -s -- "${WORKER_COUNT}" <<'REMOTE'
 set -euo pipefail
 expected="$1"
@@ -947,6 +974,7 @@ case "${role}" in
     done
     ;;
   edge)
+    check_container partition-coordinator running healthy
     for edge_number in $(seq 0 12); do
       check_container "mqtt-edge-${edge_number}" running healthy
       if [[ "${phase}" == "before" ]]; then
@@ -973,84 +1001,53 @@ REMOTE
   capture_container_states "${phase}"
 }
 
+workload_role_completed() {
+  local role="$1"
+  ssh_run "${PUBLIC_IPS["${role}"]}" bash -s -- "${role}" <<'REMOTE'
+set -euo pipefail
+role="$1"
+names=()
+case "$role" in
+  simulator) for i in $(seq 0 12); do names+=("simulator-edge-$i"); done ;;
+  edge) for i in $(seq 0 12); do names+=("edge-$i"); done ;;
+  cloud-core) names=(global-aggregator) ;;
+  *) exit 1 ;;
+esac
+complete=true
+for name in "${names[@]}"; do
+  snapshot="$(docker inspect --format '{{.State.Status}}|{{.RestartCount}}|{{.State.OOMKilled}}|{{.State.ExitCode}}' "$name")"
+  case "$snapshot" in
+    'exited|0|false|0') ;;
+    'running|0|false|0') complete=false ;;
+    *) echo "$name lifecycle non valido: $snapshot" >&2; exit 1 ;;
+  esac
+done
+if [[ "$role" == cloud-core && "$complete" == true ]]; then
+  docker logs global-aggregator 2>&1 | grep -F 'GLOBAL_REPLAY_COMPLETED' >/dev/null
+fi
+printf '%s\n' "$complete"
+REMOTE
+}
+
 wait_for_run_completion() {
-  log "attesa completamento dei 13 Simulator"
-  ssh_run "${PUBLIC_IPS[simulator]}" bash -s -- \
-    "${RUN_COMPLETION_TIMEOUT_SECONDS}" "${POLL_INTERVAL_SECONDS}" <<'REMOTE'
-set -euo pipefail
-timeout_seconds="$1"
-poll_seconds="$2"
-deadline=$(( $(date +%s) + timeout_seconds ))
-
-while (( $(date +%s) < deadline )); do
-  completed=0
-  for edge_number in $(seq 0 12); do
-    name="simulator-edge-${edge_number}"
-    state="$(docker inspect --format '{{.State.Status}}' "${name}" 2>/dev/null || true)"
-    restart_count="$(docker inspect --format '{{.RestartCount}}' "${name}" 2>/dev/null || true)"
-    oom_killed="$(docker inspect --format '{{.State.OOMKilled}}' "${name}" 2>/dev/null || true)"
-    [[ "${restart_count}" == "0" && "${oom_killed}" == "false" ]] || {
-      echo "${name} lifecycle non valido: restart=${restart_count:-missing} oom=${oom_killed:-missing}" >&2
-      exit 1
-    }
-    if [[ "${state}" == "exited" ]]; then
-      exit_code="$(docker inspect --format '{{.State.ExitCode}}' "${name}")"
-      [[ "${exit_code}" == "0" ]] || {
-        docker logs "${name}" >&2 || true
-        echo "${name} terminato con exit code ${exit_code}" >&2
-        exit 1
-      }
-      ((completed += 1))
-    elif [[ "${state}" != "running" ]]; then
-      echo "stato non valido per ${name}: ${state:-missing}" >&2
-      exit 1
+  local deadline=$(( $(date +%s) + RUN_COMPLETION_TIMEOUT_SECONDS ))
+  local coordinator simulators_done edges_done global_done
+  log "attesa completamento Simulator, Edge, coordinator e Global Aggregator"
+  while (( $(date +%s) < deadline )); do
+    # Supervise completion while any workload process is still running. In
+    # particular, coordinator failure must not hide behind a Simulator wait.
+    coordinator="$(coordinator_status)" || return 1
+    simulators_done="$(workload_role_completed simulator)" || return 1
+    edges_done="$(workload_role_completed edge)" || return 1
+    global_done="$(workload_role_completed cloud-core)" || return 1
+    if [[ "$simulators_done" == true && "$edges_done" == true && "$global_done" == true ]] &&
+      jq -e '.complete == true' <<<"$coordinator" >/dev/null; then
+      return 0
     fi
+    sleep "${POLL_INTERVAL_SECONDS}"
   done
-  ((completed == 13)) && exit 0
-  sleep "${poll_seconds}"
-done
-
-echo "i Simulator non hanno completato entro ${timeout_seconds}s" >&2
-exit 1
-REMOTE
-
-  log "attesa completamento del Global Aggregator"
-  ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- \
-    "${RUN_COMPLETION_TIMEOUT_SECONDS}" "${POLL_INTERVAL_SECONDS}" <<'REMOTE'
-set -euo pipefail
-timeout_seconds="$1"
-poll_seconds="$2"
-deadline=$(( $(date +%s) + timeout_seconds ))
-
-while (( $(date +%s) < deadline )); do
-  state="$(docker inspect --format '{{.State.Status}}' global-aggregator 2>/dev/null || true)"
-  restart_count="$(docker inspect --format '{{.RestartCount}}' global-aggregator 2>/dev/null || true)"
-  oom_killed="$(docker inspect --format '{{.State.OOMKilled}}' global-aggregator 2>/dev/null || true)"
-  [[ "${restart_count}" == "0" && "${oom_killed}" == "false" ]] || {
-    echo "Global Aggregator lifecycle non valido: restart=${restart_count:-missing} oom=${oom_killed:-missing}" >&2
-    exit 1
-  }
-  if [[ "${state}" == "exited" ]]; then
-    exit_code="$(docker inspect --format '{{.State.ExitCode}}' global-aggregator)"
-    [[ "${exit_code}" == "0" ]] || {
-      docker logs global-aggregator >&2 || true
-      echo "Global Aggregator terminato con exit code ${exit_code}" >&2
-      exit 1
-    }
-    docker logs global-aggregator 2>&1 | grep -F 'GLOBAL_REPLAY_COMPLETED' >/dev/null
-    exit 0
-  fi
-  [[ "${state}" == "running" ]] || {
-    echo "stato Global Aggregator non valido: ${state:-missing}" >&2
-    exit 1
-  }
-  sleep "${poll_seconds}"
-done
-
-docker logs global-aggregator >&2 || true
-echo "Global Aggregator non ha completato entro ${timeout_seconds}s" >&2
-exit 1
-REMOTE
+  echo "run non completata entro ${RUN_COMPLETION_TIMEOUT_SECONDS}s" >&2
+  return 1
 }
 
 main_run() {
@@ -1093,6 +1090,7 @@ main_run() {
   wait_for_edges
   verify_all_clocks
   quick_preflight
+  activate_partition_coordinator
   materialize_replay_start
   start_simulators
   validate_container_lifecycle before

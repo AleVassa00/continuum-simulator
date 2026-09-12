@@ -1,6 +1,7 @@
 package experiment
 
 import (
+	"continuum/internal/cloudworker"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -44,8 +45,17 @@ type EdgeConfig struct {
 }
 
 type CloudConfig struct {
-	Workers    int      `yaml:"workers"`
-	WindowSize Duration `yaml:"window_size"`
+	Workers        int       `yaml:"workers"`
+	WindowSize     Duration  `yaml:"window_size"`
+	WatermarkDelay *Duration `yaml:"watermark_delay,omitempty"`
+}
+
+// ResolvedWatermarkDelay preserves an explicitly configured zero delay.
+func (config CloudConfig) ResolvedWatermarkDelay() Duration {
+	if config.WatermarkDelay != nil {
+		return *config.WatermarkDelay
+	}
+	return Duration(cloudworker.DefaultWatermarkDelay)
 }
 
 type EffectiveConfig struct {
@@ -157,6 +167,9 @@ func (config Config) Validate() error {
 	if config.Cloud.WindowSize.Duration() <= 0 {
 		return fmt.Errorf("cloud.window_size deve essere maggiore di zero")
 	}
+	if config.Cloud.ResolvedWatermarkDelay().Duration() < 0 {
+		return fmt.Errorf("cloud.watermark_delay non puo essere negativo")
+	}
 	if config.Cloud.WindowSize.Duration()%config.Edge.WindowSize.Duration() != 0 {
 		return fmt.Errorf(
 			"cloud.window_size %s deve essere un multiplo esatto di edge.window_size %s",
@@ -175,6 +188,10 @@ func ResolveDefaults(config Config) Config {
 	}
 
 	config.Simulator = simulator
+	if config.Cloud.WatermarkDelay == nil {
+		delay := config.Cloud.ResolvedWatermarkDelay()
+		config.Cloud.WatermarkDelay = &delay
+	}
 
 	return config
 }
