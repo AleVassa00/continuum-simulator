@@ -666,6 +666,10 @@ REMOTE
 
   ssh_run "${PUBLIC_IPS[cloud-core]}" 'set -euo pipefail
 cd /opt/continuum/current
+if ! docker compose --env-file .env -f deploy/compose/distributed/cloud-core.generated.yml run --rm --no-deps -T global-aggregator --reset-postgres-if-enabled; then
+  echo "Reset PostgreSQL non riuscito: GlobalAggregator non avviato" >&2
+  exit 1
+fi
 docker compose --env-file .env -f deploy/compose/distributed/cloud-core.generated.yml up -d global-aggregator
 [[ "$(docker inspect --format "{{.State.Running}}" global-aggregator)" == "true" ]]'
   collect_normalized_compose cloud-core

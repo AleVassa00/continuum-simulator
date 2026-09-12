@@ -15,6 +15,7 @@ import (
 // Partition readers fetch concurrently; one processing loop per worker keeps
 // computation serial within the worker, with distinct state for each assignment
 func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessagePublisher) error {
+
 	group, err := kafka.NewConsumerGroup(kafka.ConsumerGroupConfig{
 		ID: config.GroupID, Brokers: []string{config.KafkaBroker}, Topics: []string{config.InputTopic},
 		StartOffset: kafka.FirstOffset, WatchPartitionChanges: true, Timeout: operationTimeout,
@@ -23,8 +24,10 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 		return err
 	}
 	defer group.Close()
+
 	stopClose := context.AfterFunc(ctx, func() { group.Close() })
 	defer stopClose()
+
 	failures := make(chan error, 1)
 	var processed atomic.Bool
 	for {
@@ -34,12 +37,12 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 			return failure
 		default:
 		}
+
 		if ctx.Err() != nil {
 			return nil
 		}
 		if err != nil {
-			// Joining workers may rebalance before replay starts. There is no
-			// consumed state to lose yet; kafka-go retains the member and retries.
+
 			if !processed.Load() && errors.Is(err, kafka.RebalanceInProgress) {
 				continue
 			}
@@ -51,7 +54,7 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 		if err := validateKafkaTopology(ctx, config.KafkaBroker, config.InputTopic, model.SourcePartitionCount); err != nil {
 			return err
 		}
-		// No recovery from already-committed inputs without their corresponding state.
+
 		for _, assignment := range gen.Assignments[config.InputTopic] {
 			if assignment.Offset > 0 {
 				return fmt.Errorf("partition %d already has committed offset %d: fresh run required", assignment.ID, assignment.Offset)
@@ -73,26 +76,36 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudWorkerConfig, publish KafkaMessagePublisher, processed *atomic.Bool) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 	messages := make(chan kafka.Message)
 	readErrors := make(chan error, model.SourcePartitionCount)
 	processors := make(map[int]*CloudMessageProcessor)
+
 	var readers sync.WaitGroup
-	// Cancel fetchers and join them before releasing generation ownership.
-	defer func() { cancel(); readers.Wait() }()
+
+	defer func() {
+		cancel()
+		readers.Wait()
+	}()
+
 	for _, assignment := range gen.Assignments[config.InputTopic] {
+
 		a, err := cloudworker.NewPartitionAggregator(assignment.ID, config.Membership[assignment.ID], config.WindowSize)
 		if err != nil {
 			return err
 		}
+
 		p := &CloudMessageProcessor{aggregator: a, workerID: config.WorkerID, outputTopic: config.OutputTopic, publishMessage: publish}
 		processors[assignment.ID] = p
 		if err := p.Initialize(ctx); err != nil {
 			return err
 		}
+
 		reader := kafka.NewReader(kafka.ReaderConfig{
 			Brokers: []string{config.KafkaBroker}, Topic: config.InputTopic, Partition: assignment.ID,
 			MinBytes: 1, MaxBytes: 10 * 1024 * 1024,
 		})
+
 		if err := reader.SetOffset(assignment.Offset); err != nil {
 			reader.Close()
 			return err
@@ -120,7 +133,6 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 			}
 		}()
 	}
-	// Remain in the group after local EOS; exiting would rebalance other workers.
 	for {
 		select {
 		case <-ctx.Done():

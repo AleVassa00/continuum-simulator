@@ -44,6 +44,23 @@ func newPostgresPool(ctx context.Context, config *pgxpool.Config) (*pgxpool.Pool
 	return pool, nil
 }
 
+// resetPostgresAggregates richiede un database gia disponibile e uno schema gia
+// installato. Il Ping deve riuscire prima del TRUNCATE; non crea ne migra tabelle.
+func resetPostgresAggregates(ctx context.Context, config *pgxpool.Config) error {
+	pool, err := newPostgresPool(ctx, config)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	ctx, cancel := context.WithTimeout(ctx, postgresOperationTimeout)
+	defer cancel()
+	if _, err := pool.Exec(ctx, "TRUNCATE TABLE global_aggregates"); err != nil {
+		return postgresError("TRUNCATE global_aggregates", err)
+	}
+	return nil
+}
+
 func newPostgresSink(pool *pgxpool.Pool) globalaggregator.GlobalAggregateSink {
 	return func(ctx context.Context, aggregate model.GlobalAggregate) error {
 		arguments, err := postgresAggregateArguments(aggregate)

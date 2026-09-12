@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,11 +13,27 @@ import (
 )
 
 func main() {
+	resetPostgresIfEnabled := flag.Bool("reset-postgres-if-enabled", false, "verifica PostgreSQL e svuota global_aggregates se il sink e postgres, poi termina senza consumare Kafka")
+	flag.Parse()
+
 	config, err := loadGlobalAggregatorConfig()
 	if err != nil {
 		panic(err)
 	}
 	fmt.Printf("Global sink: %s\n", config.SinkType)
+	// Operazione esplicita del runner, mai eseguita dal normale avvio del consumer.
+	if *resetPostgresIfEnabled {
+		if config.SinkType != "postgres" {
+			fmt.Println("PostgreSQL reset saltato: sink log")
+			return
+		}
+		if err := resetPostgresAggregates(context.Background(), config.Postgres); err != nil {
+			fmt.Fprintf(os.Stderr, "PostgreSQL reset fallito: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("PostgreSQL reset completato: TRUNCATE TABLE global_aggregates")
+		return
+	}
 	sink, cleanup, err := newGlobalAggregateSink(context.Background(), config)
 	if err != nil {
 		panic(err)

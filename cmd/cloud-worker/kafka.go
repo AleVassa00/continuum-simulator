@@ -24,13 +24,16 @@ func newKafkaWriter(broker string, topic string) *kafka.Writer {
 }
 
 func validateKafkaTopology(ctx context.Context, broker, topic string, count int) error {
+
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
+
 	conn, err := kafka.DialContext(ctx, "tcp", broker)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+
 	if deadline, ok := ctx.Deadline(); ok {
 		conn.SetDeadline(deadline)
 	}

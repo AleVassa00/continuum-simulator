@@ -149,7 +149,7 @@ services:
       interval: 2s
       timeout: 1s
       retries: 15
-    restart: unless-stopped
+    restart: "no"
     networks:
       - {{.ZoneNetwork}}
       - continuum-backbone

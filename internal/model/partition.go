@@ -38,18 +38,23 @@ func PartitionAggregateID(partition int, start, end time.Time) string {
 }
 
 func ValidateCloudPartitionAggregate(a CloudPartitionAggregate) error {
+
 	if err := ValidateSourcePartition(a.SourcePartition); err != nil {
 		return err
 	}
+
 	if a.WindowStart.IsZero() || !a.WindowEnd.After(a.WindowStart) || a.EmittedAt.IsZero() {
 		return fmt.Errorf("invalid partition partial timestamps")
 	}
+
 	if a.AggregateID != PartitionAggregateID(a.SourcePartition, a.WindowStart, a.WindowEnd) {
 		return fmt.Errorf("partial ID does not match source partition and window")
 	}
+
 	if a.InputAggregates == 0 || a.Events == 0 {
 		return fmt.Errorf("empty partial: use partition progress instead")
 	}
+	
 	for name, metric := range map[string]MetricAggregate{"temperature": a.Temperature, "humidity": a.Humidity, "pressure": a.Pressure} {
 		if err := ValidateMetricAggregate(name, a.Events, metric); err != nil {
 			return err
