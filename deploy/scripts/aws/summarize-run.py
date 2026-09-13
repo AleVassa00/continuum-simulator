@@ -186,6 +186,26 @@ def summarize_containers(rows):
     return result
 
 
+def global_records(directory, cloud_log):
+    config_path = directory / "compose" / "cloud-core.normalized.json"
+    sink = "log"
+    if config_path.exists():
+        sink = read_json(config_path)["services"]["global-aggregator"]["environment"]["GLOBAL_SINK_TYPE"]
+    if sink == "log":
+        return records(cloud_log, "GLOBAL_AGGREGATE")
+    if sink != "postgres":
+        raise ValueError(f"Unsupported global sink: {sink}")
+    # No fallback to logs: a missing/partial DB export must fail explicitly.
+    rows = []
+    for line in (directory / "global-aggregates.ndjson").read_text(encoding="utf-8-sig").splitlines():
+        row = json.loads(line)
+        for metric in ("temperature", "humidity", "pressure"):
+            row[metric] = {field: row.pop(f"{metric}_{field}")
+                           for field in ("valid", "invalid", "sum", "average", "min", "max")}
+        rows.append(row)
+    return rows
+
+
 def summarize(directory):
     metadata = read_json(directory / "run-metadata.json")
     partitions = metadata["kafka_partitions"]
@@ -207,12 +227,12 @@ def summarize(directory):
             for role in ("simulator", "edge", "cloud-core", "workers")}
     simulators = records(logs["simulator"], "SIMULATOR_STATS")
     edges = records(logs["edge"], "EDGE_STATS")
-    globals_ = records(logs["cloud-core"], "GLOBAL_AGGREGATE")
+    globals_ = global_records(directory, logs["cloud-core"])
     late, late_attempts, late_event_attempts = late_records(logs["workers"], expected, partitions)
     unique_sites(simulators, expected, "SIMULATOR_STATS")
     unique_sites(edges, expected, "EDGE_STATS")
     if not globals_:
-        raise ValueError("No GLOBAL_AGGREGATE output")
+        raise ValueError("No global aggregates in the configured sink output")
     completions = re.findall(r"(?m)^(\S+) GLOBAL_REPLAY_COMPLETED\s*$", logs["cloud-core"])
     if len(completions) != 1:
         raise ValueError("Expected exactly one timestamped GLOBAL_REPLAY_COMPLETED")

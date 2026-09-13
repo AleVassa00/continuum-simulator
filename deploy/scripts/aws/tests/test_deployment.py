@@ -373,13 +373,16 @@ class ComposeTests(unittest.TestCase):
             (root / "dataset/output").mkdir(parents=True)
             (root / "dataset/output/kmeans_topology.csv").write_text("sensor_id,edge_id\nsensor-0,edge-0\n", encoding="utf-8")
             (root / "experiment.yaml").write_text(original.replace("partitions: 6", "partitions: 8"), encoding="utf-8")
-            result = subprocess.run([DEPLOYGEN, "-mode", "distributed", "-experiment", "experiment.yaml"], cwd=root, capture_output=True, text=True)
+            generated = root / "generated"
+            result = subprocess.run([DEPLOYGEN, "-mode", "distributed", "-experiment", "experiment.yaml",
+                                     "-distributed-output-dir", str(generated)], cwd=root, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((root / "deploy/compose/distributed").exists())
             env = {**os.environ, "DEPLOYMENT_ID": "offline-check", "EDGE_HOST": "10.0.0.2",
                    "CLOUD_KAFKA_HOST": "10.0.0.3", "KAFKA_ADVERTISED_HOST": "10.0.0.3",
                    "REPLAY_START_AT": "2026-09-07T00:00:00Z"}
             for role in ("edge", "cloud-core", "workers"):
-                path = root / "deploy/compose/distributed" / f"{role}.generated.yml"
+                path = generated / f"{role}.generated.yml"
                 result = subprocess.run(["docker", "compose", "--env-file", str(REPO / "deploy/resources/aws-pilot.env"),
                     "-f", str(path), "config", "--format", "json"], cwd=root, env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)

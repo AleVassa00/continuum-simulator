@@ -2,6 +2,13 @@
 set -Eeuo pipefail
 # Runtime environments and transfer archives now contain a database secret.
 set +x
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  source "$(dirname "${BASH_SOURCE[0]}")/pilot-env.sh"
+  load_pilot_environment "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+fi
+# Secret files/archives have explicit 0600 modes; ordinary build/mount files
+# must not inherit run-full's 077 mask.
+umask 022
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd -P)"
@@ -9,7 +16,9 @@ readonly REMOTE_ROOT="/opt/continuum"
 
 readonly TERRAFORM_BIN="${TERRAFORM_BIN:-terraform}"
 readonly TERRAFORM_DIR="${TERRAFORM_DIR:-${REPO_ROOT}/deploy/terraform}"
-readonly GENERATION_MANIFEST_PATH="${REPO_ROOT}/deploy/compose/distributed/generation-manifest.json"
+readonly DISTRIBUTED_COMPOSE_INPUT="${DISTRIBUTED_COMPOSE_DIR:-${REPO_ROOT}/deploy/compose/distributed}"
+readonly GENERATION_MANIFEST_PATH="${DISTRIBUTED_COMPOSE_INPUT}/generation-manifest.json"
+source "${SCRIPT_DIR}/pilot-lock.sh"
 readonly SSH_USER="${SSH_USER:-}"
 readonly SSH_KEY_INPUT="${SSH_KEY_PATH:-}"
 readonly SSH_WAIT_ATTEMPTS="${SSH_WAIT_ATTEMPTS:-60}"
@@ -191,14 +200,17 @@ validate_release_source() {
     simulator.generated.yml; do
     expected="$(jq -er --arg filename "${filename}" '.compose_sha256[$filename]' "${GENERATION_MANIFEST_PATH}")" ||
       die "checksum mancante per ${filename} nel generation manifest"
-    actual="$(sha256sum "${REPO_ROOT}/deploy/compose/distributed/${filename}" | awk '{print $1}')"
+    actual="$(sha256sum "${DISTRIBUTED_COMPOSE_INPUT}/${filename}" | awk '{print $1}')"
     [[ "${actual}" == "${expected}" ]] ||
       die "${filename} non corrisponde al generation manifest; rieseguire deploygen"
   done
 
   GIT_COMMIT_SHA="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD)" ||
     die "impossibile determinare il commit Git"
-  source_status="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=all)"
+  # Generated configs/datasets/state have separate manifests or are not build
+  # inputs. Provisioning/state changes must not masquerade as source edits.
+  source_status="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=all -- \
+    go.mod go.sum cmd internal .dockerignore deploy/docker deploy/mosquitto deploy/postgres deploy/scripts)"
   if [[ -n "${source_status}" ]]; then
     [[ "${ALLOW_DIRTY_WORKTREE}" == "1" ]] ||
       die "worktree modificato: usare ALLOW_DIRTY_WORKTREE=1 per identificare i sorgenti tramite SHA256 senza commit"
@@ -454,7 +466,7 @@ stage_role() {
       mkdir -p "${destination}/deploy/postgres" "${destination}/deploy/scripts/aws"
       cp "${REPO_ROOT}/deploy/postgres/global_aggregates.sql" "${destination}/deploy/postgres/"
       cp "${REPO_ROOT}/deploy/scripts/aws/init-rds-schema.sh" "${destination}/deploy/scripts/aws/"
-      cp "${REPO_ROOT}/deploy/compose/distributed/cloud-core.generated.yml" "${destination}/deploy/compose/distributed/"
+      cp "${DISTRIBUTED_COMPOSE_INPUT}/cloud-core.generated.yml" "${destination}/deploy/compose/distributed/"
       ;;
     workers)
       copy_internal_packages \
@@ -466,14 +478,14 @@ stage_role() {
         kafkautil
       cp -R "${REPO_ROOT}/cmd/cloud-worker" "${destination}/cmd/cloud-worker"
       cp "${REPO_ROOT}/deploy/docker/cloud-worker.Dockerfile" "${destination}/deploy/docker/"
-      cp "${REPO_ROOT}/deploy/compose/distributed/workers.generated.yml" "${destination}/deploy/compose/distributed/"
+      cp "${DISTRIBUTED_COMPOSE_INPUT}/workers.generated.yml" "${destination}/deploy/compose/distributed/"
       ;;
     edge)
       copy_internal_packages "${destination}" avrocodec model mqtttopic partitioncompletion kafkautil envutil
       cp -R "${REPO_ROOT}/cmd/edge" "${destination}/cmd/edge"
       cp -R "${REPO_ROOT}/cmd/partition-coordinator" "${destination}/cmd/partition-coordinator"
       cp "${REPO_ROOT}/deploy/docker/edge.Dockerfile" "${destination}/deploy/docker/"
-      cp "${REPO_ROOT}/deploy/compose/distributed/edge.generated.yml" "${destination}/deploy/compose/distributed/"
+      cp "${DISTRIBUTED_COMPOSE_INPUT}/edge.generated.yml" "${destination}/deploy/compose/distributed/"
       mkdir -p "${destination}/deploy/mosquitto"
       cp "${REPO_ROOT}/deploy/mosquitto/mosquitto.conf" "${destination}/deploy/mosquitto/"
       ;;
@@ -481,7 +493,7 @@ stage_role() {
       copy_internal_packages "${destination}" model mqtttopic
       cp -R "${REPO_ROOT}/cmd/simulator" "${destination}/cmd/simulator"
       cp "${REPO_ROOT}/deploy/docker/simulator.Dockerfile" "${destination}/deploy/docker/"
-      cp "${REPO_ROOT}/deploy/compose/distributed/simulator.generated.yml" "${destination}/deploy/compose/distributed/"
+      cp "${DISTRIBUTED_COMPOSE_INPUT}/simulator.generated.yml" "${destination}/deploy/compose/distributed/"
       mkdir -p "${destination}/dataset/derived/replay_by_edge"
       for ((edge_number = 0; edge_number < 13; edge_number++)); do
         shard="${REPO_ROOT}/dataset/derived/replay_by_edge/edge-${edge_number}.csv"
@@ -493,6 +505,9 @@ stage_role() {
           --arg digest "$(sha256sum "${shard}" | awk '{print $1}')" \
           '$current + {($filename): $digest}')"
       done
+      # The bind-mounted dataset is read by UID 10001, not the SSH account.
+      find "${destination}/dataset" -type d -exec chmod 0755 {} +
+      find "${destination}/dataset" -type f -exec chmod 0644 {} +
       ;;
     *)
       die "ruolo non supportato durante lo staging: ${role}"
@@ -737,6 +752,7 @@ main() {
   require_command git
   require_command sha256sum
   validate_inputs
+  acquire_pilot_lock "${REPO_ROOT}"
   validate_release_source
   load_terraform_addresses
   load_rds_configuration

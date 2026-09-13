@@ -188,10 +188,9 @@ umask 077
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd -P)"
-readonly TERRAFORM_DIR="${TERRAFORM_DIR:-${REPO_ROOT}/deploy/terraform}"
+source "${SCRIPT_DIR}/pilot-env.sh"
+source "${SCRIPT_DIR}/pilot-lock.sh"
 readonly DEFAULT_EXPERIMENT="experiments/cloud-scale-w1.yaml"
-readonly DEFAULT_SECRETS_FILE="${HOME}/.config/continuum/secrets.env"
-readonly DEFAULT_AWS_SESSION_FILE="${REPO_ROOT}/deploy/aws-session.env"
 
 PROVISION=0
 REUSE_RELEASE=0
@@ -227,12 +226,17 @@ Esempi:
   sulla release già preparata.
 
 File locali caricati automaticamente:
+  deploy/aws-session.env (credenziali AWS)
+  ~/.config/continuum/pilot.env (opzioni non segrete)
   ~/.config/continuum/secrets.env
-  deploy/aws-session.env
 
 Override:
+  CONTINUUM_PILOT_FILE=/path/pilot.env
   CONTINUUM_SECRETS_FILE=/path/secrets.env
   AWS_SESSION_FILE=/path/aws-session.env
+
+Precedenza: argomento YAML > ambiente shell > secrets.env > pilot.env > sessione AWS.
+I Compose del wrapper vengono generati in .build/aws-compose.
 
 Variabili richieste:
   SSH_USER
@@ -264,20 +268,6 @@ resolve_repo_file() {
   )
 }
 
-load_env_file_if_present() {
-  local path="$1"
-  local label="$2"
-  if [[ -f "${path}" ]]; then
-    log "carico ${label}: ${path}"
-    set -a
-    # shellcheck disable=SC1090
-    source "${path}"
-    set +a
-  else
-    log "${label} non trovato in ${path}; uso le variabili già presenti nella shell"
-  fi
-}
-
 validate_rds_secret() {
   [[ "${TF_VAR_rds_password:-}" =~ ^[A-Za-z0-9_+=.!-]{16,128}$ ]] ||
     die "TF_VAR_rds_password mancante/non valida; caricala da ~/.config/continuum/secrets.env"
@@ -300,7 +290,7 @@ validate_aws_session() {
 }
 
 ensure_rds_is_provisioned() {
-  terraform -chdir="${TERRAFORM_DIR}" output -json rds_connection >/dev/null 2>&1 ||
+  "${TERRAFORM_BIN}" -chdir="${TERRAFORM_DIR}" output -json rds_connection >/dev/null 2>&1 ||
     die "output Terraform rds_connection assente; esegui il runner con --provision"
 }
 
@@ -308,7 +298,8 @@ run_deploygen() {
   log "[2/6] deploygen"
   (
     cd "${REPO_ROOT}"
-    go run ./cmd/deploygen -mode distributed -experiment "${EXPERIMENT_CONFIG}"
+    go run ./cmd/deploygen -mode distributed -experiment "${EXPERIMENT_CONFIG}" \
+      -distributed-output-dir "${DISTRIBUTED_COMPOSE_DIR}"
   )
 }
 
@@ -320,8 +311,8 @@ provision_infrastructure() {
   PLAN_FILE="$(mktemp "${plan_dir}/rds-plan.XXXXXX")"
   chmod 0600 "${PLAN_FILE}"
 
-  terraform -chdir="${TERRAFORM_DIR}" init -input=false
-  terraform -chdir="${TERRAFORM_DIR}" plan -input=false -out="${PLAN_FILE}"
+  "${TERRAFORM_BIN}" -chdir="${TERRAFORM_DIR}" init -input=false
+  "${TERRAFORM_BIN}" -chdir="${TERRAFORM_DIR}" plan -input=false -out="${PLAN_FILE}"
 
   printf '\n'
   read -r -p "Applicare questo piano Terraform? [y/N] " answer
@@ -330,7 +321,7 @@ provision_infrastructure() {
     *) die "terraform apply annullato" ;;
   esac
 
-  terraform -chdir="${TERRAFORM_DIR}" apply -input=false "${PLAN_FILE}"
+  "${TERRAFORM_BIN}" -chdir="${TERRAFORM_DIR}" apply -input=false "${PLAN_FILE}"
   rm -f -- "${PLAN_FILE}"
   PLAN_FILE=""
   ensure_rds_is_provisioned
@@ -350,7 +341,7 @@ initialize_rds_schema() {
 
   log "[5/6] init/verifica schema RDS"
   cloud_core_ip="$(
-    terraform -chdir="${TERRAFORM_DIR}" output -json public_ips |
+    "${TERRAFORM_BIN}" -chdir="${TERRAFORM_DIR}" output -json public_ips |
       jq -er '."cloud-core" | select(type == "string" and length > 0)'
   )" || die "impossibile leggere l'IP pubblico di cloud-core"
 
@@ -373,7 +364,7 @@ run_experiment() {
 }
 
 main() {
-  local arg secrets_file aws_session_file
+  local arg
 
   for arg in "$@"; do
     case "${arg}" in
@@ -391,13 +382,11 @@ main() {
   (( PROVISION == 0 || REUSE_RELEASE == 0 )) ||
     die "--provision e --reuse-release non possono essere usati insieme"
 
-  EXPERIMENT_INPUT="${EXPERIMENT_INPUT:-${DEFAULT_EXPERIMENT}}"
-
-  secrets_file="${CONTINUUM_SECRETS_FILE:-${DEFAULT_SECRETS_FILE}}"
-  aws_session_file="${AWS_SESSION_FILE:-${DEFAULT_AWS_SESSION_FILE}}"
-
-  load_env_file_if_present "${secrets_file}" "secret locali"
-  load_env_file_if_present "${aws_session_file}" "credenziali AWS"
+  load_pilot_environment "${REPO_ROOT}"
+  export TERRAFORM_BIN="${TERRAFORM_BIN:-terraform}"
+  export TERRAFORM_DIR="${TERRAFORM_DIR:-${REPO_ROOT}/deploy/terraform}"
+  export DISTRIBUTED_COMPOSE_DIR="${REPO_ROOT}/.build/aws-compose"
+  EXPERIMENT_INPUT="${EXPERIMENT_INPUT:-${EXPERIMENT_CONFIG:-${DEFAULT_EXPERIMENT}}}"
 
   # Imposta il file esperimento DOPO aver caricato aws-session.env, così un
   # eventuale EXPERIMENT_CONFIG presente nel file locale non sovrascrive
@@ -407,10 +396,15 @@ main() {
   export EXPERIMENT_CONFIG
 
   require_command aws
-  require_command terraform
+  require_command "${TERRAFORM_BIN}"
   require_command jq
   require_command ssh
   validate_ssh_config
+  # Check every downstream dependency before preparing hosts or provisioning.
+  for arg in go git scp tar sha256sum tee "${PYTHON_BIN:-python3}"; do
+    require_command "$arg"
+  done
+  acquire_pilot_lock "${REPO_ROOT}"
 
   log "[1/6] preflight AWS"
   validate_aws_session
@@ -438,4 +432,6 @@ main() {
   run_experiment
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -5,8 +5,8 @@ not create infrastructure and does not start any container.
 
 ## Prerequisites
 
-The local machine must provide Bash 4 or newer (Git Bash or WSL on Windows),
-Git, Go, `terraform`, `jq`, `ssh`, `scp`, `tar`, `sha256sum` and Python >= 3.9.
+Run inside WSL/Linux with Bash 4 or newer, `flock`, Git, Go, `terraform`, `jq`,
+`ssh`, `scp`, `tar`, `sha256sum` and Python >= 3.9.
 Use coherent paths/toolchains for the chosen shell. Python scripts use only the
 standard library; set `PYTHON_BIN` if the interpreter is not named `python3`.
 Terraform must already have state for the applied configuration under
@@ -17,6 +17,66 @@ Keep the EC2 private key outside the repository. The script rejects key paths
 inside the repository tree.
 
 ## Usage
+
+### Runner and environment configuration
+
+Use `run-full.sh` as the normal entry point:
+
+```bash
+bash deploy/scripts/aws/run-full.sh experiments/cloud-scale-w1.yaml
+# Repeat the exact prepared release:
+bash deploy/scripts/aws/run-full.sh experiments/cloud-scale-w1.yaml --reuse-release
+```
+
+Both runners default to `experiments/cloud-scale-w1.yaml`. `--provision` is
+explicit and still requests confirmation before applying its saved Terraform
+plan. Nothing is provisioned in the normal/reuse modes.
+
+All three entry points (`run-full`, `prepare-pilot`, `run-experiment`) share
+the local environment loader. Precedence, highest first:
+
+1. Explicit YAML argument to `run-full`.
+2. Variables already set in the calling shell.
+3. `~/.config/continuum/secrets.env` (existing WSL password/SSH setup may stay here).
+4. `~/.config/continuum/pilot.env` (optional non-secret options).
+5. `deploy/aws-session.env` (AWS credentials).
+6. Script defaults.
+
+Override the three file locations with `CONTINUUM_SECRETS_FILE`,
+`CONTINUUM_PILOT_FILE`, `AWS_SESSION_FILE`. An explicitly selected missing file
+is an error. Children inherit the resolved environment without loading the
+files again. Keep only AWS variables in the session file; existing SSH/profile
+settings there remain supported, but dedicated files and shell overrides win.
+Relative SSH key/resource-profile/Terraform/artifact paths are rooted at the repo.
+Use `TERRAFORM_BIN` consistently for a non-default Terraform executable.
+
+Suggested optional `pilot.env` (no password):
+
+```bash
+SSH_USER=ubuntu
+SSH_KEY_PATH=/home/your-user/.ssh/continuum-key.pem
+RESOURCE_PROFILE=deploy/resources/aws-pilot.env
+PYTHON_BIN=python3
+```
+
+Keep experiment parameters in YAML and resource limits in the resource profile.
+Remote role `.env` files are generated outputs, not another configuration source
+to edit manually. Changing source code still requires a commit or explicit
+`ALLOW_DIRTY_WORKTREE=1`; generated files and Terraform state no longer trigger
+that source-only check. YAML, Compose, dataset and environment integrity remain
+checked through the release manifest.
+
+The wrapper generates Compose/manifest files under ignored `.build/aws-compose`
+using deploygen's `-distributed-output-dir`, leaving versioned examples intact.
+For manual `prepare-pilot.sh`, `DISTRIBUTED_COMPOSE_DIR` selects that directory;
+when omitted it continues to use `deploy/compose/distributed`.
+
+A shared `flock` prevents simultaneous preparation/runs from the same checkout,
+and is held until final artifact export. It is not a distributed lock across
+different machines/checkouts: administer this pilot from one WSL checkout.
+Do not delete `.build/aws-pilot.lock` while a runner is active. Ordinary staged
+files use umask 022, dataset directories/files are explicitly 0755/0644, and
+secret environments/archives remain 0600.
 
 ### RDS PostgreSQL
 
@@ -83,10 +143,13 @@ snapshot identifier if `continuum-global-final` already exists. Automated backup
 are retained for one day. This integration does not verify live subnet routing,
 NACLs, instance-class availability or credentials; check these at deployment time.
 
-The existing experiment summary still expects aggregate records in application
-logs, whereas the PostgreSQL sink stores them in the database. Database-backed
-metrics extraction is not implemented here; the runner's summary may report
-missing aggregates even after a successful database write.
+After successful workload completion and after stopping metric collectors, the
+runner exports PostgreSQL rows into `global-aggregates.ndjson` in the run's
+artifact directory. The summary reads this file for the postgres sink and logs
+for the log sink, retaining the same calculations. Export failures fail the
+command explicitly; partial exports remain `.tmp` and are not used as results.
+No duplicate logging is added to the application data path. The database still
+contains only the current run and is truncated before the next one.
 
 ### Prepare the hosts
 

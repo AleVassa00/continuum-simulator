@@ -62,6 +62,27 @@ def fixture(root):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_postgres_export_has_same_summary_as_log_sink(self):
+        original = artifacts.summarize(self.root)
+        cloud_path = self.root / "logs/cloud-core.log"
+        rows = artifacts.records(cloud_path.read_text(), "GLOBAL_AGGREGATE")
+        flat_rows = []
+        for row in rows:
+            flat = {key: value for key, value in row.items() if not isinstance(value, dict)}
+            for metric in ("temperature", "humidity", "pressure"):
+                flat.update({f"{metric}_{key}": value for key, value in row[metric].items()})
+            flat_rows.append(flat)
+        (self.root / "global-aggregates.ndjson").write_text(
+            "\n".join(json.dumps(row) for row in flat_rows), encoding="utf-8")
+        (self.root / "compose/cloud-core.normalized.json").write_text(json.dumps({
+            "services": {"global-aggregator": {"environment": {"GLOBAL_SINK_TYPE": "postgres"}}}
+        }), encoding="utf-8")
+        cloud_path.write_text("2026-09-07T00:00:02.000000001Z GLOBAL_REPLAY_COMPLETED\n", encoding="utf-8")
+        self.assertEqual(artifacts.summarize(self.root), original)
+        (self.root / "global-aggregates.ndjson").unlink()
+        with self.assertRaises(FileNotFoundError):
+            artifacts.summarize(self.root)
+
     def test_configured_partitions_in_summary_and_lag(self):
         for count in (1, 3, 8):
             metadata_path = self.root / "run-metadata.json"

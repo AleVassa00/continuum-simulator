@@ -165,6 +165,8 @@ func runDeploygen(args []string, options deploygenOptions) error {
 		defaultExperimentPath,
 		"percorso della configurazione YAML dell'esperimento",
 	)
+	flags.StringVar(&options.DistributedOutputDir, "distributed-output-dir", options.DistributedOutputDir,
+		"directory Compose e manifest distribuiti generati")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}

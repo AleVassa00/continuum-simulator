@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  source "$(dirname "${BASH_SOURCE[0]}")/pilot-env.sh"
+  load_pilot_environment "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+fi
 
 export AWS_SCRIPT_LOG_PREFIX="run-experiment"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/prepare-pilot.sh"
 trap - EXIT
 
-readonly EXPERIMENT_CONFIG_INPUT="${EXPERIMENT_CONFIG:-${REPO_ROOT}/experiments/baseline.yaml}"
+readonly EXPERIMENT_CONFIG_INPUT="${EXPERIMENT_CONFIG:-${REPO_ROOT}/experiments/cloud-scale-w1.yaml}"
 readonly ARTIFACTS_ROOT="${ARTIFACTS_ROOT:-${REPO_ROOT}/artifacts/aws-runs}"
 readonly KAFKA_READY_TIMEOUT_SECONDS="${KAFKA_READY_TIMEOUT_SECONDS:-300}"
 readonly EDGE_READY_TIMEOUT_SECONDS="${EDGE_READY_TIMEOUT_SECONDS:-300}"
@@ -287,6 +291,21 @@ REMOTE
   METRICS_STARTED="false"
 }
 
+export_postgres_results() {
+  local sink
+  sink="$(jq -er '.services["global-aggregator"].environment.GLOBAL_SINK_TYPE' \
+    "${ARTIFACT_DIR}/compose/cloud-core.normalized.json")" || return 1
+  [[ "$sink" == postgres ]] || return 0
+  log "esportazione aggregati PostgreSQL negli artefatti della run"
+  if ! ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s \
+    <"${SCRIPT_DIR}/export-postgres.sh" >"${ARTIFACT_DIR}/global-aggregates.ndjson.tmp"; then
+    log "esportazione PostgreSQL fallita; risultati non archiviati"
+    return 1
+  fi
+  [[ -s "${ARTIFACT_DIR}/global-aggregates.ndjson.tmp" ]] || return 1
+  mv "${ARTIFACT_DIR}/global-aggregates.ndjson.tmp" "${ARTIFACT_DIR}/global-aggregates.ndjson"
+}
+
 finalize_run() {
   local exit_code="$?"
   local postprocess_exit
@@ -304,6 +323,13 @@ finalize_run() {
     fi
     capture_container_states final
     collect_host_logs
+    # Collect outside the measured workload, while still holding the pilot lock,
+    # and before the next run can truncate the current-run-only database.
+    if [[ "$exit_code" == 0 && "$RUN_STATUS" == completed ]]; then
+      if ! export_postgres_results; then
+        exit_code=1
+      fi
+    fi
     write_run_metadata "${exit_code}"
     "${PYTHON_BIN}" "${SCRIPT_DIR}/summarize-run.py" "${ARTIFACT_DIR}"
     postprocess_exit="$?"
@@ -382,7 +408,8 @@ sha256sum /opt/continuum/current/release-manifest.json | awk "{print \$1}"')"
   local_git_commit_sha="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD)"
   [[ "${local_git_commit_sha}" == "${DEPLOYED_GIT_COMMIT_SHA}" ]] ||
     die "il checkout dell'orchestratore (${local_git_commit_sha}) non corrisponde alla release (${DEPLOYED_GIT_COMMIT_SHA})"
-  source_status="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=all)"
+  source_status="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=all -- \
+    go.mod go.sum cmd internal .dockerignore deploy/docker deploy/mosquitto deploy/postgres deploy/scripts)"
   [[ -z "${source_status}" || "${ALLOW_DIRTY_WORKTREE}" == "1" ]] ||
     die "worktree modificato: usare ALLOW_DIRTY_WORKTREE=1 per verificare i sorgenti tramite SHA256"
   SOURCE_SHA256="$(calculate_source_sha256)"
@@ -1069,6 +1096,7 @@ main_run() {
   require_command sha256sum
   require_command tee
   validate_inputs
+  acquire_pilot_lock "${REPO_ROOT}"
   validate_positive_integer KAFKA_READY_TIMEOUT_SECONDS "${KAFKA_READY_TIMEOUT_SECONDS}"
   validate_positive_integer EDGE_READY_TIMEOUT_SECONDS "${EDGE_READY_TIMEOUT_SECONDS}"
   validate_positive_integer RUN_COMPLETION_TIMEOUT_SECONDS "${RUN_COMPLETION_TIMEOUT_SECONDS}"
