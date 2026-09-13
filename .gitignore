@@ -54,4 +54,4 @@ dataset/output/*
 !dataset/output/replay_load_scenarios.csv
 !dataset/output/replay_shards_summary.csv
 docs/discussione-professoressa-architettura.md
-deploy/aws_session.env
+deploy/aws-session.env
