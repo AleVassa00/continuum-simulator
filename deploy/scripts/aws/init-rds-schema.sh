@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Run on cloud-core after prepare-pilot.sh, before the first experiment.
+# Run on cloud-core after deploy-pilot.sh, before the first experiment.
 # No tunnel/public endpoint is needed: the client uses cloud-core's security group.
 set -Eeuo pipefail
 set +x
+
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 cd "${ROOT}"
+
 compose=(docker compose --env-file .env -f deploy/compose/distributed/cloud-core.generated.yml)
+
 if [[ -n "$("${compose[@]}" ps --status running -q global-aggregator)" ]]; then
   echo 'Stop the Global Aggregator before installing the schema.' >&2
   exit 1
@@ -18,11 +21,11 @@ fi
   export PGDATABASE="$GLOBAL_POSTGRES_DATABASE" PGUSER="$GLOBAL_POSTGRES_USER"
   export PGPASSWORD="$GLOBAL_POSTGRES_PASSWORD" PGSSLMODE="$GLOBAL_POSTGRES_SSLMODE"
   export PGCONNECT_TIMEOUT=10
+
   exists=$(psql -X --no-password -At -v ON_ERROR_STOP=1 -c "SELECT to_regclass('\''public.global_aggregates'\'') IS NOT NULL")
   if [ "$exists" = t ]; then
-    # Do not invoke the SQL file on an existing table: it also contains an old,
-    # destructive legacy migration. Refuse incompatible schemas instead.
-    psql -X --no-password -v ON_ERROR_STOP=1 -c "SELECT expected_partitions, contributing_partitions FROM public.global_aggregates LIMIT 0" >/dev/null
+    psql -X --no-password -v ON_ERROR_STOP=1 \
+      -c "SELECT expected_partitions, contributing_partitions FROM public.global_aggregates LIMIT 0" >/dev/null
     echo "global_aggregates already exists; data preserved."
   else
     psql -X --no-password -v ON_ERROR_STOP=1 -f /app/global_aggregates.sql

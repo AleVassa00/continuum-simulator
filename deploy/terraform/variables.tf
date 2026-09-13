@@ -29,7 +29,7 @@ variable "rds_instance_class" {
 }
 
 variable "rds_password" {
-  description = "Supply through TF_VAR_rds_password, never a committed file. Same value is required by prepare-pilot.sh. Restricted alphabet permits literal, unambiguous Compose dotenv storage. Terraform still stores this sensitive value in state/plan files."
+  description = "Supply through TF_VAR_rds_password, never a committed file. The same value is consumed by deploy-pilot.sh through deploy/pilot.env. Restricted alphabet permits literal, unambiguous Compose dotenv storage. Terraform still stores this sensitive value in state/plan files."
   type        = string
   sensitive   = true
   validation {

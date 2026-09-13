@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  source "$(dirname "${BASH_SOURCE[0]}")/pilot-env.sh"
-  load_pilot_environment "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
-fi
+set +x
 
 export AWS_SCRIPT_LOG_PREFIX="run-experiment"
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/prepare-pilot.sh"
-trap - EXIT
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/aws-common.sh"
+
+load_pilot_environment
 
 readonly EXPERIMENT_CONFIG_INPUT="${EXPERIMENT_CONFIG:-${REPO_ROOT}/experiments/cloud-scale-w1.yaml}"
 readonly ARTIFACTS_ROOT="${ARTIFACTS_ROOT:-${REPO_ROOT}/artifacts/aws-runs}"
@@ -26,8 +26,8 @@ CONFIG_SHA256=""
 CONFIGURED_WORKERS="0"
 CONFIGURED_PARTITIONS="0"
 WORKER_COUNT="0"
-DEPLOYMENT_ID_VALUE=""
 DEPLOYED_GIT_COMMIT_SHA=""
+DEPLOYED_AT=""
 RUN_ID_VALUE=""
 ARTIFACT_DIR=""
 INSTANCE_IDENTITIES='{}'
@@ -204,10 +204,9 @@ write_run_metadata() {
     --arg run_id "${RUN_ID_VALUE}" \
     --arg experiment "${EXPERIMENT_NAME}" \
     --arg status "${RUN_STATUS}" \
-    --arg deployment_id "${DEPLOYMENT_ID_VALUE}" \
     --arg git_commit_sha "${DEPLOYED_GIT_COMMIT_SHA}" \
+    --arg deployed_at "${DEPLOYED_AT}" \
     --arg config_sha256 "${CONFIG_SHA256}" \
-    --arg source_sha256 "${SOURCE_SHA256}" \
     --arg resource_profile_sha256 "${RESOURCE_PROFILE_SHA256}" \
     --arg orchestration_started_at "${ORCHESTRATION_STARTED_AT}" \
     --arg clock_verified_at "${CLOCK_VERIFIED_AT}" \
@@ -223,10 +222,9 @@ write_run_metadata() {
       run_id: $run_id,
       experiment: $experiment,
       status: $status,
-      deployment_id: $deployment_id,
       git_commit_sha: $git_commit_sha,
+      deployed_at: $deployed_at,
       config_sha256: $config_sha256,
-      source_sha256: $source_sha256,
       resource_profile_sha256: $resource_profile_sha256,
       workers: $workers,
       kafka_partitions: $kafka_partitions,
@@ -253,7 +251,7 @@ write_run_metadata() {
           "CPUSurplusCreditsCharged"
         ],
         recommended_period_seconds: 60,
-        retrieval_method: "Query every recorded InstanceId over orchestration_started_at..finished_at; this script deliberately does not add AWS CLI/CloudWatch dependencies.",
+        retrieval_method: "Query every recorded InstanceId over orchestration_started_at..finished_at.",
         cloudwatch_command_template: "aws cloudwatch get-metric-statistics --namespace AWS/EC2 --metric-name <metric-name> --dimensions Name=InstanceId,Value=<instance-id> --statistics Average Minimum Maximum --period 60 --start-time <start> --end-time <end> --region <region>",
         credit_mode_command_template: "aws ec2 describe-instance-credit-specifications --instance-ids <instance-id> --region <region>"
       }
@@ -312,27 +310,35 @@ finalize_run() {
 
   trap - EXIT
   set +e
-  if [[ "${exit_code}" != "0" && "${COORDINATOR_STARTED}" == "true" ]]; then
+
+  if [[ "${exit_code}" != "0" && "${COORDINATOR_STARTED}" == "true" && "${ADDRESSES_LOADED}" == "true" ]]; then
     ssh_run "${PUBLIC_IPS[edge]}" docker stop --time 10 partition-coordinator >/dev/null 2>&1 || true
   fi
+
   stop_metric_collectors
+
   if [[ -n "${ARTIFACT_DIR}" ]]; then
     if [[ "${KAFKA_METRICS_STARTED}" == "true" ]]; then
-      ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" once "${CONFIGURED_PARTITIONS}" \
-        <"${SCRIPT_DIR}/collect-kafka-lag.sh" >"${ARTIFACT_DIR}/kafka-consumer-groups-final.txt" 2>&1
+      ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- \
+        "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" once "${CONFIGURED_PARTITIONS}" \
+        <"${SCRIPT_DIR}/collect-kafka-lag.sh" \
+        >"${ARTIFACT_DIR}/kafka-consumer-groups-final.txt" 2>&1
     fi
+
     capture_container_states final
     collect_host_logs
-    # Collect outside the measured workload, while still holding the pilot lock,
-    # and before the next run can truncate the current-run-only database.
-    if [[ "$exit_code" == 0 && "$RUN_STATUS" == completed ]]; then
+
+    if [[ "${exit_code}" == "0" && "${RUN_STATUS}" == "completed" ]]; then
       if ! export_postgres_results; then
+        log "export PostgreSQL fallito"
         exit_code=1
       fi
     fi
+
     write_run_metadata "${exit_code}"
     "${PYTHON_BIN}" "${SCRIPT_DIR}/summarize-run.py" "${ARTIFACT_DIR}"
     postprocess_exit="$?"
+
     if ! jq --argjson result "${postprocess_exit}" \
       '. + {postprocess_exit_code: $result, postprocess_status: (if $result == 0 then "success" elif $result == 2 then "quality_failed" else "failed" end)}' \
       "${ARTIFACT_DIR}/run-metadata.json" >"${ARTIFACT_DIR}/run-metadata.json.tmp"; then
@@ -341,137 +347,42 @@ finalize_run() {
     elif ! mv "${ARTIFACT_DIR}/run-metadata.json.tmp" "${ARTIFACT_DIR}/run-metadata.json"; then
       [[ "${postprocess_exit}" != "0" ]] || postprocess_exit=1
     fi
+
     log "artefatti run: ${ARTIFACT_DIR}"
     [[ "${exit_code}" != "0" ]] || exit_code="${postprocess_exit}"
   fi
+
   exit "${exit_code}"
 }
 
-verify_prepared_releases() {
+verify_deployed_config() {
   local role
-  local deployment_id
-  local manifest_sha256
-  local expected_manifest_sha256=""
   local filename
-  local expected_compose_sha256
-  local actual_compose_sha256
-  local image_ref
-  local expected_image_id
-  local actual_image_id
-  local local_git_commit_sha
-  local edge_number
-  local expected_shard_sha256
-  local actual_shard_sha256
-  local source_status
+  local deployment_info
 
   for role in "${ROLES[@]}"; do
-    deployment_id="$(ssh_run "${PUBLIC_IPS["${role}"]}" \
-      'set -euo pipefail
-test -L /opt/continuum/current
-basename "$(readlink -f /opt/continuum/current)"')" ||
-      die "host ${role} non predisposto: eseguire prima prepare-pilot.sh"
-    [[ "${deployment_id}" =~ ^[A-Za-z0-9._-]+$ ]] ||
-      die "DEPLOYMENT_ID non valido su ${role}: ${deployment_id}"
-    if [[ -z "${DEPLOYMENT_ID_VALUE}" ]]; then
-      DEPLOYMENT_ID_VALUE="${deployment_id}"
-    elif [[ "${deployment_id}" != "${DEPLOYMENT_ID_VALUE}" ]]; then
-      die "release disallineate: ${role} usa ${deployment_id}, attesa ${DEPLOYMENT_ID_VALUE}"
-    fi
-
-    manifest_sha256="$(ssh_run "${PUBLIC_IPS["${role}"]}" \
-      'set -euo pipefail
-test -f /opt/continuum/current/release-manifest.json
-sha256sum /opt/continuum/current/release-manifest.json | awk "{print \$1}"')"
-    if [[ -z "${expected_manifest_sha256}" ]]; then
-      expected_manifest_sha256="${manifest_sha256}"
-      ssh_run "${PUBLIC_IPS["${role}"]}" \
-        'cat /opt/continuum/current/release-manifest.json' >"${ARTIFACT_DIR}/release-manifest.json"
-    elif [[ "${manifest_sha256}" != "${expected_manifest_sha256}" ]]; then
-      die "release-manifest diverso su ${role}"
-    fi
-
-    ssh_run "${PUBLIC_IPS["${role}"]}" \
-      "grep -Fx 'DEPLOYMENT_ID=${DEPLOYMENT_ID_VALUE}' /opt/continuum/current/.env >/dev/null" ||
-      die "DEPLOYMENT_ID nell'environment non coerente su ${role}"
-  done
-
-  [[ "$(sha256sum "${ARTIFACT_DIR}/release-manifest.json" | awk '{print $1}')" == "${expected_manifest_sha256}" ]] ||
-    die "release-manifest trasferito non integro"
-  [[ "$(jq -er '.deployment_id' "${ARTIFACT_DIR}/release-manifest.json")" == "${DEPLOYMENT_ID_VALUE}" ]] ||
-    die "DEPLOYMENT_ID interno al manifest non coerente"
-  [[ "$(jq -er '.config_sha256' "${ARTIFACT_DIR}/release-manifest.json")" == "${CONFIG_SHA256}" ]] ||
-    die "EXPERIMENT_CONFIG non corrisponde alla configurazione usata da deploygen"
-
-  DEPLOYED_GIT_COMMIT_SHA="$(jq -er '.git_commit_sha' "${ARTIFACT_DIR}/release-manifest.json")"
-  [[ "${DEPLOYED_GIT_COMMIT_SHA}" =~ ^[0-9a-f]{40,64}$ ]] ||
-    die "Git commit SHA non valida nel release manifest"
-  local_git_commit_sha="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD)"
-  [[ "${local_git_commit_sha}" == "${DEPLOYED_GIT_COMMIT_SHA}" ]] ||
-    die "il checkout dell'orchestratore (${local_git_commit_sha}) non corrisponde alla release (${DEPLOYED_GIT_COMMIT_SHA})"
-  source_status="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=all -- \
-    go.mod go.sum cmd internal .dockerignore deploy/docker deploy/mosquitto deploy/postgres deploy/scripts)"
-  [[ -z "${source_status}" || "${ALLOW_DIRTY_WORKTREE}" == "1" ]] ||
-    die "worktree modificato: usare ALLOW_DIRTY_WORKTREE=1 per verificare i sorgenti tramite SHA256"
-  SOURCE_SHA256="$(calculate_source_sha256)"
-  [[ "$(jq -er '.source_sha256' "${ARTIFACT_DIR}/release-manifest.json")" == "${SOURCE_SHA256}" ]] ||
-    die "sorgenti diversi dalla release preparata; ripetere prepare-pilot.sh"
-  [[ "$(jq -er '.resource_profile_sha256' "${ARTIFACT_DIR}/release-manifest.json")" == "${RESOURCE_PROFILE_SHA256}" ]] ||
-    die "resource profile diverso dalla release preparata"
-
-  for role in "${ROLES[@]}"; do
-    expected_compose_sha256="$(jq -er --arg role "${role}" '.runtime_env_sha256[$role]' "${ARTIFACT_DIR}/release-manifest.json")"
-    actual_compose_sha256="$(ssh_run "${PUBLIC_IPS["${role}"]}" \
-      "sha256sum /opt/continuum/current/.env | awk '{print \$1}'")"
-    [[ "${actual_compose_sha256}" == "${expected_compose_sha256}" ]] ||
-      die "environment runtime modificato su ${role}; ripetere prepare-pilot.sh"
     case "${role}" in
+      simulator) filename="simulator.generated.yml" ;;
+      edge) filename="edge.generated.yml" ;;
       cloud-core) filename="cloud-core.generated.yml" ;;
       workers) filename="workers.generated.yml" ;;
-      edge) filename="edge.generated.yml" ;;
-      simulator) filename="simulator.generated.yml" ;;
     esac
-    expected_compose_sha256="$(jq -er --arg filename "${filename}" '.compose_sha256[$filename]' \
-      "${ARTIFACT_DIR}/release-manifest.json")"
-    actual_compose_sha256="$(ssh_run "${PUBLIC_IPS["${role}"]}" \
-      "sha256sum '/opt/continuum/current/deploy/compose/distributed/${filename}' | awk '{print \$1}'")"
-    [[ "${actual_compose_sha256}" == "${expected_compose_sha256}" ]] ||
-      die "Compose ${filename} su ${role} non corrisponde alla release"
 
-    jq -e --arg role "${role}" \
-      '.images_by_role[$role] | type == "object" and length > 0' \
-      "${ARTIFACT_DIR}/release-manifest.json" >/dev/null ||
-      die "image metadata mancanti per ${role} nel release manifest"
-
-    while IFS=$'\t' read -r image_ref expected_image_id; do
-      [[ -n "${image_ref}" ]] || continue
-      actual_image_id="$(ssh_run "${PUBLIC_IPS["${role}"]}" \
-        docker image inspect --format '{{.Id}}' "${image_ref}")" ||
-        die "immagine ${image_ref} assente su ${role}"
-      [[ "${actual_image_id}" == "${expected_image_id}" ]] ||
-        die "image ID di ${image_ref} su ${role} diverso dal release manifest"
-    done < <(jq -r --arg role "${role}" \
-      '.images_by_role[$role] | to_entries[] | [.key, .value.id] | @tsv' \
-      "${ARTIFACT_DIR}/release-manifest.json")
+    ssh_run "${PUBLIC_IPS[${role}]}" \
+      "test -f /opt/continuum/current/.env && test -f /opt/continuum/current/deploy/compose/distributed/${filename}" ||
+      die "deployment applicativo assente o incompleto su ${role}; eseguire deploy-pilot.sh"
   done
 
-  for ((edge_number = 0; edge_number < 13; edge_number++)); do
-    filename="edge-${edge_number}.csv"
-    expected_shard_sha256="$(jq -er --arg filename "${filename}" '.replay_shard_sha256[$filename]' \
-      "${ARTIFACT_DIR}/release-manifest.json")"
-    actual_shard_sha256="$(ssh_run "${PUBLIC_IPS[simulator]}" \
-      "sha256sum '/opt/continuum/current/dataset/derived/replay_by_edge/${filename}' | awk '{print \$1}'")"
-    [[ "${actual_shard_sha256}" == "${expected_shard_sha256}" ]] ||
-      die "replay shard ${filename} non corrisponde al release manifest"
-  done
+  deployment_info="$(ssh_run "${PUBLIC_IPS[cloud-core]}" \
+    'cat /opt/continuum/current/deployment-info.json')" ||
+    die "deployment-info.json non leggibile su cloud-core"
+  jq -e --arg experiment "${EXPERIMENT_NAME}" \
+    '.experiment == $experiment' <<<"${deployment_info}" >/dev/null ||
+    die "deployment remoto preparato per un altro esperimento; eseguire deploy-pilot.sh"
 
-  [[ "$(jq -er '.replay_shard_sha256 | length' "${ARTIFACT_DIR}/release-manifest.json")" == "13" ]] ||
-    die "il release manifest non contiene esattamente 13 replay shard"
-  jq -r '.replay_shard_sha256 | to_entries | sort_by(.key)[] | "\(.value)  \(.key)"' \
-    "${ARTIFACT_DIR}/release-manifest.json" >"${ARTIFACT_DIR}/replay-shards.sha256"
-  jq '.images_by_role' "${ARTIFACT_DIR}/release-manifest.json" >"${ARTIFACT_DIR}/image-metadata.json"
-
-  printf '%s\n' "${DEPLOYMENT_ID_VALUE}" >"${ARTIFACT_DIR}/deployment-id.txt"
-  printf '%s\n' "${DEPLOYED_GIT_COMMIT_SHA}" >"${ARTIFACT_DIR}/git-commit-sha.txt"
+  DEPLOYED_GIT_COMMIT_SHA="$(jq -r '.git_commit_sha // ""' <<<"${deployment_info}")"
+  DEPLOYED_AT="$(jq -r '.deployed_at // ""' <<<"${deployment_info}")"
+  printf '%s\n' "${deployment_info}" | jq . >"${ARTIFACT_DIR}/deployment-info.json"
 }
 
 reset_previous_run() {
@@ -498,6 +409,7 @@ docker compose --env-file .env -f deploy/compose/distributed/workers.generated.y
 cd /opt/continuum/current
 docker compose --env-file .env -f deploy/compose/distributed/cloud-core.generated.yml down --remove-orphans --volumes --timeout 30'
 }
+
 
 initialize_rds_schema() {
   local sink
@@ -565,7 +477,8 @@ REMOTE
 }
 
 start_kafka_metrics() {
-  ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" loop "${CONFIGURED_PARTITIONS}" \
+  ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- \
+    "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" loop "${CONFIGURED_PARTITIONS}" \
     <"${SCRIPT_DIR}/collect-kafka-lag.sh" >"${ARTIFACT_DIR}/metrics/kafka-lag.log" 2>&1 &
   METRICS_PIDS[kafka-lag]="$!"
   KAFKA_METRICS_STARTED="true"
@@ -590,7 +503,6 @@ collect_normalized_compose() {
   local role="$1"
   local env_file="${2:-.env}"
   local compose_file
-  # SSH does not preserve an empty positional argument in the remote command.
   local profile="__none__"
 
   case "${role}" in
@@ -604,36 +516,32 @@ collect_normalized_compose() {
     *) die "ruolo Compose non supportato: ${role}" ;;
   esac
 
-  ssh_run "${PUBLIC_IPS["${role}"]}" bash -s -- \
+  ssh_run "${PUBLIC_IPS[${role}]}" bash -s -- \
     "${env_file}" "${compose_file}" "${profile}" "${REPLAY_START_AT:-1970-01-01T00:00:00Z}" <<'REMOTE' \
     >"${ARTIFACT_DIR}/compose/${role}.normalized.yml"
 set -euo pipefail
 env_file="$1"
 compose_file="$2"
 profile="$3"
-if [[ "${profile}" == "__none__" ]]; then
-  profile=""
-fi
+[[ "${profile}" != "__none__" ]] || profile=""
 cd /opt/continuum/current
 args=(docker compose --env-file "${env_file}")
-if [[ -n "${profile}" ]]; then
-  args+=(--profile "${profile}")
-fi
+[[ -z "${profile}" ]] || args+=(--profile "${profile}")
 args+=(-f "deploy/compose/distributed/${compose_file}" config)
 GLOBAL_POSTGRES_PASSWORD=__REDACTED__ REPLAY_START_AT="$4" "${args[@]}"
 REMOTE
-  ssh_run "${PUBLIC_IPS["${role}"]}" bash -s -- \
+
+  ssh_run "${PUBLIC_IPS[${role}]}" bash -s -- \
     "${env_file}" "${compose_file}" "${profile}" "${REPLAY_START_AT:-1970-01-01T00:00:00Z}" <<'REMOTE' \
     >"${ARTIFACT_DIR}/compose/${role}.normalized.json"
 set -euo pipefail
 profile="$3"
-if [[ "${profile}" == "__none__" ]]; then
-  profile=""
-fi
+[[ "${profile}" != "__none__" ]] || profile=""
 cd /opt/continuum/current
 args=(docker compose --env-file "$1")
 [[ -z "${profile}" ]] || args+=(--profile "${profile}")
-GLOBAL_POSTGRES_PASSWORD=__REDACTED__ REPLAY_START_AT="$4" "${args[@]}" -f "deploy/compose/distributed/$2" config --format json
+GLOBAL_POSTGRES_PASSWORD=__REDACTED__ REPLAY_START_AT="$4" \
+  "${args[@]}" -f "deploy/compose/distributed/$2" config --format json
 REMOTE
 }
 
@@ -683,6 +591,7 @@ deadline=$(( $(date +%s) + timeout_seconds ))
 while (( $(date +%s) < deadline )); do
   kafka_health="$(docker inspect --format '{{.State.Health.Status}}' kafka 2>/dev/null || true)"
   init_state="$(docker inspect --format '{{.State.Status}}' kafka-init 2>/dev/null || true)"
+
   if [[ "${init_state}" == "exited" ]]; then
     init_exit="$(docker inspect --format '{{.State.ExitCode}}' kafka-init)"
     if [[ "${init_exit}" != "0" ]]; then
@@ -691,15 +600,18 @@ while (( $(date +%s) < deadline )); do
       exit 1
     fi
   fi
+
   if [[ "${kafka_health}" == "healthy" && "${init_state}" == "exited" ]]; then
     edge_topic="$(docker exec kafka /opt/kafka/bin/kafka-topics.sh \
       --bootstrap-server kafka:29092 --describe --topic edge-aggregates)"
     cloud_topic="$(docker exec kafka /opt/kafka/bin/kafka-topics.sh \
       --bootstrap-server kafka:29092 --describe --topic cloud-partition-aggregates)"
+
     grep -E "PartitionCount: ${partition_count}([[:space:]]|$)" <<<"${edge_topic}" >/dev/null || exit 1
     grep -E "PartitionCount: 1([[:space:]]|$)" <<<"${cloud_topic}" >/dev/null || exit 1
     exit 0
   fi
+
   sleep "${poll_seconds}"
 done
 
@@ -718,6 +630,7 @@ if ! docker compose --env-file .env -f deploy/compose/distributed/cloud-core.gen
 fi
 docker compose --env-file .env -f deploy/compose/distributed/cloud-core.generated.yml up -d global-aggregator
 [[ "$(docker inspect --format "{{.State.Running}}" global-aggregator)" == "true" ]]'
+
   collect_normalized_compose cloud-core
 }
 
@@ -815,20 +728,24 @@ docker compose --env-file .env -f deploy/compose/distributed/edge.generated.yml 
 
 coordinator_status() {
   local status
+
   status="$(ssh_run "${PUBLIC_IPS[edge]}" 'set -euo pipefail
 state="$(docker inspect --format "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{.RestartCount}}|{{.State.OOMKilled}}" partition-coordinator)"
-[[ "$state" == "running|healthy|0|false" ]] || { echo "partition-coordinator lifecycle non valido: $state" >&2; exit 1; }
+[[ "${state}" == "running|healthy|0|false" ]] || {
+  echo "partition-coordinator lifecycle non valido: ${state}" >&2
+  exit 1
+}
 docker exec partition-coordinator wget -q -T 5 -O - http://localhost:8081/status')" || return 1
+
   jq -e '(.complete | type == "boolean") and .failed == false' <<<"${status}" >/dev/null || {
     log "partition-coordinator status non valido o failed: ${status}" >&2
     return 1
   }
+
   printf '%s\n' "${status}"
 }
 
 activate_partition_coordinator() {
-  # Called only after the complete worker group is Stable. /readyz intentionally
-  # precedes activation; no partition EOS may be emitted before this POST.
   coordinator_status >/dev/null
   ssh_run "${PUBLIC_IPS[edge]}" docker exec partition-coordinator \
     wget -q -T 10 -O - --post-data= http://localhost:8081/start >/dev/null
@@ -878,6 +795,7 @@ verify_all_clocks() {
 
 quick_preflight() {
   log "preflight end-to-end immediatamente precedente alla barriera temporale"
+
   ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${CONFIGURED_PARTITIONS}" <<'REMOTE'
 set -euo pipefail
 partition_count="$1"
@@ -888,11 +806,13 @@ docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 
 docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic cloud-partition-aggregates |
   grep -E "PartitionCount: 1([[:space:]]|$)" >/dev/null
 REMOTE
+
   verify_kafka_tcp_from_role edge
   verify_kafka_tcp_from_role workers
   wait_for_worker_group "${KAFKA_READY_TIMEOUT_SECONDS}"
   wait_for_edges
   coordinator_status >/dev/null
+
   ssh_run "${PUBLIC_IPS[workers]}" bash -s -- "${WORKER_COUNT}" <<'REMOTE'
 set -euo pipefail
 expected="$1"
@@ -900,6 +820,7 @@ for ((worker_number = 0; worker_number < expected; worker_number++)); do
   [[ "$(docker inspect --format '{{.State.Status}}' "cloud-worker-${worker_number}")" == "running" ]]
 done
 REMOTE
+
   wait_for_time_sync simulator
 }
 
@@ -1048,49 +969,70 @@ REMOTE
 
 workload_role_completed() {
   local role="$1"
-  ssh_run "${PUBLIC_IPS["${role}"]}" bash -s -- "${role}" <<'REMOTE'
+
+  ssh_run "${PUBLIC_IPS[${role}]}" bash -s -- "${role}" <<'REMOTE'
 set -euo pipefail
 role="$1"
 names=()
-case "$role" in
-  simulator) for i in $(seq 0 12); do names+=("simulator-edge-$i"); done ;;
-  edge) for i in $(seq 0 12); do names+=("edge-$i"); done ;;
-  cloud-core) names=(global-aggregator) ;;
-  *) exit 1 ;;
+
+case "${role}" in
+  simulator)
+    for i in $(seq 0 12); do names+=("simulator-edge-${i}"); done
+    ;;
+  edge)
+    for i in $(seq 0 12); do names+=("edge-${i}"); done
+    ;;
+  cloud-core)
+    names=(global-aggregator)
+    ;;
+  *)
+    exit 1
+    ;;
 esac
+
 complete=true
 for name in "${names[@]}"; do
-  snapshot="$(docker inspect --format '{{.State.Status}}|{{.RestartCount}}|{{.State.OOMKilled}}|{{.State.ExitCode}}' "$name")"
-  case "$snapshot" in
+  snapshot="$(docker inspect --format '{{.State.Status}}|{{.RestartCount}}|{{.State.OOMKilled}}|{{.State.ExitCode}}' "${name}")"
+  case "${snapshot}" in
     'exited|0|false|0') ;;
     'running|0|false|0') complete=false ;;
-    *) echo "$name lifecycle non valido: $snapshot" >&2; exit 1 ;;
+    *)
+      echo "${name} lifecycle non valido: ${snapshot}" >&2
+      exit 1
+      ;;
   esac
 done
-if [[ "$role" == cloud-core && "$complete" == true ]]; then
+
+if [[ "${role}" == cloud-core && "${complete}" == true ]]; then
   docker logs global-aggregator 2>&1 | grep -F 'GLOBAL_REPLAY_COMPLETED' >/dev/null
 fi
-printf '%s\n' "$complete"
+
+printf '%s\n' "${complete}"
 REMOTE
 }
 
 wait_for_run_completion() {
   local deadline=$(( $(date +%s) + RUN_COMPLETION_TIMEOUT_SECONDS ))
   local coordinator simulators_done edges_done global_done
+
   log "attesa completamento Simulator, Edge, coordinator e Global Aggregator"
+
   while (( $(date +%s) < deadline )); do
-    # Supervise completion while any workload process is still running. In
-    # particular, coordinator failure must not hide behind a Simulator wait.
     coordinator="$(coordinator_status)" || return 1
     simulators_done="$(workload_role_completed simulator)" || return 1
     edges_done="$(workload_role_completed edge)" || return 1
     global_done="$(workload_role_completed cloud-core)" || return 1
-    if [[ "$simulators_done" == true && "$edges_done" == true && "$global_done" == true ]] &&
-      jq -e '.complete == true' <<<"$coordinator" >/dev/null; then
+
+    if [[ "${simulators_done}" == true &&
+          "${edges_done}" == true &&
+          "${global_done}" == true ]] &&
+       jq -e '.complete == true' <<<"${coordinator}" >/dev/null; then
       return 0
     fi
+
     sleep "${POLL_INTERVAL_SECONDS}"
   done
+
   echo "run non completata entro ${RUN_COMPLETION_TIMEOUT_SECONDS}s" >&2
   return 1
 }
@@ -1098,15 +1040,15 @@ wait_for_run_completion() {
 main_run() {
   require_command "${PYTHON_BIN}"
   "${PYTHON_BIN}" -c 'import sys; assert sys.version_info >= (3, 9), "Python >= 3.9 required"'
-  require_command "${TERRAFORM_BIN}"
   require_command go
-  require_command git
   require_command jq
   require_command ssh
   require_command sha256sum
   require_command tee
-  validate_inputs
-  acquire_pilot_lock "${REPO_ROOT}"
+
+  init_aws_context
+  require_command "${TERRAFORM_BIN}"
+
   validate_positive_integer KAFKA_READY_TIMEOUT_SECONDS "${KAFKA_READY_TIMEOUT_SECONDS}"
   validate_positive_integer EDGE_READY_TIMEOUT_SECONDS "${EDGE_READY_TIMEOUT_SECONDS}"
   validate_positive_integer RUN_COMPLETION_TIMEOUT_SECONDS "${RUN_COMPLETION_TIMEOUT_SECONDS}"
@@ -1117,15 +1059,15 @@ main_run() {
   load_terraform_addresses
   ADDRESSES_LOADED="true"
   wait_for_all_ssh
+
   initialize_artifacts
-  verify_prepared_releases
+  verify_deployed_config
   collect_instance_identities
   check_host_budgets
 
-  log "run=${RUN_ID_VALUE} experiment=${EXPERIMENT_NAME} deployment=${DEPLOYMENT_ID_VALUE}"
+  log "run=${RUN_ID_VALUE} experiment=${EXPERIMENT_NAME}"
+
   reset_previous_run
-  # The previous Global must be stopped before the schema safety check. Keep
-  # this in the single-run lifecycle so direct and reused releases behave alike.
   initialize_rds_schema
   start_metric_collectors
   start_cloud_core

@@ -8,7 +8,7 @@ output "rds_port" {
 }
 
 output "rds_connection" {
-  description = "Non-secret connection settings consumed by prepare-pilot.sh."
+  description = "Non-secret connection settings consumed by deploy-pilot.sh."
   value = {
     host     = aws_db_instance.global.address
     port     = aws_db_instance.global.port
