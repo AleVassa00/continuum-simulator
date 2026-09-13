@@ -82,6 +82,77 @@ quick_preflight
         self.assertIn("COORDINATOR_MEMORY=64m", lines)
         self.assertRegex(lines[-1], r"^[0-9a-f]{64}$")
 
+    @unittest.skipUnless(shutil.which("jq"), "Install jq for RDS environment checks")
+    def test_rds_environment_only_reaches_cloud_core(self):
+        command = '''
+source deploy/scripts/aws/prepare-pilot.sh
+terraform_output() { echo '{"host":"db.example.rds.amazonaws.com","port":5432,"database":"continuum","username":"continuum_admin"}'; }
+load_rds_configuration
+load_resource_profile
+PRIVATE_IPS[cloud-core]=10.0.0.1
+PRIVATE_IPS[edge]=10.0.0.2
+STAGING_ROOT=$(mktemp -d)
+for role in "${ROLES[@]}"; do
+  mkdir "$STAGING_ROOT/$role"
+  write_runtime_environment "$role" "$STAGING_ROOT/$role"
+  if [[ "$role" == cloud-core ]]; then
+    grep -Fx 'GLOBAL_SINK_TYPE=postgres' "$STAGING_ROOT/$role/.env"
+    grep -Fx 'GLOBAL_POSTGRES_SSLMODE=verify-full' "$STAGING_ROOT/$role/.env"
+    grep -Fx 'GLOBAL_POSTGRES_HOST=db.example.rds.amazonaws.com' "$STAGING_ROOT/$role/.env"
+    grep -Fx 'GLOBAL_POSTGRES_PORT=5432' "$STAGING_ROOT/$role/.env"
+    grep -Fx 'GLOBAL_POSTGRES_DATABASE=continuum' "$STAGING_ROOT/$role/.env"
+    grep -Fx 'GLOBAL_POSTGRES_USER=continuum_admin' "$STAGING_ROOT/$role/.env"
+    grep -Fx "GLOBAL_POSTGRES_PASSWORD=$TF_VAR_rds_password" "$STAGING_ROOT/$role/.env" >/dev/null
+  else
+    ! grep -q GLOBAL_POSTGRES "$STAGING_ROOT/$role/.env"
+  fi
+done
+'''
+        result = self.shell(command, TF_VAR_rds_password="OnlyForTesting_123!")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("OnlyForTesting_123!", result.stdout + result.stderr)
+        result = self.shell(command, TF_VAR_rds_password="")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_rds_schema_installer_branches_and_failures(self):
+        command = '''
+docker() {
+  if [[ "$*" == *' ps '* ]]; then
+    [[ "$MOCK_SCHEMA" != running ]] || echo global-id
+    return 0
+  fi
+  while [[ "$1" != global-aggregator ]]; do shift; done
+  shift
+  bash "$@"
+}
+psql() {
+  if [[ "$*" == *to_regclass* ]]; then
+    case "$MOCK_SCHEMA" in
+      unavailable) return 1 ;;
+      absent|install-fails) echo f ;;
+      *) echo t ;;
+    esac
+  elif [[ "$*" == *' -f '* ]]; then
+    [[ "$MOCK_SCHEMA" != install-fails ]] || return 1
+    echo installed
+  else
+    [[ "$MOCK_SCHEMA" != legacy ]] || return 1
+  fi
+}
+export -f docker psql
+export GLOBAL_SINK_TYPE=postgres GLOBAL_POSTGRES_HOST=db.example GLOBAL_POSTGRES_PORT=5432
+export GLOBAL_POSTGRES_DATABASE=continuum GLOBAL_POSTGRES_USER=continuum_admin
+export GLOBAL_POSTGRES_PASSWORD=OnlyForTesting_123 GLOBAL_POSTGRES_SSLMODE=verify-full
+bash deploy/scripts/aws/init-rds-schema.sh
+'''
+        for state in ("absent", "existing", "legacy", "unavailable", "install-fails", "running"):
+            with self.subTest(state=state):
+                result = self.shell(command, MOCK_SCHEMA=state)
+                self.assertEqual(result.returncode == 0, state in ("absent", "existing"), result.stderr)
+                self.assertNotIn("OnlyForTesting_123", result.stdout + result.stderr)
+                if state == "existing":
+                    self.assertIn("data preserved", result.stdout)
+
     def test_invalid_profiles_rejected_without_execution(self):
         original = (REPO / "deploy/resources/aws-pilot.env").read_text()
         with tempfile.TemporaryDirectory() as directory:
@@ -248,7 +319,7 @@ PUBLIC_IPS["$MOCK_ROLE"]=offline-host
 # Unlike direct "$@" execution, this really loses an unquoted empty argument.
 ssh_run() { shift; bash -c "$*"; }
 cd() { builtin cd "$MOCK_ROOT"; }
-docker() { printf '{"replay_start_at":"%s","args":"%s"}\\n' "$REPLAY_START_AT" "$*"; }
+docker() { printf '{"replay_start_at":"%s","args":"%s","password":"%s"}\\n' "$REPLAY_START_AT" "$*" "$GLOBAL_POSTGRES_PASSWORD"; }
 export -f cd docker
 REPLAY_START_AT="$MOCK_REPLAY_START_AT"
 collect_normalized_compose "$MOCK_ROLE" "$MOCK_ENV_FILE"
@@ -258,6 +329,7 @@ collect_normalized_compose "$MOCK_ROLE" "$MOCK_ENV_FILE"
                     self.assertEqual(result.returncode, 0, result.stderr)
                     for extension in ("json", "yml"):
                         config = json.loads((root / "compose" / f"{role}.normalized.{extension}").read_text())
+                        self.assertEqual(config["password"], "__REDACTED__")
                         self.assertEqual(config["replay_start_at"], replay_start or "1970-01-01T00:00:00Z")
                         expected_args = ["compose", "--env-file", env_file]
                         if role == "simulator":

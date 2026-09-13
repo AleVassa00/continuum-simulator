@@ -1,3 +1,43 @@
+variable "rds_database_name" {
+  description = "Initial PostgreSQL database name."
+  type        = string
+  default     = "continuum"
+  validation {
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9]{0,62}$", var.rds_database_name))
+    error_message = "rds_database_name must start with a letter and contain at most 63 alphanumeric characters."
+  }
+}
+
+variable "rds_username" {
+  description = "RDS PostgreSQL administrator used by the pilot sink/schema installer (not a reserved PostgreSQL name)."
+  type        = string
+  default     = "continuum_admin"
+  validation {
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9_]{0,62}$", var.rds_username))
+    error_message = "rds_username must start with a letter and contain at most 63 letters, digits or underscores."
+  }
+}
+
+variable "rds_instance_class" {
+  description = "Single-AZ RDS PostgreSQL instance class."
+  type        = string
+  default     = "db.t3.micro"
+  validation {
+    condition     = can(regex("^db\\.[a-z0-9]+\\.[a-z0-9]+$", var.rds_instance_class))
+    error_message = "rds_instance_class must be an RDS instance class (db.family.size)."
+  }
+}
+
+variable "rds_password" {
+  description = "Supply through TF_VAR_rds_password, never a committed file. Same value is required by prepare-pilot.sh. Restricted alphabet permits literal, unambiguous Compose dotenv storage. Terraform still stores this sensitive value in state/plan files."
+  type        = string
+  sensitive   = true
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_+=.!-]{16,128}$", var.rds_password))
+    error_message = "Use a random password of 16-128 characters from letters, digits and _+=.!- ."
+  }
+}
+
 variable "aws_region" {
   description = "AWS region in which to create the pilot instances."
   type        = string

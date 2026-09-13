@@ -21,7 +21,15 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates postgresql17-client \
+    && mkdir -p /app \
+    && wget -q -O /app/rds-ca-bundle.pem \
+       https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem \
+    && test -s /app/rds-ca-bundle.pem
+
+# Honored by both pgx and psql; verify-full remains the sink's default.
+ENV PGSSLROOTCERT=/app/rds-ca-bundle.pem
+COPY --chmod=0444 deploy/postgres/global_aggregates.sql /app/global_aggregates.sql
 
 RUN adduser \
     -D \

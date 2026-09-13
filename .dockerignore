@@ -1,4 +1,9 @@
 .git
+.env
+.run.env
+**/.env
+**/.run.env
+deploy/terraform
 .idea
 .build
 dataset

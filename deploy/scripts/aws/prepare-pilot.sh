@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+# Runtime environments and transfer archives now contain a database secret.
+set +x
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd -P)"
@@ -38,6 +40,7 @@ RESOURCE_PROFILE_PATH=""
 RESOURCE_PROFILE_SHA256=""
 RESOURCE_PROFILE_VALUES=""
 RUNTIME_ENV_SHA256='{}'
+RDS_CONNECTION='{}'
 
 log() {
   printf '[%s] %s\n' "${LOG_PREFIX}" "$*"
@@ -80,7 +83,7 @@ calculate_source_sha256() {
   (
     cd "${REPO_ROOT}"
     git ls-files --cached --others --exclude-standard -z -- \
-      go.mod go.sum cmd internal deploy/docker deploy/mosquitto deploy/scripts |
+      go.mod go.sum cmd internal .dockerignore deploy/docker deploy/mosquitto deploy/postgres deploy/scripts |
       sort -zu |
       while IFS= read -r -d '' filename; do
         [[ -f "${filename}" ]] || continue
@@ -237,6 +240,20 @@ load_terraform_addresses() {
   done
 }
 
+load_rds_configuration() {
+  RDS_CONNECTION="$(terraform_output rds_connection)" ||
+    die "impossibile leggere rds_connection: predisporre prima RDS con Terraform"
+  jq -e '
+    (.host | type == "string" and test("^[A-Za-z0-9.-]+$")) and
+    (.port == 5432) and
+    (.database | type == "string" and test("^[A-Za-z][A-Za-z0-9]{0,62}$")) and
+    (.username | type == "string" and test("^[A-Za-z][A-Za-z0-9_]{0,62}$"))
+  ' <<<"${RDS_CONNECTION}" >/dev/null || die "output rds_connection non valido"
+  # Same alphabet as Terraform: no dotenv interpolation, quoting or comments.
+  [[ "${TF_VAR_rds_password:-}" =~ ^[A-Za-z0-9_+=.!-]{16,128}$ ]] ||
+    die "TF_VAR_rds_password obbligatoria: usare la stessa password RDS, 16-128 caratteri tra lettere, cifre e _+=.!-"
+}
+
 ssh_run() {
   local host="$1"
   shift
@@ -249,7 +266,7 @@ scp_to_host() {
   local host="$2"
   local destination="$3"
 
-  scp -q "${SSH_ARGS[@]}" "${source}" "${SSH_USER}@${host}:${destination}"
+  scp -p -q "${SSH_ARGS[@]}" "${source}" "${SSH_USER}@${host}:${destination}"
 }
 
 wait_for_all_ssh() {
@@ -349,6 +366,7 @@ copy_common_build_context() {
 
   cp "${REPO_ROOT}/go.mod" "${destination}/go.mod"
   cp "${REPO_ROOT}/go.sum" "${destination}/go.sum"
+  cp "${REPO_ROOT}/.dockerignore" "${destination}/.dockerignore"
   mkdir -p \
     "${destination}/cmd" \
     "${destination}/deploy/docker" \
@@ -377,6 +395,15 @@ write_runtime_environment() {
   case "${role}" in
     cloud-core)
       printf 'KAFKA_ADVERTISED_HOST=%s\n' "${PRIVATE_IPS[cloud-core]}" >>"${destination}/.env"
+      {
+        printf 'GLOBAL_SINK_TYPE=postgres\n'
+        printf 'GLOBAL_POSTGRES_HOST=%s\n' "$(jq -jer '.host' <<<"${RDS_CONNECTION}")"
+        printf 'GLOBAL_POSTGRES_PORT=%s\n' "$(jq -jer '.port' <<<"${RDS_CONNECTION}")"
+        printf 'GLOBAL_POSTGRES_DATABASE=%s\n' "$(jq -jer '.database' <<<"${RDS_CONNECTION}")"
+        printf 'GLOBAL_POSTGRES_USER=%s\n' "$(jq -jer '.username' <<<"${RDS_CONNECTION}")"
+        printf 'GLOBAL_POSTGRES_PASSWORD=%s\n' "${TF_VAR_rds_password:?load_rds_configuration must run first}"
+        printf 'GLOBAL_POSTGRES_SSLMODE=verify-full\n'
+      } >>"${destination}/.env"
       ;;
     workers | edge)
       printf 'CLOUD_KAFKA_HOST=%s\n' "${PRIVATE_IPS[cloud-core]}" >>"${destination}/.env"
@@ -392,7 +419,7 @@ write_runtime_environment() {
       ;;
   esac
 
-  chmod 0644 "${destination}/.env"
+  chmod 0600 "${destination}/.env"
   printf '%s' "${RESOURCE_PROFILE_VALUES}" >>"${destination}/.env"
   cp "${RESOURCE_PROFILE_PATH}" "${destination}/resource-profile.env"
   RUNTIME_ENV_SHA256="$(jq -cn --argjson current "${RUNTIME_ENV_SHA256}" \
@@ -424,6 +451,9 @@ stage_role() {
       cp -R "${REPO_ROOT}/cmd/global-aggregator" "${destination}/cmd/global-aggregator"
       cp -R "${REPO_ROOT}/cmd/kafka-lag-collector" "${destination}/cmd/kafka-lag-collector"
       cp "${REPO_ROOT}/deploy/docker/global-aggregator.Dockerfile" "${destination}/deploy/docker/"
+      mkdir -p "${destination}/deploy/postgres" "${destination}/deploy/scripts/aws"
+      cp "${REPO_ROOT}/deploy/postgres/global_aggregates.sql" "${destination}/deploy/postgres/"
+      cp "${REPO_ROOT}/deploy/scripts/aws/init-rds-schema.sh" "${destination}/deploy/scripts/aws/"
       cp "${REPO_ROOT}/deploy/compose/distributed/cloud-core.generated.yml" "${destination}/deploy/compose/distributed/"
       ;;
     workers)
@@ -512,6 +542,7 @@ upload_and_build_role() {
   local build_command
 
   tar -C "${source}" -czf "${archive}" .
+  chmod 0600 "${archive}"
 
   log "trasferimento file necessari a ${role}"
   scp_to_host "${archive}" "${host}" "${remote_archive}"
@@ -523,7 +554,7 @@ if [[ -e '${release}' ]]; then
   echo 'release remota gia esistente: ${release}' >&2
   exit 1
 fi
-mkdir -p '${release}'
+mkdir -m 0700 -p '${release}'
 tar -xzf '${remote_archive}' -C '${release}'
 rm -f '${remote_archive}'"
 
@@ -685,6 +716,7 @@ print_summary() {
 
   printf '\nPilot predisposto senza avviare container.\n'
   printf 'Release: %s\n' "${DEPLOYMENT_ID}"
+  printf 'Prima della prima run, su cloud-core: bash /opt/continuum/current/deploy/scripts/aws/init-rds-schema.sh\n'
   for role in "${ROLES[@]}"; do
     printf '  %-10s public=%s private=%s current=%s/current\n' \
       "${role}" \
@@ -707,6 +739,7 @@ main() {
   validate_inputs
   validate_release_source
   load_terraform_addresses
+  load_rds_configuration
 
   wait_for_all_ssh
   for role in "${ROLES[@]}"; do

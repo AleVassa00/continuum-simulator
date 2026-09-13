@@ -33,6 +33,12 @@ deploy/compose/continuum.generated.yml
 *.tfstate
 *.tfstate.*
 terraform.tfvars
+*.tfvars
+*.tfvars.json
+*.tfplan
+tfplan
+.env
+.run.env
 
 # Dataset policy: ignore everything except the explicitly approved metadata.
 dataset/*

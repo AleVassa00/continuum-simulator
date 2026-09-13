@@ -18,6 +18,78 @@ inside the repository tree.
 
 ## Usage
 
+### RDS PostgreSQL
+
+Terraform also defines one private, encrypted, Single-AZ PostgreSQL 17 instance
+in `us-east-1a`, using the two existing subnets in `us-east-1a` and `us-east-1b`.
+Only the `cloud-core` security group can connect to port 5432. The four EC2
+definitions are unchanged. `rds_database_name`, `rds_username` and
+`rds_instance_class` are configurable (defaults: `continuum`, `continuum_admin`,
+`db.t3.micro`). This small burstable class is a pilot baseline, not a performance
+guarantee. No infrastructure is created by the preparation script.
+
+Supply a random password through `TF_VAR_rds_password` when operating Terraform
+and supply **the same value** to `prepare-pilot.sh`. The accepted alphabet is
+letters, digits and `_+=.!-`, length 16–128; this intentionally avoids dotenv
+interpolation/escaping. In Bash, read it without shell-history exposure:
+
+```bash
+read -rsp 'RDS password: ' TF_VAR_rds_password; printf '\n'
+export TF_VAR_rds_password
+```
+
+Never commit the password, `.env`, Terraform state or saved plans. `sensitive`
+redacts normal Terraform output but **does not encrypt state/plan files**: keep
+them in protected storage. The pre-existing tracked `deploy/terraform/tfplan`
+must not be reused/overwritten for RDS: new plans must stay outside the repository
+or under ignored `.build/`. Do not publish JSON state/plan output.
+Do not run preparation with shell tracing enabled in a parent shell.
+
+Preparation reads the non-secret `rds_connection` output and writes the complete
+`GLOBAL_POSTGRES_*` environment only on `cloud-core`, with mode 0600. Transfer
+archives are mode 0600 and release directories mode 0700. Docker build contexts
+exclude `.env`; Compose files contain references, not actual credentials.
+Normalized Compose artifacts redact the password. Host administrators and users
+with Docker access can still read runtime credentials; protect those privileges
+and remove obsolete release environments when retiring a deployment.
+
+After preparation, connect over SSH to **cloud-core** and run once, before the
+first experiment:
+
+```bash
+bash /opt/continuum/current/deploy/scripts/aws/init-rds-schema.sh
+```
+
+This starts only a temporary PostgreSQL client from the Global image (no Kafka
+dependencies), connecting privately to RDS. It installs
+`deploy/postgres/global_aggregates.sql` with SQL errors treated as failures.
+If the partition-based table already exists, it preserves its data; incompatible
+legacy tables are refused, not migrated/dropped. Run while experiments are stopped.
+The existing runner still explicitly truncates `global_aggregates` before each
+Global start and aborts if the reset fails. Preparation never initializes the DB
+or starts containers automatically.
+
+Both the sink and schema client use `verify-full`, with the official regional
+[AWS RDS CA bundle](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html)
+downloaded during the image build; rebuild when updating trusted certificates.
+The schema client adds `postgresql17-client` to the Global image. No Go sink or
+aggregation code changes are required. The pilot uses the configured RDS admin
+account for installation and writes; a least-privilege runtime account is a
+separate hardening step.
+
+Deletion protection is enabled and a final snapshot is required when explicitly
+dismantling RDS; disable protection deliberately and choose an unused final
+snapshot identifier if `continuum-global-final` already exists. Automated backups
+are retained for one day. This integration does not verify live subnet routing,
+NACLs, instance-class availability or credentials; check these at deployment time.
+
+The existing experiment summary still expects aggregate records in application
+logs, whereas the PostgreSQL sink stores them in the database. Database-backed
+metrics extraction is not implemented here; the runner's summary may report
+missing aggregates even after a successful database write.
+
+### Prepare the hosts
+
 ```bash
 SSH_USER=ubuntu \
 SSH_KEY_PATH=/secure/path/continuum-key.pem \

@@ -583,7 +583,7 @@ if [[ -n "${profile}" ]]; then
   args+=(--profile "${profile}")
 fi
 args+=(-f "deploy/compose/distributed/${compose_file}" config)
-REPLAY_START_AT="$4" "${args[@]}"
+GLOBAL_POSTGRES_PASSWORD=__REDACTED__ REPLAY_START_AT="$4" "${args[@]}"
 REMOTE
   ssh_run "${PUBLIC_IPS["${role}"]}" bash -s -- \
     "${env_file}" "${compose_file}" "${profile}" "${REPLAY_START_AT:-1970-01-01T00:00:00Z}" <<'REMOTE' \
@@ -596,7 +596,7 @@ fi
 cd /opt/continuum/current
 args=(docker compose --env-file "$1")
 [[ -z "${profile}" ]] || args+=(--profile "${profile}")
-REPLAY_START_AT="$4" "${args[@]}" -f "deploy/compose/distributed/$2" config --format json
+GLOBAL_POSTGRES_PASSWORD=__REDACTED__ REPLAY_START_AT="$4" "${args[@]}" -f "deploy/compose/distributed/$2" config --format json
 REMOTE
 }
 
