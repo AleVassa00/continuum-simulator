@@ -35,11 +35,10 @@ Senza flag:
   prima della run esegue terraform init + apply -refresh-only.
 
 --provision:
-  prima della run esegue terraform init + plan + apply e distribuisce
-  l'applicazione sulle quattro EC2 risultanti.
+  prima della run esegue terraform init + plan + apply.
 
-Senza --provision, run-full.sh NON esegue deploygen e NON distribuisce codice
-sulle EC2. Per aggiornare codice o configurazione di deployment usare:
+run-full.sh NON esegue deploygen e NON distribuisce codice sulle EC2.
+Per aggiornare codice o configurazione di deployment usare separatamente:
   bash deploy/scripts/aws/deploy-pilot.sh EXPERIMENT_YAML
 EOF
 }
@@ -100,11 +99,6 @@ terraform_provision() {
   PLAN_FILE=""
 }
 
-deploy_after_provision() {
-  log "deployment applicativo dopo il provisioning"
-  bash "${SCRIPT_DIR}/deploy-pilot.sh" "${EXPERIMENT_CONFIG}"
-}
-
 main() {
   local arg
 
@@ -148,7 +142,6 @@ main() {
 
   if (( PROVISION == 1 )); then
     terraform_provision
-    deploy_after_provision
   elif (( REFRESH == 1 )); then
     terraform_refresh
   fi

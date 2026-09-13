@@ -24,9 +24,14 @@ Se l'infrastruttura deve essere realmente modificata:
 bash deploy/scripts/aws/run-full.sh experiments/cloud-scale-w1.yaml --provision
 ```
 
-`--provision` esegue `terraform init`, `plan`, `apply`, quindi `deploy-pilot.sh`
-sulle istanze create/aggiornate prima di avviare la run.
+`--provision` esegue soltanto `terraform init`, `plan` e `apply` prima di avviare
+`run-experiment.sh`. Non distribuisce l'applicazione: `deploy-pilot.sh` resta un
+comando esplicito e separato.
 `--refresh` esegue `terraform init` e `apply -refresh-only`.
+
+Se il provisioning crea o sostituisce una EC2, la run successiva segnalerà che il
+deployment applicativo è assente. In quel caso eseguire esplicitamente
+`deploy-pilot.sh` e poi rilanciare `run-full.sh` senza `--provision`.
 
 ## 2. deploy-pilot.sh: deployment applicativo
 

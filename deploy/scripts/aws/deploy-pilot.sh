@@ -81,7 +81,7 @@ generate_deployment() {
 
 write_deployment_info() {
   local destination="$1"
-  local git_commit dirty config_sha experiment_name
+  local git_commit dirty experiment_name
 
   git_commit="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD 2>/dev/null || true)"
   [[ -n "${git_commit}" ]] || git_commit="unknown"
@@ -91,7 +91,6 @@ write_deployment_info() {
     dirty=false
   fi
 
-  config_sha="$(jq -er '.config_sha256' "${COMPOSE_BUILD_DIR}/generation-manifest.json")"
   experiment_name="$(
     cd "${REPO_ROOT}"
     go run ./cmd/runconfig --experiment "${EXPERIMENT_CONFIG}" --describe |
@@ -101,16 +100,12 @@ write_deployment_info() {
   jq -n \
     --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" \
     --arg git_commit_sha "${git_commit}" \
-    --arg config_sha256 "${config_sha}" \
-    --arg resource_profile_sha256 "${RESOURCE_PROFILE_SHA256}" \
     --arg experiment "${experiment_name}" \
     --argjson git_dirty "${dirty}" \
     '{
       deployed_at: $deployed_at,
       git_commit_sha: $git_commit_sha,
       git_dirty: $git_dirty,
-      config_sha256: $config_sha256,
-      resource_profile_sha256: $resource_profile_sha256,
       experiment: $experiment
     }' >"${destination}"
 }

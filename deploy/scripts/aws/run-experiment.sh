@@ -910,14 +910,30 @@ check_container() {
 
   [[ "${restart_count}" == "0" ]] || { echo "${name} RestartCount=${restart_count}" >&2; return 1; }
   [[ "${oom_killed}" == "false" ]] || { echo "${name} OOMKilled=true" >&2; return 1; }
-  if [[ "${expected_state}" == "running" ]]; then
-    [[ "${state}" == "running" ]] || { echo "${name} state=${state}, atteso running" >&2; return 1; }
-  else
-    [[ "${state}" == "exited" && "${exit_code}" == "0" ]] || {
-      echo "${name} state=${state} exit=${exit_code}, atteso exited/0" >&2
+  case "${expected_state}" in
+    running)
+      [[ "${state}" == "running" ]] || {
+        echo "${name} state=${state}, atteso running" >&2
+        return 1
+      }
+      ;;
+    exited)
+      [[ "${state}" == "exited" && "${exit_code}" == "0" ]] || {
+        echo "${name} state=${state} exit=${exit_code}, atteso exited/0" >&2
+        return 1
+      }
+      ;;
+    running-or-exited-0)
+      [[ "${state}" == "running" || ( "${state}" == "exited" && "${exit_code}" == "0" ) ]] || {
+        echo "${name} state=${state} exit=${exit_code}, atteso running oppure exited/0" >&2
+        return 1
+      }
+      ;;
+    *)
+      echo "stato atteso non supportato per ${name}: ${expected_state}" >&2
       return 1
-    }
-  fi
+      ;;
+  esac
   [[ "${expected_health}" == "none" || "${health}" == "${expected_health}" ]] || {
     echo "${name} health=${health}, atteso ${expected_health}" >&2
     return 1
@@ -946,7 +962,7 @@ case "${role}" in
       if [[ "${phase}" == "before" ]]; then
         check_container "edge-${edge_number}" running healthy
       else
-        # Edge exits successfully after publishing its final aggregate and EOS.
+        # Edge exits successfully after handling Simulator EOS and publishing its final aggregate.
         # Healthchecks are meaningful only while the process is running.
         check_container "edge-${edge_number}" exited none
       fi
@@ -955,7 +971,8 @@ case "${role}" in
   simulator)
     for edge_number in $(seq 0 12); do
       if [[ "${phase}" == "before" ]]; then
-        check_container "simulator-edge-${edge_number}" running none
+        # A fast shard may already have completed between compose up and this snapshot.
+        check_container "simulator-edge-${edge_number}" running-or-exited-0 none
       else
         check_container "simulator-edge-${edge_number}" exited none
       fi
