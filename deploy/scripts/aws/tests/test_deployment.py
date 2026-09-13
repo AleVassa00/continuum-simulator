@@ -32,6 +32,41 @@ class ShellTests(unittest.TestCase):
                 result = subprocess.run([BASH, "-n", path.as_posix()], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_runner_checks_configured_topic_count_exactly(self):
+        command = '''
+source deploy/scripts/aws/run-experiment.sh
+PUBLIC_IPS[cloud-core]=local
+CONFIGURED_PARTITIONS=8
+KAFKA_READY_TIMEOUT_SECONDS=2
+POLL_INTERVAL_SECONDS=1
+ssh_run() { shift; "$@"; }
+docker() {
+  if [[ "$1" == inspect ]]; then
+    case "$3" in
+      *Health*) echo healthy ;;
+      *ExitCode*) echo 0 ;;
+      *) if [[ "$4" == kafka-init ]]; then echo exited; else echo running; fi ;;
+    esac
+  elif [[ "$*" == *'--topic edge-aggregates'* ]]; then
+    echo "Topic: edge-aggregates PartitionCount: $MOCK_PARTITIONS ReplicationFactor: 1"
+  else
+    echo "Topic: cloud-partition-aggregates PartitionCount: 1 ReplicationFactor: 1"
+  fi
+}
+export -f docker
+verify_kafka_tcp_from_role() { :; }
+wait_for_worker_group() { :; }
+wait_for_edges() { :; }
+coordinator_status() { :; }
+wait_for_kafka
+quick_preflight
+'''
+        result = self.shell(command, MOCK_PARTITIONS="8")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        for count in ("6", "80"):
+            result = self.shell(command, MOCK_PARTITIONS=count)
+            self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+
     def test_profile_load_and_source_fingerprint(self):
         result = self.shell('source deploy/scripts/aws/prepare-pilot.sh; load_resource_profile; '
                             'printf "%s" "$RESOURCE_PROFILE_VALUES"; calculate_source_sha256')
@@ -96,19 +131,20 @@ docker() {
   esac
 }
 export -f docker
-bash deploy/scripts/aws/collect-kafka-lag.sh 5 offline-test once
+bash deploy/scripts/aws/collect-kafka-lag.sh 5 offline-test once 6
 '''
         from test_artifacts import artifacts
         result = self.shell(command)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(artifacts.parse_lag(result.stdout)), 7)
+        self.assertEqual(len(artifacts.parse_lag(result.stdout, 6)), 7)
         self.assertEqual(result.stderr.count("docker create "), 1)
         self.assertIn("--network container:kafka --cpus 0.05", result.stderr)
         self.assertIn("sha256:prepared-image -broker localhost:29092 -interval 5s -mode once", result.stderr)
         self.assertNotIn("docker exec", result.stderr)
+        self.assertIn("--env SOURCE_PARTITION_COUNT=6", result.stderr)
         result = self.shell(command, MOCK_QUERY_EXIT="1")
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertEqual(artifacts.parse_lag(result.stdout), [])
+        self.assertEqual(artifacts.parse_lag(result.stdout, 6), [])
         result = self.shell('bash deploy/scripts/aws/collect-kafka-lag.sh 5 offline-test invalid')
         self.assertEqual(result.returncode, 2)
 
@@ -131,7 +167,7 @@ docker() {
   esac
 }
 export -f docker
-bash deploy/scripts/aws/collect-kafka-lag.sh 5 "offline-signal-$$" loop &
+bash deploy/scripts/aws/collect-kafka-lag.sh 5 "offline-signal-$$" loop 6 &
 collector=$!
 for ((attempt=0;attempt<100;attempt++)); do
   [[ ! -e "$MOCK_READY" ]] || break
@@ -254,6 +290,31 @@ finalize_run
 
 @unittest.skipUnless(DEPLOYGEN and shutil.which("docker"), "Set DEPLOYGEN_BIN and provide Docker Compose")
 class ComposeTests(unittest.TestCase):
+    def test_nondefault_partition_count_in_normalized_compose(self):
+        original = (REPO / "experiments/calibration-aws.yaml").read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "dataset/output").mkdir(parents=True)
+            (root / "dataset/output/kmeans_topology.csv").write_text("sensor_id,edge_id\nsensor-0,edge-0\n", encoding="utf-8")
+            (root / "experiment.yaml").write_text(original.replace("partitions: 6", "partitions: 8"), encoding="utf-8")
+            result = subprocess.run([DEPLOYGEN, "-mode", "distributed", "-experiment", "experiment.yaml"], cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            env = {**os.environ, "DEPLOYMENT_ID": "offline-check", "EDGE_HOST": "10.0.0.2",
+                   "CLOUD_KAFKA_HOST": "10.0.0.3", "KAFKA_ADVERTISED_HOST": "10.0.0.3",
+                   "REPLAY_START_AT": "2026-09-07T00:00:00Z"}
+            for role in ("edge", "cloud-core", "workers"):
+                path = root / "deploy/compose/distributed" / f"{role}.generated.yml"
+                result = subprocess.run(["docker", "compose", "--env-file", str(REPO / "deploy/resources/aws-pilot.env"),
+                    "-f", str(path), "config", "--format", "json"], cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                services = json.loads(result.stdout)["services"]
+                for name, service in services.items():
+                    if name in ("partition-coordinator", "global-aggregator") or name.startswith("cloud-worker-"):
+                        self.assertEqual(service["environment"]["SOURCE_PARTITION_COUNT"], "8")
+                    if name == "kafka-init":
+                        self.assertIn("--partitions 8", " ".join(service["command"]))
+                        self.assertIn("PartitionCount: 8([[:space:]]|$)", " ".join(service["command"]))
+
     def test_real_generated_configs_for_1_2_4_6_workers(self):
         original = (REPO / "experiments/calibration-aws.yaml").read_text()
         common_configs = {}
@@ -263,7 +324,7 @@ class ComposeTests(unittest.TestCase):
                 (root / "dataset/output").mkdir(parents=True)
                 # Synthetic topology keeps deployment tests independent of datasets.
                 (root / "dataset/output/kmeans_topology.csv").write_text(
-                    "edge_id\n" + "".join(f"edge-{i}\n" for i in range(13)), encoding="utf-8")
+                    "sensor_id,edge_id\n" + "".join(f"sensor-{i},edge-{i}\n" for i in range(13)), encoding="utf-8")
                 (root / "experiment.yaml").write_text(original.replace("workers: 1", f"workers: {workers}"), encoding="utf-8")
                 result = subprocess.run([DEPLOYGEN, "-mode", "distributed", "-experiment", "experiment.yaml"],
                                         cwd=root, capture_output=True, text=True)

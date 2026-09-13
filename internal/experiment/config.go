@@ -2,6 +2,7 @@ package experiment
 
 import (
 	"continuum/internal/cloudworker"
+	"continuum/internal/model"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -17,7 +18,45 @@ import (
 
 type Duration time.Duration
 
+type KafkaConfig struct {
+	Partitions *int `yaml:"partitions,omitempty"`
+}
+
+// yaml.v3 otherwise coerces fractional scalars to int. A partition count must
+// be an integer, and a supplied zero must not be confused with an absent value.
+func (config *KafkaConfig) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("kafka must be a mapping")
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		if key.Value != "partitions" {
+			return fmt.Errorf("unknown kafka field %q", key.Value)
+		}
+		if config.Partitions != nil {
+			return fmt.Errorf("duplicate kafka.partitions")
+		}
+		if value.Tag != "!!int" {
+			return fmt.Errorf("kafka.partitions must be an integer")
+		}
+		var count int
+		if err := value.Decode(&count); err != nil {
+			return err
+		}
+		config.Partitions = &count
+	}
+	return nil
+}
+
+func (config KafkaConfig) ResolvedPartitions() int {
+	if config.Partitions != nil {
+		return *config.Partitions
+	}
+	return model.DefaultSourcePartitionCount
+}
+
 type Config struct {
+	Kafka      KafkaConfig      `yaml:"kafka"`
 	Experiment ExperimentConfig `yaml:"experiment"`
 	Workload   WorkloadConfig   `yaml:"workload"`
 	Simulator  SimulatorConfig  `yaml:"simulator"`
@@ -59,6 +98,7 @@ func (config CloudConfig) ResolvedWatermarkDelay() Duration {
 }
 
 type EffectiveConfig struct {
+	Kafka      KafkaConfig             `yaml:"kafka"`
 	Experiment ExperimentConfig        `yaml:"experiment"`
 	Workload   EffectiveWorkloadConfig `yaml:"workload"`
 	Simulator  SimulatorConfig         `yaml:"simulator"`
@@ -138,6 +178,9 @@ func Decode(reader io.Reader) (Config, error) {
 }
 
 func (config Config) Validate() error {
+	if config.Kafka.ResolvedPartitions() <= 0 {
+		return fmt.Errorf("kafka.partitions deve essere maggiore di zero")
+	}
 	if strings.TrimSpace(config.Experiment.Name) == "" {
 		return fmt.Errorf("experiment.name non puo essere vuoto")
 	}
@@ -182,6 +225,10 @@ func (config Config) Validate() error {
 }
 
 func ResolveDefaults(config Config) Config {
+	if config.Kafka.Partitions == nil {
+		count := config.Kafka.ResolvedPartitions()
+		config.Kafka.Partitions = &count
+	}
 	simulator := config.Simulator
 	if simulator.StartLateTolerance.Duration() <= 0 {
 		simulator.StartLateTolerance = Duration(10 * time.Second)
@@ -219,6 +266,7 @@ func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
 	config = ResolveDefaults(config)
 
 	return EffectiveConfig{
+		Kafka:      config.Kafka,
 		Experiment: config.Experiment,
 		Workload: EffectiveWorkloadConfig{
 			AccelerationFactor: config.Workload.AccelerationFactor,

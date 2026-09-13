@@ -20,7 +20,7 @@ func partial(p int, start time.Time) model.CloudPartitionAggregate {
 func TestOnlyCertifiedPartitionCompleteness(t *testing.T) {
 	ctx := context.Background()
 	var outputs []model.GlobalAggregate
-	a, _ := New(func(_ context.Context, out model.GlobalAggregate) error { outputs = append(outputs, out); return nil })
+	a, _ := New(model.DefaultSourcePartitionCount, func(_ context.Context, out model.GlobalAggregate) error { outputs = append(outputs, out); return nil })
 	for p := 0; p < 5; p++ {
 		if err := a.Add(ctx, partial(p, testStart)); err != nil {
 			t.Fatal(err)
@@ -49,7 +49,7 @@ func TestOnlyCertifiedPartitionCompleteness(t *testing.T) {
 func TestNoWindowPolicyAndNoTimeout(t *testing.T) {
 	ctx := context.Background()
 	var output model.GlobalAggregate
-	a, _ := New(func(_ context.Context, out model.GlobalAggregate) error { output = out; return nil })
+	a, _ := New(model.DefaultSourcePartitionCount, func(_ context.Context, out model.GlobalAggregate) error { output = out; return nil })
 	start := testStart.Add(2 * time.Minute)
 	for p := 0; p < 6; p++ {
 		v := partial(p, start)
@@ -68,7 +68,7 @@ func TestDuplicateConflictAndSinkFailureRetry(t *testing.T) {
 	ctx := context.Background()
 	fail := true
 	emissions := 0
-	a, _ := New(func(context.Context, model.GlobalAggregate) error {
+	a, _ := New(model.DefaultSourcePartitionCount, func(context.Context, model.GlobalAggregate) error {
 		if fail {
 			return errors.New("sink unavailable")
 		}
@@ -105,7 +105,7 @@ func TestDuplicateConflictAndSinkFailureRetry(t *testing.T) {
 func TestPartitionEOSHandlesEmptyAndEarlyTerminatingPartitions(t *testing.T) {
 	ctx := context.Background()
 	emissions := 0
-	a, _ := New(func(context.Context, model.GlobalAggregate) error { emissions++; return nil })
+	a, _ := New(model.DefaultSourcePartitionCount, func(context.Context, model.GlobalAggregate) error { emissions++; return nil })
 	for p := 0; p < 5; p++ {
 		done, err := a.EndPartition(ctx, p)
 		if done || err != nil {
@@ -131,7 +131,7 @@ func TestPartitionEOSHandlesEmptyAndEarlyTerminatingPartitions(t *testing.T) {
 	if err := a.Add(ctx, partial(5, testStart.Add(time.Hour))); err == nil {
 		t.Fatal("new data after EOS")
 	}
-	empty, _ := New(func(context.Context, model.GlobalAggregate) error { t.Fatal("empty run emitted data"); return nil })
+	empty, _ := New(model.DefaultSourcePartitionCount, func(context.Context, model.GlobalAggregate) error { t.Fatal("empty run emitted data"); return nil })
 	for p := 0; p < 6; p++ {
 		_, err := empty.EndPartition(ctx, p)
 		if err != nil {
@@ -143,7 +143,7 @@ func TestPartitionEOSHandlesEmptyAndEarlyTerminatingPartitions(t *testing.T) {
 	}
 }
 func TestDifferentWindowBoundsNeverMerged(t *testing.T) {
-	a, _ := New(func(context.Context, model.GlobalAggregate) error { return nil })
+	a, _ := New(model.DefaultSourcePartitionCount, func(context.Context, model.GlobalAggregate) error { return nil })
 	a.Add(context.Background(), partial(0, testStart))
 	if err := a.Add(context.Background(), partial(1, testStart.Add(time.Minute))); err == nil {
 		t.Fatal("merged overlapping nonidentical windows")

@@ -20,7 +20,7 @@ import (
 
 func processorFixture(t *testing.T, partition int, delay time.Duration) (*CloudMessageProcessor, *[]kafka.Message) {
 	t.Helper()
-	a, err := cloudworker.NewPartitionAggregator(partition, cloudworker.DefaultWindowSize, delay)
+	a, err := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, cloudworker.DefaultWindowSize, delay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestSourceEOSValidationAndEmptyCompletion(t *testing.T) {
 func TestAggregateKeyAndActualPartitionValidation(t *testing.T) {
 	input := edgeInput(t, "edge-0", 0, 1)
 	// Ownership follows the actual Kafka partition, even if it differs from Hash.
-	input.Partition = (input.Partition + 1) % model.SourcePartitionCount
+	input.Partition = (input.Partition + 1) % model.DefaultSourcePartitionCount
 	p, wire := processorFixture(t, input.Partition, cloudworker.DefaultWatermarkDelay)
 	bad := input
 	bad.Key = []byte("wrong-edge")
@@ -83,7 +83,7 @@ func TestAggregateKeyAndActualPartitionValidation(t *testing.T) {
 		t.Fatal("mismatched Edge key accepted")
 	}
 	bad = input
-	bad.Partition = (input.Partition + 1) % model.SourcePartitionCount
+	bad.Partition = (input.Partition + 1) % model.DefaultSourcePartitionCount
 	if err := p.Process(context.Background(), bad); err == nil || len(*wire) != 0 {
 		t.Fatal("wrong owner accepted")
 	}
@@ -207,7 +207,7 @@ func TestDurationConfiguration(t *testing.T) {
 }
 
 func TestSourceEOSBalancerUsesActualPartition(t *testing.T) {
-	for partition := 0; partition < model.SourcePartitionCount; partition++ {
+	for partition := 0; partition < model.DefaultSourcePartitionCount; partition++ {
 		m := sourceEOS(partition)
 		if got := (sourcePartitionBalancer{}).Balance(m, 5, 4, 3, 2, 1, 0); got != partition {
 			t.Fatalf("EOS routed to %d, want %d", got, partition)

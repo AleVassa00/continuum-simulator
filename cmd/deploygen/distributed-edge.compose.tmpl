@@ -10,6 +10,7 @@ services:
     environment:
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
+      SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
       COORDINATOR_EXPECTED_EDGE_IDS: "{{.ExpectedEdgeIDs}}"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/readyz >/dev/null 2>&1"]

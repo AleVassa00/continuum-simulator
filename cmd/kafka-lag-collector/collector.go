@@ -21,9 +21,11 @@ type target struct {
 	partitions   int
 }
 
-var targets = []target{
-	{"cloud-workers", "edge-aggregates", 6},
-	{"global-aggregator", "cloud-partition-aggregates", 1},
+func targets(count int) []target {
+	return []target{
+		{"cloud-workers", "edge-aggregates", count},
+		{"global-aggregator", "cloud-partition-aggregates", 1},
+	}
 }
 
 type lagRow struct {
@@ -85,9 +87,9 @@ func snapshot(ctx context.Context, client offsetClient, t target) ([]lagRow, err
 
 // Retains the existing parser's complete-query envelope and six numeric columns.
 // No partial rows or fabricated zeros are emitted when a query fails.
-func sample(ctx context.Context, client offsetClient, out io.Writer) bool {
+func sample(ctx context.Context, client offsetClient, out io.Writer, count int) bool {
 	success := true
-	for _, t := range targets {
+	for _, t := range targets(count) {
 		if ctx.Err() != nil {
 			return false
 		}
@@ -110,14 +112,14 @@ func sample(ctx context.Context, client offsetClient, out io.Writer) bool {
 	return success
 }
 
-func collect(ctx context.Context, client offsetClient, out io.Writer, interval time.Duration, once bool) error {
+func collect(ctx context.Context, client offsetClient, out io.Writer, interval time.Duration, once bool, count int) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		ok := sample(ctx, client, out)
+		ok := sample(ctx, client, out, count)
 		if once {
 			if !ok {
 				return fmt.Errorf("Kafka lag snapshot incomplete; see query errors")

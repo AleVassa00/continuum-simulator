@@ -46,8 +46,14 @@ func (f *fakeOffsets) ListOffsets(_ context.Context, req *kafka.ListOffsetsReque
 }
 
 func TestSnapshot(t *testing.T) {
+	for _, count := range []int{1, 3, 8} {
+		rows, err := snapshot(context.Background(), &fakeOffsets{}, targets(count)[0])
+		if err != nil || len(rows) != count {
+			t.Fatalf("count=%d rows=%v error=%v", count, rows, err)
+		}
+	}
 	client := &fakeOffsets{}
-	rows, err := snapshot(context.Background(), client, targets[0])
+	rows, err := snapshot(context.Background(), client, targets(6)[0])
 	if err != nil || len(rows) != 6 {
 		t.Fatalf("rows=%v error=%v", rows, err)
 	}
@@ -72,7 +78,7 @@ func TestSnapshot(t *testing.T) {
 		{"duplicate partition", fakeOffsets{ends: func(r *kafka.ListOffsetsResponse) { r.Topics["edge-aggregates"][0].Partition = 1 }}},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			rows, err := snapshot(context.Background(), &scenario.fake, targets[0])
+			rows, err := snapshot(context.Background(), &scenario.fake, targets(6)[0])
 			if err == nil || rows != nil {
 				t.Fatalf("invalid snapshot became data: rows=%v error=%v", rows, err)
 			}
@@ -82,7 +88,7 @@ func TestSnapshot(t *testing.T) {
 
 func TestOnceFormatAndFailure(t *testing.T) {
 	var out bytes.Buffer
-	err := collect(context.Background(), &fakeOffsets{}, &out, time.Second, true)
+	err := collect(context.Background(), &fakeOffsets{}, &out, time.Second, true, 6)
 	if err != nil || strings.Count(out.String(), "===== query_exit 0 at ") != 2 {
 		t.Fatalf("%v: %s", err, &out)
 	}
@@ -93,7 +99,7 @@ func TestOnceFormatAndFailure(t *testing.T) {
 	out.Reset()
 	err = collect(context.Background(), &fakeOffsets{fetch: func(r *kafka.OffsetFetchResponse) {
 		r.Error = errors.New("broker unavailable")
-	}}, &out, time.Second, true)
+	}}, &out, time.Second, true, 6)
 	if err == nil || strings.Count(out.String(), "===== query_exit 1 at ") != 2 || strings.Contains(out.String(), " - - -") {
 		t.Fatalf("failure must not fabricate zero lag: %v: %s", err, &out)
 	}
@@ -113,7 +119,7 @@ func TestLoopRecoversAndStops(t *testing.T) {
 			cancel()
 		}
 	}}
-	if err := collect(ctx, client, &out, time.Millisecond, false); err != nil {
+	if err := collect(ctx, client, &out, time.Millisecond, false, 6); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 4 || strings.Count(out.String(), "===== query_exit 1 at ") != 2 || strings.Count(out.String(), "===== query_exit 0 at ") != 2 {

@@ -16,8 +16,10 @@ import shlex
 import statistics
 
 
-GROUPS = {"cloud-workers": ("edge-aggregates", 6),
-          "global-aggregator": ("cloud-partition-aggregates", 1)}
+def kafka_groups(partitions):
+    return {"cloud-workers": ("edge-aggregates", partitions),
+            "global-aggregator": ("cloud-partition-aggregates", 1)}
+
 UNITS = {"B": 1, "kB": 1000, "MB": 1000**2, "GB": 1000**3,
          "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3}
 
@@ -58,7 +60,7 @@ def unique_sites(rows, expected, label):
         raise ValueError(f"{label}: expected one row per site {sorted(expected)}, got {ids}")
 
 
-def late_records(text, expected):
+def late_records(text, expected, partitions):
     """Deduplicate late aggregate IDs, never use retry attempts as a loss allowance.
 
     Closed-window state is evicted by Cloud. Its late logs cannot distinguish a
@@ -79,7 +81,7 @@ def late_records(text, expected):
         row = {key: fields[key] for key in required}
         for key in ("events", "source_partition", "offset"):
             row[key] = int(row[key])
-        if row["events"] <= 0 or not 0 <= row["source_partition"] < 6 or row["offset"] < 0 or row["edge_id"] not in expected:
+        if row["events"] <= 0 or not 0 <= row["source_partition"] < partitions or row["offset"] < 0 or row["edge_id"] not in expected:
             raise ValueError(f"Invalid late record: {row}")
         # slog renders time.Time in RFC3339; reject malformed evidence.
         timestamp(row["cloud_window_end"])
@@ -103,7 +105,7 @@ def number_unit(value):
     return result
 
 
-def parse_lag(text):
+def parse_lag(text, source_partitions):
     """Only accept complete, successful partition snapshots, including final ones."""
     result, current, partitions = [], None, []
     for line in text.splitlines():
@@ -113,7 +115,7 @@ def parse_lag(text):
             partitions = []
         elif line.startswith("===== query_exit ") and current:
             group, observed = current
-            expected_topic, expected_count = GROUPS[group]
+            expected_topic, expected_count = kafka_groups(source_partitions)[group]
             completion = re.fullmatch(r"===== query_exit 0(?: at (\S+))? =====", line)
             if completion and completion[1]:
                 observed = completion[1]
@@ -186,6 +188,9 @@ def summarize_containers(rows):
 
 def summarize(directory):
     metadata = read_json(directory / "run-metadata.json")
+    partitions = metadata["kafka_partitions"]
+    if type(partitions) is not int or partitions <= 0:
+        raise ValueError("kafka_partitions must be a positive integer")
     config = read_json(directory / "compose" / "simulator.normalized.json")
     environments = [service["environment"] for service in config["services"].values()]
     expected = [env["SITE_ID"] for env in environments]
@@ -203,7 +208,7 @@ def summarize(directory):
     simulators = records(logs["simulator"], "SIMULATOR_STATS")
     edges = records(logs["edge"], "EDGE_STATS")
     globals_ = records(logs["cloud-core"], "GLOBAL_AGGREGATE")
-    late, late_attempts, late_event_attempts = late_records(logs["workers"], expected)
+    late, late_attempts, late_event_attempts = late_records(logs["workers"], expected, partitions)
     unique_sites(simulators, expected, "SIMULATOR_STATS")
     unique_sites(edges, expected, "EDGE_STATS")
     if not globals_:
@@ -258,8 +263,8 @@ def summarize(directory):
         if late else "")
     summary["global_windows_total"] = len(globals_)
     summary["global_duplicate_ids_total"] = len(globals_) - len({row["aggregate_id"] for row in globals_})
-    summary["global_incomplete_windows_total"] = sum(row["contributing_partitions"] != 6 or
-                                                    row["expected_partitions"] != 6 for row in globals_)
+    summary["global_incomplete_windows_total"] = sum(row["contributing_partitions"] != partitions or
+                                                    row["expected_partitions"] != partitions for row in globals_)
     summary["global_protocol_errors_total"] = logs["cloud-core"].count("global protocol error")
     for key in ("simulator_locally_dropped_total", "simulator_mqtt_errors_total", "simulator_eos_failures_total",
                 "edge_ingress_queue_dropped_total", "edge_invalid_total", "edge_out_of_order_dropped_total",
@@ -282,9 +287,9 @@ def summarize(directory):
             flat.update({f"{metric}_{key}": value for key, value in row[metric].items()})
         window_rows.append(flat)
 
-    lag = [row for row in parse_lag((directory / "metrics" / "kafka-lag.log").read_text(encoding="utf-8-sig"))
+    lag = [row for row in parse_lag((directory / "metrics" / "kafka-lag.log").read_text(encoding="utf-8-sig"), partitions)
            if start <= timestamp(row["timestamp"]) <= end]
-    final_lag = [row for row in parse_lag((directory / "kafka-consumer-groups-final.txt").read_text(encoding="utf-8-sig"))
+    final_lag = [row for row in parse_lag((directory / "kafka-consumer-groups-final.txt").read_text(encoding="utf-8-sig"), partitions)
                  if timestamp(row["timestamp"]) >= end]
     for group, prefix in (("cloud-workers", "cloud_workers"), ("global-aggregator", "global_aggregator")):
         totals, final = lag_totals(lag, group), lag_totals(final_lag, group)
@@ -295,7 +300,7 @@ def summarize(directory):
             failures.append(f"missing_lag_samples:{group}")
         elif summary[f"{prefix}_final_lag"] != 0:
             failures.append(f"nonzero_final_lag:{group}")
-    for group, (topic, _) in GROUPS.items():
+    for group, (topic, _) in kafka_groups(partitions).items():
         rows = [row for row in final_lag if row["group"] == group]
         latest = max((row["timestamp"] for row in rows), key=timestamp, default=None)
         summary[topic.replace("-", "_") + "_topic_records"] = (

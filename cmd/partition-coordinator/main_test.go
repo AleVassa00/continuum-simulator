@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"continuum/internal/model"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +13,7 @@ import (
 
 func TestControlEndpoints(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	c, err := partitioncompletion.New(ctx, []string{"edge-0"}, func(context.Context, int) error { return nil })
+	c, err := partitioncompletion.New(ctx, model.DefaultSourcePartitionCount, []string{"edge-0"}, func(context.Context, int) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

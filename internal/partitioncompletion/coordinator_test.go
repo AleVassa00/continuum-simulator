@@ -16,7 +16,7 @@ func producerIDs(p, count int) []string {
 	var ids []string
 	for i := 0; len(ids) < count; i++ {
 		id := fmt.Sprintf("edge-%d", i)
-		if kafkautil.PartitionForEdge(id) == p {
+		if kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount) == p {
 			ids = append(ids, id)
 		}
 	}
@@ -40,7 +40,7 @@ func TestIndependentPartitionsAndConcurrentIdempotentCompletion(t *testing.T) {
 	ids := append(append([]string{}, p0...), p1...)
 	published := make(chan int, 20)
 	blocked := make(chan struct{})
-	c, err := New(ctx, ids, func(ctx context.Context, p int) error {
+	c, err := New(ctx, model.DefaultSourcePartitionCount, ids, func(ctx context.Context, p int) error {
 		published <- p
 		if p == 0 {
 			select {
@@ -63,7 +63,7 @@ func TestIndependentPartitionsAndConcurrentIdempotentCompletion(t *testing.T) {
 	}
 	// Empty partitions are closed independently at startup, no data/Edge EOS needed.
 	seen := map[int]bool{}
-	for i := 2; i < model.SourcePartitionCount; i++ {
+	for i := 2; i < model.DefaultSourcePartitionCount; i++ {
 		p := receive(t, published)
 		if p < 2 || seen[p] {
 			t.Fatalf("unexpected empty EOS %d", p)
@@ -123,7 +123,7 @@ func TestIndependentPartitionsAndConcurrentIdempotentCompletion(t *testing.T) {
 func TestPublishFailureIsFatalAndNotComplete(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ids := producerIDs(0, 1)
-	c, err := New(ctx, ids, func(ctx context.Context, p int) error { return errors.New("broker unavailable") })
+	c, err := New(ctx, model.DefaultSourcePartitionCount, ids, func(ctx context.Context, p int) error { return errors.New("broker unavailable") })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestPublishFailureIsFatalAndNotComplete(t *testing.T) {
 
 func TestProducerConfigValidation(t *testing.T) {
 	for _, ids := range [][]string{nil, {""}, {"edge-0", "edge-0"}, {" edge-0"}} {
-		if _, err := New(context.Background(), ids, func(context.Context, int) error { return nil }); err == nil {
+		if _, err := New(context.Background(), model.DefaultSourcePartitionCount, ids, func(context.Context, int) error { return nil }); err == nil {
 			t.Fatalf("accepted %v", ids)
 		}
 	}

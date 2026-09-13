@@ -20,8 +20,8 @@ artifacts = module("summarize-run")
 budget = module("check-resource-budget")
 
 
-def lag_snapshot(group, observed, lag=0):
-    topic, count = artifacts.GROUPS[group]
+def lag_snapshot(group, observed, lag=0, partitions=6):
+    topic, count = artifacts.kafka_groups(partitions)[group]
     rows = [f"{group} {topic} {p} {10-lag} 10 {lag} consumer host client" for p in range(count)]
     return f"===== group {group} sample {observed} =====\n" + "\n".join(rows) + "\n===== query_exit 0 =====\n"
 
@@ -29,7 +29,7 @@ def lag_snapshot(group, observed, lag=0):
 def fixture(root):
     for child in ("logs", "metrics", "compose"):
         (root / child).mkdir()
-    metadata = {"run_id": "test-run", "workers": 1, "status": "completed", "orchestrator_exit_code": 0,
+    metadata = {"kafka_partitions": 6, "run_id": "test-run", "workers": 1, "status": "completed", "orchestrator_exit_code": 0,
                 "replay_start_at": "2026-09-07T00:00:00Z"}
     (root / "run-metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
     config = {"services": {f"simulator-edge-{i}": {"environment": {
@@ -57,11 +57,32 @@ def fixture(root):
                         "cloud-core": ["kafka", "global-aggregator"], "workers": ["cloud-worker-0"]}.items():
         (root / "metrics" / f"{role}.log").write_text("===== sample 2026-09-07T00:00:01Z =====\n-- docker-stats\n" +
             "\n".join(json.dumps({"Name": name, "CPUPerc": "25.0%", "MemUsage": "16MiB / 128MiB"}) for name in names), encoding="utf-8")
-    (root / "metrics/kafka-lag.log").write_text("".join(lag_snapshot(group, "2026-09-07T00:00:01Z", 2) for group in artifacts.GROUPS), encoding="utf-8")
-    (root / "kafka-consumer-groups-final.txt").write_text("".join(lag_snapshot(group, "2026-09-07T00:00:03Z") for group in artifacts.GROUPS), encoding="utf-8")
+    (root / "metrics/kafka-lag.log").write_text("".join(lag_snapshot(group, "2026-09-07T00:00:01Z", 2) for group in artifacts.kafka_groups(6)), encoding="utf-8")
+    (root / "kafka-consumer-groups-final.txt").write_text("".join(lag_snapshot(group, "2026-09-07T00:00:03Z") for group in artifacts.kafka_groups(6)), encoding="utf-8")
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_configured_partitions_in_summary_and_lag(self):
+        for count in (1, 3, 8):
+            metadata_path = self.root / "run-metadata.json"
+            metadata = json.loads(metadata_path.read_text())
+            metadata["kafka_partitions"] = count
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            log_path = self.root / "logs/cloud-core.log"
+            windows = artifacts.records(log_path.read_text(), "GLOBAL_AGGREGATE")
+            for row in windows:
+                row["expected_partitions"] = row["contributing_partitions"] = count
+            log_path.write_text("\n".join("GLOBAL_AGGREGATE " + json.dumps(row) for row in windows) +
+                                "\n2026-09-07T00:00:02Z GLOBAL_REPLAY_COMPLETED\n", encoding="utf-8")
+            for name, observed, lag in (("metrics/kafka-lag.log", "2026-09-07T00:00:01Z", 2),
+                                        ("kafka-consumer-groups-final.txt", "2026-09-07T00:00:03Z", 0)):
+                (self.root / name).write_text("".join(lag_snapshot(group, observed, lag, count)
+                    for group in artifacts.kafka_groups(count)), encoding="utf-8")
+            result = artifacts.summarize(self.root)
+            self.assertEqual(result["quality_status"], "pass")
+            self.assertEqual(result["cloud_workers_max_total_lag"], 2*count)
+            self.assertEqual(result["cloud_workers_final_lag"], 0)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -198,7 +219,7 @@ class ArtifactTests(unittest.TestCase):
 
     def test_failed_query_with_plausible_rows_is_ignored(self):
         raw = lag_snapshot("cloud-workers", "2026-09-07T00:00:01Z").replace("query_exit 0", "query_exit 1")
-        self.assertEqual(artifacts.parse_lag(raw), [])
+        self.assertEqual(artifacts.parse_lag(raw, 6), [])
 
     def test_empty_periodic_lag_is_not_zero(self):
         (self.root / "metrics/kafka-lag.log").write_text("", encoding="utf-8")
@@ -216,7 +237,7 @@ class ArtifactTests(unittest.TestCase):
     def test_query_completion_timestamp_defines_observation(self):
         raw = lag_snapshot("cloud-workers", "2026-09-07T00:00:01Z").replace(
             "query_exit 0 =====", "query_exit 0 at 2026-09-07T00:00:04.123456789Z =====")
-        rows = artifacts.parse_lag(raw)
+        rows = artifacts.parse_lag(raw, 6)
         self.assertEqual(len(rows), 6)
         self.assertEqual(artifacts.timestamp(rows[0]["timestamp"]).microsecond, 123456)
         (self.root / "metrics/kafka-lag.log").write_text(raw, encoding="utf-8")

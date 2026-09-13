@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"continuum/internal/envutil"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -22,11 +23,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "require -broker, positive -interval and -mode loop|once")
 		os.Exit(2)
 	}
+	count, err := envutil.SourcePartitionCount()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	transport := &kafka.Transport{ClientID: "continuum-lag-collector"}
 	client := &kafka.Client{Addr: kafka.TCP(*broker), Transport: transport, Timeout: queryTimeout}
-	err := collect(ctx, client, os.Stdout, *interval, *mode == "once")
+	err = collect(ctx, client, os.Stdout, *interval, *mode == "once", count)
 	transport.CloseIdleConnections()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

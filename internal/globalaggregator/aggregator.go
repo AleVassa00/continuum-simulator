@@ -17,20 +17,26 @@ type partitionState struct {
 
 // Exact-window reducer: no Edge membership, timers, or event-time window policy.
 type Aggregator struct {
-	partitions [model.SourcePartitionCount]partitionState
+	partitions []partitionState
 	windows    map[windowKey]*windowState
 	sink       GlobalAggregateSink
 	complete   bool
 }
 
-func New(sink GlobalAggregateSink) (*Aggregator, error) {
+func New(count int, sink GlobalAggregateSink) (*Aggregator, error) {
+	if count <= 0 {
+		return nil, fmt.Errorf("source partition count must be positive")
+	}
 	if sink == nil {
 		return nil, fmt.Errorf("Global sink is required")
 	}
-	return &Aggregator{windows: make(map[windowKey]*windowState), sink: sink}, nil
+	return &Aggregator{partitions: make([]partitionState, count), windows: make(map[windowKey]*windowState), sink: sink}, nil
 }
 func (a *Aggregator) Add(ctx context.Context, input model.CloudPartitionAggregate) error {
 	if err := model.ValidateCloudPartitionAggregate(input); err != nil {
+		return err
+	}
+	if err := model.ValidateSourcePartition(input.SourcePartition, len(a.partitions)); err != nil {
 		return err
 	}
 	p := &a.partitions[input.SourcePartition]
@@ -77,6 +83,9 @@ func (a *Aggregator) Progress(ctx context.Context, progress model.PartitionProgr
 	if err := model.ValidatePartitionProgress(progress); err != nil {
 		return err
 	}
+	if err := model.ValidateSourcePartition(progress.SourcePartition, len(a.partitions)); err != nil {
+		return err
+	}
 	p := &a.partitions[progress.SourcePartition]
 	if p.ended {
 		return fmt.Errorf("partition progress after EOS")
@@ -88,7 +97,7 @@ func (a *Aggregator) Progress(ctx context.Context, progress model.PartitionProgr
 	return a.emitReady(ctx)
 }
 func (a *Aggregator) EndPartition(ctx context.Context, partition int) (bool, error) {
-	if err := model.ValidateSourcePartition(partition); err != nil {
+	if err := model.ValidateSourcePartition(partition, len(a.partitions)); err != nil {
 		return false, err
 	}
 	a.partitions[partition].ended = true
@@ -122,7 +131,7 @@ func (a *Aggregator) emitReady(ctx context.Context) error {
 			continue
 		}
 		// Missing partials count as zero ONLY after ordered progress/EOS certificates.
-		out := s.buildAggregate(model.SourcePartitionCount, time.Now().UTC())
+		out := s.buildAggregate(uint64(len(a.partitions)), time.Now().UTC())
 		if err := ValidateGlobalAggregate(out); err != nil {
 			return err
 		}

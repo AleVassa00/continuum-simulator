@@ -57,6 +57,7 @@ services:
       - /bin/bash
       - -c
       - |
+        set -euo pipefail
         /opt/kafka/bin/kafka-topics.sh \
           --bootstrap-server kafka:29092 \
           --create \
@@ -72,6 +73,11 @@ services:
           --topic cloud-partition-aggregates \
           --partitions 1 \
           --replication-factor 1
+
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic edge-aggregates |
+          grep -E 'PartitionCount: 6([[:space:]]|$)' >/dev/null || { echo "edge-aggregates partition count differs from kafka.partitions; recreate the topic before a new run" >&2; exit 1; }
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic cloud-partition-aggregates |
+          grep -E 'PartitionCount: 1([[:space:]]|$)' >/dev/null || { echo "cloud-partition-aggregates must have one partition" >&2; exit 1; }
 
     networks:
       - cloud-core

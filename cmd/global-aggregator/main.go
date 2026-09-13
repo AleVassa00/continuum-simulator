@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"continuum/internal/globalaggregator"
-	"continuum/internal/model"
 )
 
 func main() {
@@ -40,7 +39,7 @@ func main() {
 	}
 	defer cleanup()
 
-	aggregator, err := globalaggregator.New(sink)
+	aggregator, err := globalaggregator.New(config.SourcePartitionCount, sink)
 	if err != nil {
 		panic(err)
 	}
@@ -57,7 +56,7 @@ func main() {
 	fmt.Printf("Kafka broker: %s\n", config.KafkaBroker)
 	fmt.Printf("Input topic: %s\n", config.InputTopic)
 	fmt.Printf("Consumer group: %s\n", config.GroupID)
-	fmt.Printf("Expected source partitions: %d\n", model.SourcePartitionCount)
+	fmt.Printf("Expected source partitions: %d\n", config.SourcePartitionCount)
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(),

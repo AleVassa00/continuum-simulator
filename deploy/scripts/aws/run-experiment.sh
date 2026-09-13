@@ -20,6 +20,7 @@ EXPERIMENT_CONFIG_PATH=""
 EXPERIMENT_NAME=""
 CONFIG_SHA256=""
 CONFIGURED_WORKERS="0"
+CONFIGURED_PARTITIONS="0"
 WORKER_COUNT="0"
 DEPLOYMENT_ID_VALUE=""
 DEPLOYED_GIT_COMMIT_SHA=""
@@ -60,6 +61,7 @@ load_experiment_description() {
     die "impossibile leggere la configurazione esperimento"
   EXPERIMENT_NAME="$(jq -er '.experiment_name' <<<"${description}")"
   CONFIGURED_WORKERS="$(jq -er '.workers' <<<"${description}")"
+  CONFIGURED_PARTITIONS="$(jq -er '.kafka_partitions | select(type == "number" and . > 0 and . == floor)' <<<"${description}")"
   CONFIG_SHA256="$(jq -er '.config_sha256 | select(type == "string" and length == 64)' <<<"${description}")"
   [[ "${CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]] || die "config_sha256 non valido"
 }
@@ -209,6 +211,7 @@ write_run_metadata() {
     --arg replay_launched_at "${REPLAY_LAUNCHED_AT}" \
     --arg finished_at "${RUN_FINISHED_AT}" \
     --argjson workers "${WORKER_COUNT:-0}" \
+    --argjson kafka_partitions "${CONFIGURED_PARTITIONS}" \
     --argjson metrics_interval_seconds "${METRICS_INTERVAL_SECONDS}" \
     --argjson instance_identities "${INSTANCE_IDENTITIES}" \
     --argjson exit_code "${exit_code}" \
@@ -222,6 +225,7 @@ write_run_metadata() {
       source_sha256: $source_sha256,
       resource_profile_sha256: $resource_profile_sha256,
       workers: $workers,
+      kafka_partitions: $kafka_partitions,
       orchestration_started_at: $orchestration_started_at,
       clock_verified_at: $clock_verified_at,
       replay_start_at: $replay_start_at,
@@ -295,7 +299,7 @@ finalize_run() {
   stop_metric_collectors
   if [[ -n "${ARTIFACT_DIR}" ]]; then
     if [[ "${KAFKA_METRICS_STARTED}" == "true" ]]; then
-      ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" once \
+      ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" once "${CONFIGURED_PARTITIONS}" \
         <"${SCRIPT_DIR}/collect-kafka-lag.sh" >"${ARTIFACT_DIR}/kafka-consumer-groups-final.txt" 2>&1
     fi
     capture_container_states final
@@ -524,7 +528,7 @@ REMOTE
 }
 
 start_kafka_metrics() {
-  ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" \
+  ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${METRICS_INTERVAL_SECONDS}" "${RUN_ID_VALUE}" loop "${CONFIGURED_PARTITIONS}" \
     <"${SCRIPT_DIR}/collect-kafka-lag.sh" >"${ARTIFACT_DIR}/metrics/kafka-lag.log" 2>&1 &
   METRICS_PIDS[kafka-lag]="$!"
   KAFKA_METRICS_STARTED="true"
@@ -632,10 +636,11 @@ docker compose --env-file .env -f deploy/compose/distributed/cloud-core.generate
 wait_for_kafka() {
   log "3/9 attesa Kafka healthy e topic"
   ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- \
-    "${KAFKA_READY_TIMEOUT_SECONDS}" "${POLL_INTERVAL_SECONDS}" <<'REMOTE'
+    "${KAFKA_READY_TIMEOUT_SECONDS}" "${POLL_INTERVAL_SECONDS}" "${CONFIGURED_PARTITIONS}" <<'REMOTE'
 set -euo pipefail
 timeout_seconds="$1"
 poll_seconds="$2"
+partition_count="$3"
 deadline=$(( $(date +%s) + timeout_seconds ))
 
 while (( $(date +%s) < deadline )); do
@@ -654,8 +659,8 @@ while (( $(date +%s) < deadline )); do
       --bootstrap-server kafka:29092 --describe --topic edge-aggregates)"
     cloud_topic="$(docker exec kafka /opt/kafka/bin/kafka-topics.sh \
       --bootstrap-server kafka:29092 --describe --topic cloud-partition-aggregates)"
-    grep -F 'PartitionCount: 6' <<<"${edge_topic}" >/dev/null || exit 1
-    grep -F 'PartitionCount: 1' <<<"${cloud_topic}" >/dev/null || exit 1
+    grep -E "PartitionCount: ${partition_count}([[:space:]]|$)" <<<"${edge_topic}" >/dev/null || exit 1
+    grep -E "PartitionCount: 1([[:space:]]|$)" <<<"${cloud_topic}" >/dev/null || exit 1
     exit 0
   fi
   sleep "${poll_seconds}"
@@ -836,13 +841,16 @@ verify_all_clocks() {
 
 quick_preflight() {
   log "preflight end-to-end immediatamente precedente alla barriera temporale"
-  ssh_run "${PUBLIC_IPS[cloud-core]}" 'set -euo pipefail
+  ssh_run "${PUBLIC_IPS[cloud-core]}" bash -s -- "${CONFIGURED_PARTITIONS}" <<'REMOTE'
+set -euo pipefail
+partition_count="$1"
 [[ "$(docker inspect --format "{{.State.Health.Status}}" kafka)" == "healthy" ]]
 [[ "$(docker inspect --format "{{.State.Status}}" global-aggregator)" == "running" ]]
 docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic edge-aggregates |
-  grep -F "PartitionCount: 6" >/dev/null
+  grep -E "PartitionCount: ${partition_count}([[:space:]]|$)" >/dev/null
 docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic cloud-partition-aggregates |
-  grep -F "PartitionCount: 1" >/dev/null'
+  grep -E "PartitionCount: 1([[:space:]]|$)" >/dev/null
+REMOTE
   verify_kafka_tcp_from_role edge
   verify_kafka_tcp_from_role workers
   wait_for_worker_group "${KAFKA_READY_TIMEOUT_SECONDS}"

@@ -18,30 +18,30 @@ type fixedPartition int
 
 func (p fixedPartition) Balance(_ kafka.Message, _ ...int) int { return int(p) }
 
-func sourceEndPublisher(broker, topic string) (partitioncompletion.Publisher, func()) {
-	var writers [model.SourcePartitionCount]*kafka.Writer
+func sourceEndPublisher(broker, topic string, count int) (partitioncompletion.Publisher, func()) {
+	writers := make([]*kafka.Writer, count)
 	for p := range writers {
 		writers[p] = &kafka.Writer{Addr: kafka.TCP(broker), Topic: topic, Balancer: fixedPartition(p), RequiredAcks: kafka.RequireAll, BatchSize: 1, Async: false, WriteTimeout: kafkaTimeout, ReadTimeout: kafkaTimeout}
 	}
 	return func(ctx context.Context, p int) error {
-		if err := model.ValidateSourcePartition(p); err != nil {
+			if err := model.ValidateSourcePartition(p, count); err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(ctx, kafkaTimeout)
+			defer cancel()
+			err := writers[p].WriteMessages(ctx, kafka.Message{Key: []byte(model.PartitionKey(p)), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeSourcePartitionEndOfInput)}}})
+			if err == nil {
+				fmt.Printf("SOURCE_PARTITION_INPUT_ENDED partition=%d\n", p)
+			}
 			return err
+		}, func() {
+			for _, writer := range writers {
+				writer.Close()
+			}
 		}
-		ctx, cancel := context.WithTimeout(ctx, kafkaTimeout)
-		defer cancel()
-		err := writers[p].WriteMessages(ctx, kafka.Message{Key: []byte(model.PartitionKey(p)), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeSourcePartitionEndOfInput)}}})
-		if err == nil {
-			fmt.Printf("SOURCE_PARTITION_INPUT_ENDED partition=%d\n", p)
-		}
-		return err
-	}, func() {
-		for _, writer := range writers {
-			writer.Close()
-		}
-	}
 }
 
-func validateSourceTopic(ctx context.Context, broker, topic string) error {
+func validateSourceTopic(ctx context.Context, broker, topic string, count int) error {
 	ctx, cancel := context.WithTimeout(ctx, kafkaTimeout)
 	defer cancel()
 	conn, err := kafka.DialContext(ctx, "tcp", broker)
@@ -56,12 +56,12 @@ func validateSourceTopic(ctx context.Context, broker, topic string) error {
 	if err != nil {
 		return err
 	}
-	if len(partitions) != model.SourcePartitionCount {
-		return fmt.Errorf("source topic must have exactly %d partitions", model.SourcePartitionCount)
+	if len(partitions) != count {
+		return fmt.Errorf("source topic must have exactly %d partitions", count)
 	}
 	seen := make(map[int]bool)
 	for _, p := range partitions {
-		if p.Topic != topic || model.ValidateSourcePartition(p.ID) != nil || seen[p.ID] {
+		if p.Topic != topic || model.ValidateSourcePartition(p.ID, count) != nil || seen[p.ID] {
 			return fmt.Errorf("unexpected source partition metadata")
 		}
 		seen[p.ID] = true

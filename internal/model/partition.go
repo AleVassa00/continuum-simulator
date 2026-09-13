@@ -6,25 +6,27 @@ import (
 	"time"
 )
 
-// SourcePartitionCount is fixed for the entire experiment, regardless of workers.
-const SourcePartitionCount = 6
+// DefaultSourcePartitionCount is used when kafka.partitions is omitted.
+// The configured count is fixed before a run and independent of Edge/Worker counts.
+const DefaultSourcePartitionCount = 6
 
-func ValidateSourcePartition(partition int) error {
-	if partition < 0 || partition >= SourcePartitionCount {
-		return fmt.Errorf("source partition %d outside [0,%d)", partition, SourcePartitionCount)
+func ValidateSourcePartition(partition, count int) error {
+	if count <= 0 || partition < 0 || partition >= count {
+		return fmt.Errorf("source partition %d outside [0,%d)", partition, count)
 	}
 	return nil
 }
 
 func PartitionKey(partition int) string { return strconv.Itoa(partition) }
 
+// Wire validation is structural; the owning aggregator validates the configured bound.
 func ParsePartitionKey(key []byte) (int, error) {
 	partition, err := strconv.Atoi(string(key))
 	if err != nil {
 		return 0, fmt.Errorf("invalid partition key %q", key)
 	}
-	if err := ValidateSourcePartition(partition); err != nil {
-		return 0, err
+	if partition < 0 {
+		return 0, fmt.Errorf("negative source partition %d", partition)
 	}
 	if PartitionKey(partition) != string(key) {
 		return 0, fmt.Errorf("noncanonical partition key %q", key)
@@ -39,8 +41,8 @@ func PartitionAggregateID(partition int, start, end time.Time) string {
 
 func ValidateCloudPartitionAggregate(a CloudPartitionAggregate) error {
 
-	if err := ValidateSourcePartition(a.SourcePartition); err != nil {
-		return err
+	if a.SourcePartition < 0 {
+		return fmt.Errorf("negative source partition %d", a.SourcePartition)
 	}
 
 	if a.WindowStart.IsZero() || !a.WindowEnd.After(a.WindowStart) || a.EmittedAt.IsZero() {
@@ -54,7 +56,7 @@ func ValidateCloudPartitionAggregate(a CloudPartitionAggregate) error {
 	if a.InputAggregates == 0 || a.Events == 0 {
 		return fmt.Errorf("empty partial: use partition progress instead")
 	}
-	
+
 	for name, metric := range map[string]MetricAggregate{"temperature": a.Temperature, "humidity": a.Humidity, "pressure": a.Pressure} {
 		if err := ValidateMetricAggregate(name, a.Events, metric); err != nil {
 			return err
@@ -64,8 +66,8 @@ func ValidateCloudPartitionAggregate(a CloudPartitionAggregate) error {
 }
 
 func ValidatePartitionProgress(p PartitionProgress) error {
-	if err := ValidateSourcePartition(p.SourcePartition); err != nil {
-		return err
+	if p.SourcePartition < 0 {
+		return fmt.Errorf("negative source partition %d", p.SourcePartition)
 	}
 	if p.CompleteThrough.IsZero() {
 		return fmt.Errorf("partition progress without complete_through")

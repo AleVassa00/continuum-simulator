@@ -59,7 +59,8 @@ type composeEdge struct {
 }
 
 type composeTemplateData struct {
-	ExperimentName string
+	KafkaPartitions int
+	ExperimentName  string
 
 	CloudWorkers        []composeCloudWorker
 	CloudWindowSize     string
@@ -330,7 +331,7 @@ func printExperimentSummary(output io.Writer, config experiment.EffectiveConfig,
 	fmt.Fprintf(output, "  workers: %d\n", config.Cloud.Workers)
 	fmt.Fprintf(output, "  window: %s\n\n", config.Cloud.WindowSize)
 	fmt.Fprintln(output, "Global:")
-	fmt.Fprintln(output, "  exact-window merge of source partitions 0..5")
+	fmt.Fprintf(output, "  exact-window merge of %d source partitions\n", config.Kafka.ResolvedPartitions())
 	fmt.Fprintf(output, "Effective config: %s\n\n", effectivePath)
 }
 
@@ -353,11 +354,9 @@ func loadEdges(path string) ([]EdgeDeployment, error) {
 		return nil, err
 	}
 
-	columns := buildColumnIndex(header)
-
-	edgeIDIndex, err := requiredColumn(columns, "edge_id")
-	if err != nil {
-		return nil, err
+	expectedHeader := []string{"sensor_id", "edge_id"}
+	if len(header) != len(expectedHeader) || header[0] != expectedHeader[0] || header[1] != expectedHeader[1] {
+		return nil, fmt.Errorf("header topologia non valido: attese esattamente le colonne sensor_id,edge_id")
 	}
 
 	sensorCounts := make(map[string]int)
@@ -373,7 +372,7 @@ func loadEdges(path string) ([]EdgeDeployment, error) {
 			return nil, err
 		}
 
-		edgeID := strings.TrimSpace(row[edgeIDIndex])
+		edgeID := strings.TrimSpace(row[1])
 
 		if edgeID == "" {
 			return nil, fmt.Errorf("edge_id vuoto nella topologia")
@@ -450,31 +449,12 @@ func parseEdgeNumber(
 	return edgeNumber, nil
 }
 
-func buildColumnIndex(header []string) map[string]int {
-	columns := make(map[string]int)
-
-	for index, name := range header {
-		columns[strings.TrimSpace(name)] = index
-	}
-
-	return columns
-}
-
-func requiredColumn(columns map[string]int, name string) (int, error) {
-	index, found := columns[name]
-
-	if !found {
-		return 0, fmt.Errorf("colonna %q non trovata", name)
-	}
-
-	return index, nil
-}
-
 func buildCompose(edges []EdgeDeployment, config experiment.EffectiveConfig) string {
 	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(edges, config.Cloud.Workers)
 
 	data := composeTemplateData{
-		ExperimentName: config.Experiment.Name,
+		KafkaPartitions: config.Kafka.ResolvedPartitions(),
+		ExperimentName:  config.Experiment.Name,
 
 		CloudWorkers:        cloudWorkers,
 		CloudWindowSize:     config.Cloud.WindowSize.String(),
@@ -500,7 +480,8 @@ func buildDistributedComposes(edges []EdgeDeployment, config experiment.Config) 
 	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(edges, config.Cloud.Workers)
 
 	data := composeTemplateData{
-		ExperimentName: config.Experiment.Name,
+		KafkaPartitions: config.Kafka.ResolvedPartitions(),
+		ExperimentName:  config.Experiment.Name,
 
 		CloudWorkers:        cloudWorkers,
 		CloudWindowSize:     config.Cloud.WindowSize.String(),

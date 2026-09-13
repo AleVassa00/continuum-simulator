@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"continuum/internal/kafkautil"
-	"continuum/internal/model"
 )
 
 type Publisher func(context.Context, int) error
@@ -18,21 +17,24 @@ type Coordinator struct {
 	mu        sync.Mutex
 	edges     map[string]int
 	completed map[string]bool
-	remaining [model.SourcePartitionCount]int
-	queued    [model.SourcePartitionCount]bool
-	finished  [model.SourcePartitionCount]bool
-	queues    [model.SourcePartitionCount]chan struct{}
+	remaining []int
+	queued    []bool
+	finished  []bool
+	queues    []chan struct{}
 	started   bool
 	failed    bool
 	errors    chan error
 	workers   sync.WaitGroup
 }
 
-func New(ctx context.Context, edgeIDs []string, publish Publisher) (*Coordinator, error) {
+func New(ctx context.Context, count int, edgeIDs []string, publish Publisher) (*Coordinator, error) {
+	if count <= 0 {
+		return nil, fmt.Errorf("source partition count must be positive")
+	}
 	if publish == nil || len(edgeIDs) == 0 {
 		return nil, fmt.Errorf("producer list and publisher are required")
 	}
-	c := &Coordinator{edges: make(map[string]int), completed: make(map[string]bool), errors: make(chan error, 1)}
+	c := &Coordinator{remaining: make([]int, count), queued: make([]bool, count), finished: make([]bool, count), queues: make([]chan struct{}, count), edges: make(map[string]int), completed: make(map[string]bool), errors: make(chan error, 1)}
 	for _, id := range edgeIDs {
 		if id == "" || strings.TrimSpace(id) != id {
 			return nil, fmt.Errorf("invalid producer ID %q", id)
@@ -40,11 +42,11 @@ func New(ctx context.Context, edgeIDs []string, publish Publisher) (*Coordinator
 		if _, exists := c.edges[id]; exists {
 			return nil, fmt.Errorf("duplicate producer %q", id)
 		}
-		p := kafkautil.PartitionForEdge(id)
+		p := kafkautil.PartitionForEdge(id, count)
 		c.edges[id] = p
 		c.remaining[p]++
 	}
-	for p := 0; p < model.SourcePartitionCount; p++ {
+	for p := 0; p < count; p++ {
 		c.queues[p] = make(chan struct{}, 1)
 		c.workers.Add(1)
 		go func(partition int) {
@@ -55,7 +57,7 @@ func New(ctx context.Context, edgeIDs []string, publish Publisher) (*Coordinator
 			case <-c.queues[partition]:
 			}
 			// Each partition has its own publisher path. A slow broker request for
-			// P0 cannot delay terminal markers for P1..P5 or completion registration.
+			// one partition cannot delay terminal markers for other partitions or completion registration.
 			err := publish(ctx, partition)
 			c.mu.Lock()
 			defer c.mu.Unlock()

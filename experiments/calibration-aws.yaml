@@ -17,3 +17,7 @@ edge:
 cloud:
   workers: 1
   window_size: 15m
+
+# Source topic partitions, independent of Edge count and cloud.workers.
+kafka:
+  partitions: 6

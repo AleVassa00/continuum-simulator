@@ -11,14 +11,14 @@ import (
 // PartitionAggregator is owned by an input partition, never a worker.
 // Single-threaded and volatile: a mid-run ownership change invalidates the run.
 type PartitionAggregator struct {
-	partition                int
-	windowSize               time.Duration
-	watermarkDelay           time.Duration
-	windows                  map[time.Time]*cloudWindowState
-	maxEventTimeObserved     time.Time
-	watermark                time.Time
-	hasObserved              bool
-	ended                    bool
+	partition            int
+	windowSize           time.Duration
+	watermarkDelay       time.Duration
+	windows              map[time.Time]*cloudWindowState
+	maxEventTimeObserved time.Time
+	watermark            time.Time
+	hasObserved          bool
+	ended                bool
 }
 
 // LateRecord describes an input dropped because its Cloud window is finalized.
@@ -41,8 +41,8 @@ type Output struct {
 	Late            *LateRecord
 }
 
-func NewPartitionAggregator(partition int, windowSize, watermarkDelay time.Duration) (*PartitionAggregator, error) {
-	if err := model.ValidateSourcePartition(partition); err != nil {
+func NewPartitionAggregator(partition, count int, windowSize, watermarkDelay time.Duration) (*PartitionAggregator, error) {
+	if err := model.ValidateSourcePartition(partition, count); err != nil {
 		return nil, err
 	}
 	if windowSize <= 0 {

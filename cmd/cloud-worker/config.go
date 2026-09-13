@@ -8,18 +8,17 @@ import (
 
 	"continuum/internal/cloudworker"
 	"continuum/internal/envutil"
-	"continuum/internal/model"
-	"strconv"
 )
 
 type CloudWorkerConfig struct {
-	KafkaBroker    string
-	InputTopic     string
-	OutputTopic    string
-	GroupID        string
-	WorkerID       string
-	WindowSize     time.Duration
-	WatermarkDelay time.Duration
+	SourcePartitionCount int
+	KafkaBroker          string
+	InputTopic           string
+	OutputTopic          string
+	GroupID              string
+	WorkerID             string
+	WindowSize           time.Duration
+	WatermarkDelay       time.Duration
 }
 
 func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
@@ -33,9 +32,9 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	if err != nil {
 		return CloudWorkerConfig{}, err
 	}
-	count, err := strconv.Atoi(envutil.OrDefault("SOURCE_PARTITION_COUNT", "6"))
-	if err != nil || count != model.SourcePartitionCount {
-		return CloudWorkerConfig{}, fmt.Errorf("SOURCE_PARTITION_COUNT must be 6")
+	count, err := envutil.SourcePartitionCount()
+	if err != nil {
+		return CloudWorkerConfig{}, err
 	}
 	watermarkDelay, err := loadCloudWatermarkDelay()
 	if err != nil {
@@ -43,13 +42,14 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	}
 
 	return CloudWorkerConfig{
-		KafkaBroker:    kafkaBroker,
-		InputTopic:     inputTopic,
-		OutputTopic:    outputTopic,
-		GroupID:        groupID,
-		WorkerID:       workerID,
-		WindowSize:     windowSize,
-		WatermarkDelay: watermarkDelay,
+		SourcePartitionCount: count,
+		KafkaBroker:          kafkaBroker,
+		InputTopic:           inputTopic,
+		OutputTopic:          outputTopic,
+		GroupID:              groupID,
+		WorkerID:             workerID,
+		WindowSize:           windowSize,
+		WatermarkDelay:       watermarkDelay,
 	}, nil
 }
 

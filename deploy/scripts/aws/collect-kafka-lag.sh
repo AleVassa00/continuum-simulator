@@ -4,6 +4,8 @@ set -Eeuo pipefail
 interval="$1"
 run_id="$2"
 mode="${3:-loop}"
+partition_count="${4:-}"
+[[ "${partition_count}" =~ ^[1-9][0-9]*$ ]] || exit 2
 [[ "${interval}" =~ ^[1-9][0-9]*$ && "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || exit 2
 [[ "${mode}" == loop || "${mode}" == once ]] || exit 2
 pidfile="/tmp/continuum-kafka-lag-${run_id}.pid"
@@ -24,7 +26,7 @@ fi
 # Share Kafka's network namespace, NOT its CPU/memory cgroup. No Java in broker.
 image_id="$(docker inspect --format '{{.Image}}' global-aggregator)"
 container_id="$(docker create --network container:kafka --cpus 0.05 \
-  --memory 64m --memory-swap 64m --entrypoint /app/kafka-lag-collector \
+  --memory 64m --memory-swap 64m --env "SOURCE_PARTITION_COUNT=${partition_count}" --entrypoint /app/kafka-lag-collector \
   "${image_id}" -broker localhost:29092 -interval "${interval}s" -mode "${mode}")"
 docker start --attach "${container_id}" &
 attach_pid=$!

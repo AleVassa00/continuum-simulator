@@ -15,17 +15,19 @@ import (
 const defaultExperimentPath = "experiments/baseline.yaml"
 
 type experimentDescription struct {
-	ExperimentName string `json:"experiment_name"`
-	StartLeadTime  string `json:"start_lead_time"`
-	Workers        int    `json:"workers"`
-	ConfigSHA256   string `json:"config_sha256"`
+	KafkaPartitions int    `json:"kafka_partitions"`
+	ExperimentName  string `json:"experiment_name"`
+	StartLeadTime   string `json:"start_lead_time"`
+	Workers         int    `json:"workers"`
+	ConfigSHA256    string `json:"config_sha256"`
 }
 
 type materializedRun struct {
-	BaseTime      string `json:"base_time"`
-	ReplayStartAt string `json:"replay_start_at"`
-	Workers       int    `json:"workers"`
-	ConfigSHA256  string `json:"config_sha256"`
+	KafkaPartitions int    `json:"kafka_partitions"`
+	BaseTime        string `json:"base_time"`
+	ReplayStartAt   string `json:"replay_start_at"`
+	Workers         int    `json:"workers"`
+	ConfigSHA256    string `json:"config_sha256"`
 }
 
 func main() {
@@ -79,10 +81,11 @@ func run(args []string, output io.Writer) error {
 			return fmt.Errorf("--describe cannot be combined with --base-time or --output")
 		}
 		return writeJSON(output, experimentDescription{
-			ExperimentName: config.Experiment.Name,
-			StartLeadTime:  config.Workload.StartLeadTime.String(),
-			Workers:        config.Cloud.Workers,
-			ConfigSHA256:   configSHA256,
+			KafkaPartitions: config.Kafka.ResolvedPartitions(),
+			ExperimentName:  config.Experiment.Name,
+			StartLeadTime:   config.Workload.StartLeadTime.String(),
+			Workers:         config.Cloud.Workers,
+			ConfigSHA256:    configSHA256,
 		})
 	}
 
@@ -104,10 +107,11 @@ func run(args []string, output io.Writer) error {
 	}
 
 	return writeJSON(output, materializedRun{
-		BaseTime:      baseTime.UTC().Format(time.RFC3339Nano),
-		ReplayStartAt: effective.Workload.ReplayStartAt,
-		Workers:       effective.Cloud.Workers,
-		ConfigSHA256:  configSHA256,
+		KafkaPartitions: config.Kafka.ResolvedPartitions(),
+		BaseTime:        baseTime.UTC().Format(time.RFC3339Nano),
+		ReplayStartAt:   effective.Workload.ReplayStartAt,
+		Workers:         effective.Cloud.Workers,
+		ConfigSHA256:    configSHA256,
 	})
 }
 

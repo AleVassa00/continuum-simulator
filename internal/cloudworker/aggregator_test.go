@@ -19,7 +19,7 @@ func fixtureEdge(id string, minute int) model.EdgeAggregate {
 
 func newAggregator(t *testing.T, partition int, delay time.Duration) *PartitionAggregator {
 	t.Helper()
-	a, err := NewPartitionAggregator(partition, DefaultWindowSize, delay)
+	a, err := NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, DefaultWindowSize, delay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,12 +212,12 @@ func TestConstructorValidation(t *testing.T) {
 	}{
 		{-1, time.Minute, 0}, {6, time.Minute, 0}, {0, 0, 0}, {0, -time.Minute, 0}, {0, time.Minute, -time.Nanosecond},
 	} {
-		if _, err := NewPartitionAggregator(tc.partition, tc.size, tc.delay); err == nil {
+		if _, err := NewPartitionAggregator(tc.partition, model.DefaultSourcePartitionCount, tc.size, tc.delay); err == nil {
 			t.Fatalf("invalid config accepted: %+v", tc)
 		}
 	}
 	for _, delay := range []time.Duration{0, time.Hour} {
-		if _, err := NewPartitionAggregator(0, time.Minute, delay); err != nil {
+		if _, err := NewPartitionAggregator(0, model.DefaultSourcePartitionCount, time.Minute, delay); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -231,8 +231,8 @@ func TestObservedWatermarkCrossesZeroWithoutSentinel(t *testing.T) {
 	zero := time.Time{}
 	for _, minute := range []int{15, 20, 10, 25} {
 		input := fixtureEdge("edge", minute)
-		input.WindowStart = zero.Add(time.Duration(minute)*time.Minute)
-		input.WindowEnd = input.WindowStart.Add(5*time.Minute)
+		input.WindowStart = zero.Add(time.Duration(minute) * time.Minute)
+		input.WindowEnd = input.WindowStart.Add(5 * time.Minute)
 		out := add(t, a, input)
 		if minute == 10 {
 			if out.Progress != nil || !a.watermark.IsZero() || !a.hasObserved || !a.maxEventTimeObserved.Equal(zero.Add(25*time.Minute)) {
@@ -240,7 +240,7 @@ func TestObservedWatermarkCrossesZeroWithoutSentinel(t *testing.T) {
 			}
 			continue
 		}
-		want := input.WindowEnd.Add(-25*time.Minute)
+		want := input.WindowEnd.Add(-25 * time.Minute)
 		if out.Progress == nil || !out.Progress.CompleteThrough.Equal(want) || !a.hasObserved || !a.maxEventTimeObserved.Equal(input.WindowEnd) {
 			t.Fatalf("watermark crossing zero: %+v want %v", out, want)
 		}

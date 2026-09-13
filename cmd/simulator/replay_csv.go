@@ -13,12 +13,7 @@ import (
 
 /* Riga del dataset */
 type SensorMeasurement struct {
-	SensorID   string
-	SensorType string
-	LocationID string
-
-	Latitude  float64
-	Longitude float64
+	SensorID  string
 	EventTime time.Time
 
 	Pressure    string
@@ -26,104 +21,33 @@ type SensorMeasurement struct {
 	Humidity    string
 }
 
-// buildColumnIndex associa ciascun nome di colonna CSV al relativo indice
-func buildColumnIndex(header []string) map[string]int {
-	columns := make(map[string]int)
+var replayCSVHeader = []string{"sensor_id", "timestamp", "pressure", "temperature", "humidity"}
 
-	for index, name := range header {
-		name = strings.TrimSpace(name)
-		columns[name] = index
+func validateReplayCSVHeader(header []string) error {
+	if len(header) != len(replayCSVHeader) {
+		return fmt.Errorf("header replay non valido: attese esattamente %d colonne", len(replayCSVHeader))
 	}
-	return columns
-}
-
-// requiredColumn restituisce l'indice di una colonna richiesta oppure un errore se la colonna non è presente
-func requiredColumn(columns map[string]int, name string) (int, error) {
-	index, found := columns[name]
-
-	if !found {
-		return 0,
-			fmt.Errorf("colonna %q non trovata nel CSV", name)
+	for index, expected := range replayCSVHeader {
+		if header[index] != expected {
+			return fmt.Errorf("header replay non valido: colonna %d deve essere %q", index+1, expected)
+		}
 	}
-
-	return index, nil
+	return nil
 }
 
 // parseMeasurement converte una riga CSV nella rappresentazione interna SensorMeasurement
-func parseMeasurement(row []string, columns map[string]int) (SensorMeasurement, error) {
-	sensorIDIndex, err := requiredColumn(columns, "sensor_id")
-	if err != nil {
-		return SensorMeasurement{}, err
-	}
-
-	sensorTypeIndex, err := requiredColumn(columns, "sensor_type")
-	if err != nil {
-		return SensorMeasurement{}, err
-	}
-
-	locationIndex, err := requiredColumn(columns, "location")
-	if err != nil {
-		return SensorMeasurement{}, err
-	}
-
-	latitudeIndex, err := requiredColumn(columns, "lat")
-	if err != nil {
-		return SensorMeasurement{}, err
-	}
-
-	longitudeIndex, err := requiredColumn(columns, "lon")
-	if err != nil {
-		return SensorMeasurement{}, err
-	}
-
-	eventTimeIndex, err := requiredColumn(columns, "timestamp")
-	if err != nil {
-		return SensorMeasurement{}, err
-	}
-
-	pressureIndex, err := requiredColumn(columns, "pressure")
-	if err != nil {
-		return SensorMeasurement{}, err
-	}
-
-	temperatureIndex, err := requiredColumn(columns, "temperature")
-	if err != nil {
-		return SensorMeasurement{}, err
-	}
-
-	humidityIndex, err := requiredColumn(columns, "humidity")
-	if err != nil {
-		return SensorMeasurement{}, err
-	}
-
-	latitude, err := strconv.ParseFloat(strings.TrimSpace(row[latitudeIndex]), 64)
-	if err != nil {
-		return SensorMeasurement{}, fmt.Errorf("latitudine non valida %q: %w",
-			row[latitudeIndex],
-			err)
-	}
-
-	longitude, err := strconv.ParseFloat(strings.TrimSpace(row[longitudeIndex]), 64)
-	if err != nil {
-		return SensorMeasurement{},
-			fmt.Errorf("longitudine non valida %q: %w", row[longitudeIndex], err)
-	}
-
-	eventTime, err := parseEventTime(strings.TrimSpace(row[eventTimeIndex]))
+func parseMeasurement(row []string) (SensorMeasurement, error) {
+	eventTime, err := parseEventTime(strings.TrimSpace(row[1]))
 	if err != nil {
 		return SensorMeasurement{}, err
 	}
 
 	measurement := SensorMeasurement{
-		SensorID:    strings.TrimSpace(row[sensorIDIndex]),
-		SensorType:  strings.TrimSpace(row[sensorTypeIndex]),
-		LocationID:  strings.TrimSpace(row[locationIndex]),
-		Latitude:    latitude,
-		Longitude:   longitude,
+		SensorID:    strings.TrimSpace(row[0]),
 		EventTime:   eventTime,
-		Pressure:    strings.TrimSpace(row[pressureIndex]),
-		Temperature: strings.TrimSpace(row[temperatureIndex]),
-		Humidity:    strings.TrimSpace(row[humidityIndex]),
+		Pressure:    strings.TrimSpace(row[2]),
+		Temperature: strings.TrimSpace(row[3]),
+		Humidity:    strings.TrimSpace(row[4]),
 	}
 
 	return measurement, nil
@@ -186,11 +110,9 @@ func buildSensorEvent(measurement SensorMeasurement, sequence uint64) (model.Sen
 	}
 
 	return model.SensorEvent{
-		EventID:    fmt.Sprintf("%s-%d", measurement.SensorID, sequence),
-		SensorID:   measurement.SensorID,
-		SensorType: measurement.SensorType,
-		LocationID: measurement.LocationID,
-		Sequence:   sequence,
+		EventID:  fmt.Sprintf("%s-%d", measurement.SensorID, sequence),
+		SensorID: measurement.SensorID,
+		Sequence: sequence,
 
 		EventTime: measurement.EventTime,
 

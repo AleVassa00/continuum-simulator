@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"continuum/internal/cloudworker"
-	"continuum/internal/model"
 	"errors"
 	"fmt"
 	"sync"
@@ -53,7 +52,7 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 		if processed.Load() {
 			return fmt.Errorf("consumer group rebalance after processing: volatile state cannot migrate; restart the entire run")
 		}
-		if err := validateKafkaTopology(ctx, config.KafkaBroker, config.InputTopic, model.SourcePartitionCount); err != nil {
+		if err := validateKafkaTopology(ctx, config.KafkaBroker, config.InputTopic, config.SourcePartitionCount); err != nil {
 			return err
 		}
 
@@ -80,7 +79,7 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 	defer cancel()
 
 	messages := make(chan kafka.Message)
-	readErrors := make(chan error, model.SourcePartitionCount)
+	readErrors := make(chan error, config.SourcePartitionCount)
 	processors := make(map[int]*CloudMessageProcessor)
 
 	var readers sync.WaitGroup
@@ -92,7 +91,7 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 
 	for _, assignment := range gen.Assignments[config.InputTopic] {
 
-		a, err := cloudworker.NewPartitionAggregator(assignment.ID, config.WindowSize, config.WatermarkDelay)
+		a, err := cloudworker.NewPartitionAggregator(assignment.ID, config.SourcePartitionCount, config.WindowSize, config.WatermarkDelay)
 		if err != nil {
 			return err
 		}

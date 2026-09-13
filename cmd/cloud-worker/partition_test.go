@@ -29,7 +29,7 @@ func edgeInput(t *testing.T, id string, minute int, n uint64) kafka.Message {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return kafka.Message{Partition: kafkautil.PartitionForEdge(id), Key: []byte(id), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeAggregate)}}}
+	return kafka.Message{Partition: kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount), Key: []byte(id), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeAggregate)}}}
 }
 func sourceEOS(partition int) kafka.Message {
 	return kafka.Message{Partition: partition, Key: []byte(model.PartitionKey(partition)), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeSourcePartitionEndOfInput)}}}
@@ -96,7 +96,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 			for w, m := range members {
 				workerPartitions[w] = assignments[m.ID]["edge-aggregates"]
 				for _, p := range workerPartitions[w] {
-					a, err := cloudworker.NewPartitionAggregator(p, cloudworker.DefaultWindowSize, cloudworker.DefaultWatermarkDelay)
+					a, err := cloudworker.NewPartitionAggregator(p, model.DefaultSourcePartitionCount, cloudworker.DefaultWindowSize, cloudworker.DefaultWatermarkDelay)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -109,12 +109,12 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 			streams := make(map[int][]kafka.Message)
 			for minute := 0; minute < 35; minute += 5 {
 				for i, id := range ids {
-					p := kafkautil.PartitionForEdge(id)
+					p := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
 					m := edgeInput(t, id, minute, uint64(i+1))
 					streams[p] = append(streams[p], m, m)
 				}
 			}
-			for p := 0; p < model.SourcePartitionCount; p++ {
+			for p := 0; p < model.DefaultSourcePartitionCount; p++ {
 				streams[p] = append(streams[p], sourceEOS(p), sourceEOS(p))
 			}
 			// Different inter-partition scheduling per worker count, same partition logs.
@@ -152,7 +152,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 			sort.Slice(partials, func(i, j int) bool { return partials[i].AggregateID < partials[j].AggregateID })
 			occupied := map[int]bool{}
 			for _, id := range ids {
-				occupied[kafkautil.PartitionForEdge(id)] = true
+				occupied[kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)] = true
 			}
 			if len(occupied) != 6 {
 				t.Fatalf("current 13-Edge topology does not cover all six partitions: %v", occupied)
@@ -161,7 +161,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 				t.Fatalf("want 6 partials x 3 windows, got %d", len(partials))
 			}
 			var globals []model.GlobalAggregate
-			g, _ := globalaggregator.New(func(_ context.Context, a model.GlobalAggregate) error {
+			g, _ := globalaggregator.New(model.DefaultSourcePartitionCount, func(_ context.Context, a model.GlobalAggregate) error {
 				a.EmittedAt = time.Time{}
 				globals = append(globals, a)
 				return nil
@@ -214,10 +214,10 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 }
 func TestPublishBeforeCommitAndNoCommitOnFailure(t *testing.T) {
 	id := "edge-0"
-	partition := kafkautil.PartitionForEdge(id)
+	partition := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
 	for _, failAt := range []int{0, 1, 2} {
 		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
-			a, _ := cloudworker.NewPartitionAggregator(partition, cloudworker.DefaultWindowSize, cloudworker.DefaultWatermarkDelay)
+			a, _ := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, cloudworker.DefaultWindowSize, cloudworker.DefaultWatermarkDelay)
 			var order []string
 			calls := 0
 			committed := false
@@ -250,7 +250,7 @@ func TestPublishBeforeCommitAndNoCommitOnFailure(t *testing.T) {
 		})
 	}
 }
-func TestWorkerConfigDefaultsAndSixPartitions(t *testing.T) {
+func TestWorkerConfigDefaultsAndPositivePartitions(t *testing.T) {
 	t.Setenv("KAFKA_BROKER", "unused:9092")
 	t.Setenv("SOURCE_PARTITION_COUNT", "6")
 	t.Setenv("CLOUD_WINDOW_SIZE", "")
@@ -262,10 +262,10 @@ func TestWorkerConfigDefaultsAndSixPartitions(t *testing.T) {
 	if cfg.WindowSize != cloudworker.DefaultWindowSize || cfg.WatermarkDelay != cloudworker.DefaultWatermarkDelay {
 		t.Fatalf("wrong defaults: %+v", cfg)
 	}
-	for _, value := range []string{"5", "7", "invalid"} {
+	for _, value := range []string{"0", "-1", "invalid"} {
 		t.Setenv("SOURCE_PARTITION_COUNT", value)
 		if _, err := loadCloudWorkerConfig(); err == nil {
-			t.Fatal("partition count changed")
+			t.Fatal("invalid partition count accepted")
 		}
 	}
 }

@@ -51,12 +51,13 @@ services:
       - /bin/bash
       - -c
       - |
+        set -euo pipefail
         /opt/kafka/bin/kafka-topics.sh \
           --bootstrap-server kafka:29092 \
           --create \
           --if-not-exists \
           --topic edge-aggregates \
-          --partitions 6 \
+          --partitions {{$.KafkaPartitions}} \
           --replication-factor 1
 
         /opt/kafka/bin/kafka-topics.sh \
@@ -66,6 +67,11 @@ services:
           --topic cloud-partition-aggregates \
           --partitions 1 \
           --replication-factor 1
+
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic edge-aggregates |
+          grep -E 'PartitionCount: {{$.KafkaPartitions}}([[:space:]]|$)' >/dev/null || { echo "edge-aggregates partition count differs from kafka.partitions; recreate the topic before a new run" >&2; exit 1; }
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic cloud-partition-aggregates |
+          grep -E 'PartitionCount: 1([[:space:]]|$)' >/dev/null || { echo "cloud-partition-aggregates must have one partition" >&2; exit 1; }
 
     networks:
       - continuum-backbone
@@ -81,7 +87,7 @@ services:
       KAFKA_GROUP_ID: "cloud-workers"
       CLOUD_WINDOW_SIZE: "{{$.CloudWindowSize}}"
       CLOUD_WATERMARK_DELAY: "{{$.CloudWatermarkDelay}}"
-      SOURCE_PARTITION_COUNT: "6"
+      SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
       WORKER_ID: "{{.WorkerID}}"
 
     depends_on:
@@ -101,7 +107,7 @@ services:
       KAFKA_BROKER: "kafka:29092"
       KAFKA_INPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "global-aggregator"
-      SOURCE_PARTITION_COUNT: "6"
+      SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
 
     depends_on:
       kafka-init:
@@ -119,6 +125,7 @@ services:
     environment:
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
+      SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
       COORDINATOR_EXPECTED_EDGE_IDS: "{{.ExpectedEdgeIDs}}"
     depends_on:
       kafka-init:

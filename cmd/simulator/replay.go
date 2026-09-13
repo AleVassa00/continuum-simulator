@@ -99,8 +99,9 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 	if err != nil {
 		return err
 	}
-	//costruzione di mappa associata al nome presente nell'header
-	columns := buildColumnIndex(header)
+	if err := validateReplayCSVHeader(header); err != nil {
+		return err
+	}
 
 	// mappa contatori per ogni sensore
 	sequences := make(map[string]uint64)
@@ -114,7 +115,7 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 			return err
 		}
 
-		measurement, err := parseMeasurement(row, columns)
+		measurement, err := parseMeasurement(row)
 		if err != nil {
 			return err
 		}

@@ -35,12 +35,16 @@ func run() error {
 	for i := range ids {
 		ids[i] = strings.TrimSpace(ids[i])
 	}
-	if err := validateSourceTopic(ctx, broker, topic); err != nil {
+	count, err := envutil.SourcePartitionCount()
+	if err != nil {
 		return err
 	}
-	publish, closeWriters := sourceEndPublisher(broker, topic)
+	if err := validateSourceTopic(ctx, broker, topic, count); err != nil {
+		return err
+	}
+	publish, closeWriters := sourceEndPublisher(broker, topic, count)
 	defer closeWriters()
-	c, err := partitioncompletion.New(ctx, ids, publish)
+	c, err := partitioncompletion.New(ctx, count, ids, publish)
 	if err != nil {
 		return err
 	}

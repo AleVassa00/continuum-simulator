@@ -11,11 +11,15 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// ParseRecordType estrae il tipo di record dagli header di un messaggio Kafka.
 // PartitionForEdge is used by orchestration, never by Cloud window completeness.
-// It must match the Edge writer's kafka.Hash balancer on the fixed six partitions.
-func PartitionForEdge(edgeID string) int {
-	return (&kafka.Hash{}).Balance(kafka.Message{Key: []byte(edgeID)}, 0, 1, 2, 3, 4, 5)
+// It must match the Edge writer's kafka.Hash balancer on the configured partitions.
+// count must have been validated as positive before starting orchestration.
+func PartitionForEdge(edgeID string, count int) int {
+	partitions := make([]int, count)
+	for p := range partitions {
+		partitions[p] = p
+	}
+	return (&kafka.Hash{}).Balance(kafka.Message{Key: []byte(edgeID)}, partitions...)
 }
 
 func ParseRecordType(headers []kafka.Header) (string, error) {

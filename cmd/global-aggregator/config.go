@@ -9,17 +9,17 @@ import (
 	"strings"
 
 	"continuum/internal/envutil"
-	"continuum/internal/model"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type GlobalAggregatorConfig struct {
-	KafkaBroker string
-	InputTopic  string
-	GroupID     string
-	SinkType    string
-	Postgres    *pgxpool.Config
+	SourcePartitionCount int
+	KafkaBroker          string
+	InputTopic           string
+	GroupID              string
+	SinkType             string
+	Postgres             *pgxpool.Config
 }
 
 func loadGlobalAggregatorConfig() (GlobalAggregatorConfig, error) {
@@ -33,9 +33,9 @@ func loadGlobalAggregatorConfig() (GlobalAggregatorConfig, error) {
 		"global-aggregator",
 	)
 
-	count, err := strconv.Atoi(envutil.OrDefault("SOURCE_PARTITION_COUNT", "6"))
-	if err != nil || count != model.SourcePartitionCount {
-		return GlobalAggregatorConfig{}, fmt.Errorf("SOURCE_PARTITION_COUNT must be 6")
+	count, err := envutil.SourcePartitionCount()
+	if err != nil {
+		return GlobalAggregatorConfig{}, err
 	}
 	sinkType := envutil.OrDefault("GLOBAL_SINK_TYPE", "log")
 	var postgres *pgxpool.Config
@@ -51,11 +51,12 @@ func loadGlobalAggregatorConfig() (GlobalAggregatorConfig, error) {
 	}
 
 	return GlobalAggregatorConfig{
-		KafkaBroker: kafkaBroker,
-		InputTopic:  inputTopic,
-		GroupID:     groupID,
-		SinkType:    sinkType,
-		Postgres:    postgres,
+		SourcePartitionCount: count,
+		KafkaBroker:          kafkaBroker,
+		InputTopic:           inputTopic,
+		GroupID:              groupID,
+		SinkType:             sinkType,
+		Postgres:             postgres,
 	}, nil
 }
 

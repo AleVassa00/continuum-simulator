@@ -12,7 +12,7 @@ import (
 )
 
 func TestGlobalAcceptsOnlyPartitionContracts(t *testing.T) {
-	a, _ := globalaggregator.New(func(context.Context, model.GlobalAggregate) error { return nil })
+	a, _ := globalaggregator.New(model.DefaultSourcePartitionCount, func(context.Context, model.GlobalAggregate) error { return nil })
 	p := &GlobalMessageProcessor{aggregator: a}
 	progress := model.PartitionProgress{SourcePartition: 0, CompleteThrough: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}
 	payload, err := avrocodec.EncodePartitionProgress(progress)
@@ -32,7 +32,7 @@ func TestGlobalAcceptsOnlyPartitionContracts(t *testing.T) {
 	}
 }
 func TestGlobalDoesNotReportCompletionBeforeCommit(t *testing.T) {
-	a, _ := globalaggregator.New(func(context.Context, model.GlobalAggregate) error { return nil })
+	a, _ := globalaggregator.New(model.DefaultSourcePartitionCount, func(context.Context, model.GlobalAggregate) error { return nil })
 	p := &GlobalMessageProcessor{aggregator: a}
 	for i := 0; i < 5; i++ {
 		a.EndPartition(context.Background(), i)
@@ -52,8 +52,12 @@ func TestGlobalConfigWithoutEdgesOrTimeSettings(t *testing.T) {
 	if err != nil || cfg.InputTopic != "cloud-partition-aggregates" {
 		t.Fatalf("%+v %v", cfg, err)
 	}
-	t.Setenv("SOURCE_PARTITION_COUNT", "7")
+	t.Setenv("SOURCE_PARTITION_COUNT", "0")
 	if _, err := loadGlobalAggregatorConfig(); err == nil {
-		t.Fatal("count changed")
+		t.Fatal("invalid count accepted")
+	}
+	t.Setenv("SOURCE_PARTITION_COUNT", "8")
+	if cfg, err := loadGlobalAggregatorConfig(); err != nil || cfg.SourcePartitionCount != 8 {
+		t.Fatalf("configured count lost: %+v %v", cfg, err)
 	}
 }
