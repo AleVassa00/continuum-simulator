@@ -113,8 +113,10 @@ Normalized Compose artifacts redact the password. Host administrators and users
 with Docker access can still read runtime credentials; protect those privileges
 and remove obsolete release environments when retiring a deployment.
 
-After preparation, connect over SSH to **cloud-core** and run once, before the
-first experiment:
+The experiment runner automatically initializes/verifies the schema after
+stopping the previous containers and before truncating PostgreSQL or starting
+the new Global. This also applies to `--reuse-release` and direct runs.
+For manual installation only, with experiments stopped, run on **cloud-core**:
 
 ```bash
 bash /opt/continuum/current/deploy/scripts/aws/init-rds-schema.sh

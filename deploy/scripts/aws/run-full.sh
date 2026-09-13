@@ -11,8 +11,7 @@
 #       -> deploygen
 #       -> [opzionale] Terraform
 #       -> prepare-pilot
-#       -> inizializzazione/verifica schema RDS
-#       -> run-experiment
+#       -> run-experiment (arresto precedente -> schema RDS -> reset -> avvio)
 #
 # Va salvato in:
 #
@@ -79,8 +78,7 @@
 #   5. chiede conferma prima di terraform apply
 #   6. terraform apply
 #   7. prepare-pilot.sh
-#   8. init-rds-schema.sh su cloud-core via SSH
-#   9. run-experiment.sh
+#   8. run-experiment.sh, che arresta i container precedenti prima di verificare RDS
 #
 # Il piano Terraform viene salvato temporaneamente sotto .build/terraform e poi
 # eliminato. La password RDS non viene stampata dal runner.
@@ -132,7 +130,7 @@
 #   deploygen
 #   Terraform
 #   prepare-pilot
-#   init-rds-schema
+# La verifica schema rimane nel runner, dopo l'arresto dei container precedenti.
 #
 # e viene eseguito direttamente run-experiment.sh sulla release già preparata.
 #
@@ -222,7 +220,7 @@ Esempi:
   Esegue terraform init, plan e apply. Prima dell'apply chiede conferma.
 
 --reuse-release
-  Salta deploygen, Terraform, prepare-pilot e init RDS; esegue solo la run
+  Salta deploygen, Terraform e prepare-pilot; esegue la run (inclusa verifica RDS)
   sulla release già preparata.
 
 File locali caricati automaticamente:
@@ -295,7 +293,7 @@ ensure_rds_is_provisioned() {
 }
 
 run_deploygen() {
-  log "[2/6] deploygen"
+  log "[2/5] deploygen"
   (
     cd "${REPO_ROOT}"
     go run ./cmd/deploygen -mode distributed -experiment "${EXPERIMENT_CONFIG}" \
@@ -305,7 +303,7 @@ run_deploygen() {
 
 provision_infrastructure() {
   local plan_dir answer
-  log "[3/6] Terraform"
+  log "[3/5] Terraform"
   mkdir -p "${REPO_ROOT}/.build/terraform"
   plan_dir="${REPO_ROOT}/.build/terraform"
   PLAN_FILE="$(mktemp "${plan_dir}/rds-plan.XXXXXX")"
@@ -328,35 +326,15 @@ provision_infrastructure() {
 }
 
 prepare_release() {
-  log "[4/6] prepare-pilot"
+  log "[4/5] prepare-pilot"
   (
     cd "${REPO_ROOT}"
     bash ./deploy/scripts/aws/prepare-pilot.sh
   )
 }
 
-initialize_rds_schema() {
-  local cloud_core_ip
-  local -a ssh_args
-
-  log "[5/6] init/verifica schema RDS"
-  cloud_core_ip="$(
-    "${TERRAFORM_BIN}" -chdir="${TERRAFORM_DIR}" output -json public_ips |
-      jq -er '."cloud-core" | select(type == "string" and length > 0)'
-  )" || die "impossibile leggere l'IP pubblico di cloud-core"
-
-  ssh_args=(
-    -i "${SSH_KEY_PATH}"
-    -o BatchMode=yes
-    -o ConnectTimeout=10
-    -o StrictHostKeyChecking=accept-new
-  )
-
-  ssh "${ssh_args[@]}" "${SSH_USER}@${cloud_core_ip}"     'bash /opt/continuum/current/deploy/scripts/aws/init-rds-schema.sh'
-}
-
 run_experiment() {
-  log "[6/6] run-experiment"
+  log "[5/5] run-experiment"
   (
     cd "${REPO_ROOT}"
     bash ./deploy/scripts/aws/run-experiment.sh
@@ -406,11 +384,11 @@ main() {
   done
   acquire_pilot_lock "${REPO_ROOT}"
 
-  log "[1/6] preflight AWS"
+  log "[1/5] preflight AWS"
   validate_aws_session
 
   if (( REUSE_RELEASE == 1 )); then
-    log "riuso release: salto deploygen, Terraform, prepare-pilot e init RDS"
+    log "riuso release: salto deploygen, Terraform e prepare-pilot"
     ensure_rds_is_provisioned
     run_experiment
     return
@@ -423,12 +401,11 @@ main() {
   if (( PROVISION == 1 )); then
     provision_infrastructure
   else
-    log "[3/6] Terraform apply saltato"
+    log "[3/5] Terraform apply saltato"
     ensure_rds_is_provisioned
   fi
 
   prepare_release
-  initialize_rds_schema
   run_experiment
 }
 

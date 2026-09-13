@@ -85,14 +85,42 @@ run_deploygen() { [[ "$DISTRIBUTED_COMPOSE_DIR" == "$REPO_ROOT/.build/aws-compos
 ensure_rds_is_provisioned() { [[ "$TERRAFORM_BIN" == custom-terraform ]]; echo infrastructure; }
 provision_infrastructure() { echo provision; }
 prepare_release() { echo prepare; }
-initialize_rds_schema() { echo schema; }
+initialize_rds_schema() { echo unexpected-schema; return 1; }
 run_experiment() { [[ "$EXPERIMENT_CONFIG" == "$REPO_ROOT/experiments/cloud-scale-w1.yaml" ]]; echo experiment; }
 main experiments/cloud-scale-w1.yaml $MOCK_MODE
 ''', MOCK_MODE=mode, TERRAFORM_BIN="custom-terraform", EXPERIMENT_CONFIG="ignored.yaml")
             self.assertEqual(result.returncode, 0, result.stderr)
             actions = [line for line in result.stdout.splitlines() if not line.startswith("[run-full]")]
             expected = (["lock", "infrastructure", "experiment"] if mode == "--reuse-release" else
-                        ["lock", "generate", "provision" if mode else "infrastructure", "prepare", "schema", "experiment"])
+                        ["lock", "generate", "provision" if mode else "infrastructure", "prepare", "experiment"])
+            self.assertEqual(actions, expected)
+
+    def test_schema_runs_after_stop_and_failure_prevents_start(self):
+        for sink, schema_exit in (("postgres", "0"), ("postgres", "23"), ("log", "0")):
+            result = self.shell('''
+source deploy/scripts/aws/run-experiment.sh
+for name in require_command validate_inputs acquire_pilot_lock validate_positive_integer \
+  load_experiment_description load_terraform_addresses wait_for_all_ssh initialize_artifacts \
+  verify_prepared_releases collect_instance_identities check_host_budgets; do
+  eval "$name() { :; }"
+done
+PUBLIC_IPS[cloud-core]=mock-host
+jq() { echo "$MOCK_SINK"; }
+reset_previous_run() { echo stopped; }
+ssh_run() {
+  [[ "$2" == 'bash /opt/continuum/current/deploy/scripts/aws/init-rds-schema.sh' ]] || return 99
+  echo schema
+  return "$MOCK_SCHEMA_EXIT"
+}
+# Stop before starting any actual collectors/services.
+start_metric_collectors() { echo ready-to-start; return 77; }
+main_run
+''', PYTHON_BIN="true", MOCK_SINK=sink, MOCK_SCHEMA_EXIT=schema_exit)
+            self.assertEqual(result.returncode, 23 if schema_exit == "23" else 77, result.stderr)
+            actions = [line for line in result.stdout.splitlines() if not line.startswith("[run-experiment]")]
+            expected = ["stopped"] + (["schema"] if sink == "postgres" else [])
+            if schema_exit == "0":
+                expected.append("ready-to-start")
             self.assertEqual(actions, expected)
 
     def test_lock_rejects_independent_run_and_allows_inherited_child(self):

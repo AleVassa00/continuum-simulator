@@ -499,6 +499,16 @@ cd /opt/continuum/current
 docker compose --env-file .env -f deploy/compose/distributed/cloud-core.generated.yml down --remove-orphans --volumes --timeout 30'
 }
 
+initialize_rds_schema() {
+  local sink
+  sink="$(jq -er '.services["global-aggregator"].environment.GLOBAL_SINK_TYPE' \
+    "${ARTIFACT_DIR}/compose/cloud-core.normalized.json")" || return 1
+  [[ "$sink" == postgres ]] || return 0
+  log "init/verifica schema RDS dopo l'arresto dei container precedenti"
+  ssh_run "${PUBLIC_IPS[cloud-core]}" \
+    'bash /opt/continuum/current/deploy/scripts/aws/init-rds-schema.sh'
+}
+
 start_metric_collectors() {
   local role
   local output
@@ -1114,6 +1124,9 @@ main_run() {
 
   log "run=${RUN_ID_VALUE} experiment=${EXPERIMENT_NAME} deployment=${DEPLOYMENT_ID_VALUE}"
   reset_previous_run
+  # The previous Global must be stopped before the schema safety check. Keep
+  # this in the single-run lifecycle so direct and reused releases behave alike.
+  initialize_rds_schema
   start_metric_collectors
   start_cloud_core
   wait_for_kafka

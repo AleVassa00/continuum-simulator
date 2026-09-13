@@ -731,7 +731,7 @@ print_summary() {
 
   printf '\nPilot predisposto senza avviare container.\n'
   printf 'Release: %s\n' "${DEPLOYMENT_ID}"
-  printf 'Prima della prima run, su cloud-core: bash /opt/continuum/current/deploy/scripts/aws/init-rds-schema.sh\n'
+  printf 'Il runner verifichera lo schema RDS dopo aver arrestato i container precedenti.\n'
   for role in "${ROLES[@]}"; do
     printf '  %-10s public=%s private=%s current=%s/current\n' \
       "${role}" \
