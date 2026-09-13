@@ -39,7 +39,7 @@ terraform.tfvars
 tfplan
 .env
 .run.env
-
+!deploy/terraform/terraform.tfstate
 # Dataset policy: ignore everything except the explicitly approved metadata.
 dataset/*
 !dataset/output/
@@ -53,6 +53,5 @@ dataset/output/*
 !dataset/output/kmeans_topology.csv
 !dataset/output/replay_load_scenarios.csv
 !dataset/output/replay_shards_summary.csv
-continuum-key.pem
 docs/discussione-professoressa-architettura.md
 deploy/aws_session.env
