@@ -55,3 +55,4 @@ dataset/output/*
 !dataset/output/replay_shards_summary.csv
 continuum-key.pem
 docs/discussione-professoressa-architettura.md
+deploy/aws_session.env
