@@ -14,6 +14,7 @@ edge:
   ingress_queue_capacity: 5000
 
 cloud:
+  consumer_commit_batch_size: 100
   workers: 1
   window_size: 15m
 

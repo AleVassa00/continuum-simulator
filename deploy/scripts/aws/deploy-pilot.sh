@@ -362,7 +362,6 @@ main() {
   require_command ssh
   require_command scp
   require_command tar
-  require_command sha256sum
 
   init_aws_context
   require_command "${TERRAFORM_BIN}"

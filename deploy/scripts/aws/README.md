@@ -72,7 +72,8 @@ Si occupa soltanto del ciclo dell'esperimento:
 - raccolta metriche;
 - attesa del completamento;
 - export dei risultati PostgreSQL;
-- generazione degli artefatti sotto `artifacts/aws-runs/`.
+- generazione degli artefatti sotto
+  `artifacts/aws-runs/<nome-esperimento>/<run-id>/`.
 
 Normalmente non viene lanciato direttamente: `run-full.sh` gli passa
 `EXPERIMENT_CONFIG`.

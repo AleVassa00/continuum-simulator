@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"continuum/internal/cloudworker"
+	"continuum/internal/kafkautil"
+	"continuum/internal/model"
 	"errors"
 	"fmt"
 	"sync"
@@ -159,7 +161,15 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 			if p == nil {
 				return fmt.Errorf("record from unassigned partition %d", msg.Partition)
 			}
-			if err := processAndCommitMessage(ctx, msg, p, commits.add); err != nil {
+			commit := commits.add
+			kind, err := kafkautil.ParseRecordType(msg.Headers)
+			if err != nil {
+				return fmt.Errorf("worker=%s partition=%d offset=%d: %w", config.WorkerID, msg.Partition, msg.Offset, err)
+			}
+			if kind == model.RecordTypeSourcePartitionEndOfInput {
+				commit = commits.addAndFlush
+			}
+			if err := processAndCommitMessage(ctx, msg, p, commit); err != nil {
 				return fmt.Errorf("worker=%s partition=%d offset=%d: %w", config.WorkerID, msg.Partition, msg.Offset, err)
 			}
 		}

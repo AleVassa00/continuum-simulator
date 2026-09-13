@@ -33,11 +33,11 @@ func TestOffsetCommitBatch(t *testing.T) {
 	if err := b.add(kafka.Message{Partition: 1, Offset: 8}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.flush(); err != nil {
+	if err := b.addAndFlush(kafka.Message{Partition: 0, Offset: 9}); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 2 || !reflect.DeepEqual(calls[1], map[string]map[int]int64{"input": {1: 9}}) {
-		t.Fatalf("final flush: %v", calls)
+	if len(calls) != 2 || !reflect.DeepEqual(calls[1], map[string]map[int]int64{"input": {0: 10, 1: 9}}) {
+		t.Fatalf("EOS flush: %v", calls)
 	}
 	if err := b.flush(); err != nil || len(calls) != 2 {
 		t.Fatal("empty flush committed")

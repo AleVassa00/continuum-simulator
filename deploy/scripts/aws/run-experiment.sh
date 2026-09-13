@@ -22,7 +22,6 @@ declare -A METRICS_PIDS
 
 EXPERIMENT_CONFIG_PATH=""
 EXPERIMENT_NAME=""
-CONFIG_SHA256=""
 CONFIGURED_WORKERS="0"
 CONFIGURED_PARTITIONS="0"
 WORKER_COUNT="0"
@@ -64,15 +63,16 @@ load_experiment_description() {
   description="$(runconfig --experiment "${EXPERIMENT_CONFIG_PATH}" --describe)" ||
     die "impossibile leggere la configurazione esperimento"
   EXPERIMENT_NAME="$(jq -er '.experiment_name' <<<"${description}")"
+  [[ "${EXPERIMENT_NAME}" =~ ^[A-Za-z0-9._-]+$ ]] ||
+    die "experiment.name puo contenere solo lettere, numeri, punto, underscore e trattino"
   CONFIGURED_WORKERS="$(jq -er '.workers' <<<"${description}")"
   CONFIGURED_PARTITIONS="$(jq -er '.kafka_partitions | select(type == "number" and . > 0 and . == floor)' <<<"${description}")"
-  CONFIG_SHA256="$(jq -er '.config_sha256 | select(type == "string" and length == 64)' <<<"${description}")"
-  [[ "${CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]] || die "config_sha256 non valido"
 }
 
 initialize_artifacts() {
   local requested_run_id="${RUN_ID:-}"
   local artifacts_root_path
+  local experiment_artifacts_path
   local public_json
   local private_json
   local private_dns_json
@@ -86,7 +86,9 @@ initialize_artifacts() {
 
   mkdir -p "${ARTIFACTS_ROOT}"
   artifacts_root_path="$(cd "${ARTIFACTS_ROOT}" && pwd -P)"
-  ARTIFACT_DIR="${artifacts_root_path}/${RUN_ID_VALUE}"
+  experiment_artifacts_path="${artifacts_root_path}/${EXPERIMENT_NAME}"
+  mkdir -p "${experiment_artifacts_path}"
+  ARTIFACT_DIR="${experiment_artifacts_path}/${RUN_ID_VALUE}"
   if ! mkdir "${ARTIFACT_DIR}"; then
     die "directory artefatti gia esistente o non creabile: ${ARTIFACT_DIR}"
   fi
@@ -206,8 +208,6 @@ write_run_metadata() {
     --arg status "${RUN_STATUS}" \
     --arg git_commit_sha "${DEPLOYED_GIT_COMMIT_SHA}" \
     --arg deployed_at "${DEPLOYED_AT}" \
-    --arg config_sha256 "${CONFIG_SHA256}" \
-    --arg resource_profile_sha256 "${RESOURCE_PROFILE_SHA256}" \
     --arg orchestration_started_at "${ORCHESTRATION_STARTED_AT}" \
     --arg clock_verified_at "${CLOCK_VERIFIED_AT}" \
     --arg replay_start_at "${REPLAY_START_AT}" \
@@ -224,8 +224,6 @@ write_run_metadata() {
       status: $status,
       git_commit_sha: $git_commit_sha,
       deployed_at: $deployed_at,
-      config_sha256: $config_sha256,
-      resource_profile_sha256: $resource_profile_sha256,
       workers: $workers,
       kafka_partitions: $kafka_partitions,
       orchestration_started_at: $orchestration_started_at,
@@ -560,17 +558,6 @@ REMOTE
   done
 }
 
-write_compose_checksums() {
-  (
-    cd "${ARTIFACT_DIR}/compose"
-    sha256sum \
-      cloud-core.normalized.yml \
-      workers.normalized.yml \
-      edge.normalized.yml \
-      simulator.normalized.yml
-  ) >"${ARTIFACT_DIR}/compose-checksums.sha256"
-}
-
 start_cloud_core() {
   log "2/9 avvio Cloud Core"
   ssh_run "${PUBLIC_IPS[cloud-core]}" 'set -euo pipefail
@@ -839,8 +826,6 @@ materialize_replay_start() {
   REPLAY_START_AT="$(jq -er '.replay_start_at' <<<"${materialized}")"
   [[ "$(jq -er '.workers' <<<"${materialized}")" == "${WORKER_COUNT}" ]] ||
     die "numero Worker cambiato durante la materializzazione della configurazione"
-  [[ "$(jq -er '.config_sha256' <<<"${materialized}")" == "${CONFIG_SHA256}" ]] ||
-    die "configurazione cambiata durante la materializzazione"
   printf '%s\n' "${REPLAY_START_AT}" >"${ARTIFACT_DIR}/replay-start-at.txt"
 }
 
@@ -880,7 +865,6 @@ done
 REMOTE
   REPLAY_LAUNCHED_AT="$(ssh_run "${PUBLIC_IPS[simulator]}" 'date -u +%Y-%m-%dT%H:%M:%S.%NZ')"
   collect_normalized_compose simulator .run.env
-  write_compose_checksums
 }
 
 validate_container_lifecycle() {
@@ -1060,7 +1044,6 @@ main_run() {
   require_command go
   require_command jq
   require_command ssh
-  require_command sha256sum
   require_command tee
 
   init_aws_context

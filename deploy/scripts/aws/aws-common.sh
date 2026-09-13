@@ -18,7 +18,6 @@ TERRAFORM_BIN="${TERRAFORM_BIN:-}"
 TERRAFORM_DIR="${TERRAFORM_DIR:-}"
 RESOURCE_PROFILE_PATH=""
 RESOURCE_PROFILE_VALUES=""
-RESOURCE_PROFILE_SHA256=""
 SSH_KEY=""
 SSH_WAIT_ATTEMPTS_VALUE=""
 SSH_WAIT_INTERVAL_SECONDS_VALUE=""
@@ -116,8 +115,6 @@ load_resource_profile() {
       RESOURCE_PROFILE_VALUES+="${key}=${values[${key}]}"$'\n'
     done
   done
-
-  RESOURCE_PROFILE_SHA256="$(sha256sum "${RESOURCE_PROFILE_PATH}" | awk '{print $1}')"
 }
 
 init_aws_context() {
