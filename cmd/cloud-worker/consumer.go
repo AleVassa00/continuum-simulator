@@ -13,7 +13,7 @@ import (
 
 // Partition readers fetch concurrently; one processing loop per worker keeps
 // computation serial within the worker, with distinct state for each assignment
-func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessagePublisher) error {
+func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessagePublisher) (result error) {
 
 	group, err := kafka.NewConsumerGroup(kafka.ConsumerGroupConfig{
 		ID: config.GroupID, Brokers: []string{config.KafkaBroker}, Topics: []string{config.InputTopic},
@@ -22,12 +22,22 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 	if err != nil {
 		return err
 	}
-	defer group.Close()
+	failures := make(chan error, 1)
+	defer func() {
+		// Close waits for generation callbacks, including their final offset flush.
+		group.Close()
+		select {
+		case failure := <-failures:
+			if result == nil {
+				result = failure
+			}
+		default:
+		}
+	}()
 
 	stopClose := context.AfterFunc(ctx, func() { group.Close() })
 	defer stopClose()
 
-	failures := make(chan error, 1)
 	var processed atomic.Bool
 	for {
 		gen, err := group.Next(ctx)
@@ -64,7 +74,7 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 		fmt.Printf("CLOUD_ASSIGNMENT worker=%s generation=%d partitions=%v\n", config.WorkerID, gen.ID, gen.Assignments[config.InputTopic])
 		gen.Start(func(genCtx context.Context) {
 			err := consumeGeneration(genCtx, gen, config, publish, &processed)
-			if err != nil && genCtx.Err() == nil {
+			if err != nil && (genCtx.Err() == nil || errors.Is(err, errOffsetCommit)) {
 				select {
 				case failures <- err:
 				default:
@@ -75,6 +85,10 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 }
 
 func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudWorkerConfig, publish KafkaMessagePublisher, processed *atomic.Bool) error {
+	commits, err := newOffsetCommitBatch(config.InputTopic, config.ConsumerCommitBatchSize, gen.CommitOffsets)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -134,7 +148,9 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			// Flush only successfully processed inputs, using the generation's
+			// connection before its callback returns. No wall-clock commit policy.
+			return commits.flush()
 		case err := <-readErrors:
 			return err
 		case msg := <-messages:
@@ -143,10 +159,7 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 			if p == nil {
 				return fmt.Errorf("record from unassigned partition %d", msg.Partition)
 			}
-			if err := processAndCommitMessage(ctx, msg, p, func(m kafka.Message) error {
-				// Generation.CommitOffsets takes the NEXT offset (unlike CommitMessages).
-				return gen.CommitOffsets(map[string]map[int]int64{config.InputTopic: {m.Partition: m.Offset + 1}})
-			}); err != nil {
+			if err := processAndCommitMessage(ctx, msg, p, commits.add); err != nil {
 				return fmt.Errorf("worker=%s partition=%d offset=%d: %w", config.WorkerID, msg.Partition, msg.Offset, err)
 			}
 		}

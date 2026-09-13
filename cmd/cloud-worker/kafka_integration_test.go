@@ -59,7 +59,7 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					}
 					done := make(chan error, workers)
 					for w := 0; w < workers; w++ {
-						cfg := CloudWorkerConfig{SourcePartitionCount: count, KafkaBroker: broker, InputTopic: input, OutputTopic: output, GroupID: group, WorkerID: fmt.Sprintf("executor-%d", w), WindowSize: cloudworker.DefaultWindowSize, WatermarkDelay: cloudworker.DefaultWatermarkDelay}
+						cfg := CloudWorkerConfig{ConsumerCommitBatchSize: cloudworker.DefaultConsumerCommitBatchSize, SourcePartitionCount: count, KafkaBroker: broker, InputTopic: input, OutputTopic: output, GroupID: group, WorkerID: fmt.Sprintf("executor-%d", w), WindowSize: cloudworker.DefaultWindowSize, WatermarkDelay: cloudworker.DefaultWatermarkDelay}
 						go func() {
 							writer := newKafkaWriter(broker, output)
 							writer.Transport = transport

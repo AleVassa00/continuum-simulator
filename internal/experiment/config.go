@@ -84,9 +84,35 @@ type EdgeConfig struct {
 }
 
 type CloudConfig struct {
-	Workers        int       `yaml:"workers"`
-	WindowSize     Duration  `yaml:"window_size"`
-	WatermarkDelay *Duration `yaml:"watermark_delay,omitempty"`
+	ConsumerCommitBatchSize *CommitBatchSize `yaml:"consumer_commit_batch_size,omitempty"`
+	Workers                 int              `yaml:"workers"`
+	WindowSize              Duration         `yaml:"window_size"`
+	WatermarkDelay          *Duration        `yaml:"watermark_delay,omitempty"`
+}
+
+// CommitBatchSize rejects fractional YAML values instead of truncating them.
+type CommitBatchSize int
+
+func (size *CommitBatchSize) UnmarshalYAML(node *yaml.Node) error {
+	if node.Tag != "!!int" {
+		return fmt.Errorf("cloud.consumer_commit_batch_size must be a positive integer")
+	}
+	var value int
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	if value <= 0 {
+		return fmt.Errorf("cloud.consumer_commit_batch_size must be a positive integer")
+	}
+	*size = CommitBatchSize(value)
+	return nil
+}
+
+func (config CloudConfig) ResolvedConsumerCommitBatchSize() int {
+	if config.ConsumerCommitBatchSize != nil {
+		return int(*config.ConsumerCommitBatchSize)
+	}
+	return cloudworker.DefaultConsumerCommitBatchSize
 }
 
 // ResolvedWatermarkDelay preserves an explicitly configured zero delay.
@@ -178,6 +204,9 @@ func Decode(reader io.Reader) (Config, error) {
 }
 
 func (config Config) Validate() error {
+	if config.Cloud.ResolvedConsumerCommitBatchSize() <= 0 {
+		return fmt.Errorf("cloud.consumer_commit_batch_size must be a positive integer")
+	}
 	if config.Kafka.ResolvedPartitions() <= 0 {
 		return fmt.Errorf("kafka.partitions deve essere maggiore di zero")
 	}
@@ -225,6 +254,10 @@ func (config Config) Validate() error {
 }
 
 func ResolveDefaults(config Config) Config {
+	if config.Cloud.ConsumerCommitBatchSize == nil {
+		size := CommitBatchSize(config.Cloud.ResolvedConsumerCommitBatchSize())
+		config.Cloud.ConsumerCommitBatchSize = &size
+	}
 	if config.Kafka.Partitions == nil {
 		count := config.Kafka.ResolvedPartitions()
 		config.Kafka.Partitions = &count

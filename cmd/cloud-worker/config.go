@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,14 +12,15 @@ import (
 )
 
 type CloudWorkerConfig struct {
-	SourcePartitionCount int
-	KafkaBroker          string
-	InputTopic           string
-	OutputTopic          string
-	GroupID              string
-	WorkerID             string
-	WindowSize           time.Duration
-	WatermarkDelay       time.Duration
+	ConsumerCommitBatchSize int
+	SourcePartitionCount    int
+	KafkaBroker             string
+	InputTopic              string
+	OutputTopic             string
+	GroupID                 string
+	WorkerID                string
+	WindowSize              time.Duration
+	WatermarkDelay          time.Duration
 }
 
 func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
@@ -40,16 +42,21 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	if err != nil {
 		return CloudWorkerConfig{}, err
 	}
+	batchSize, err := strconv.Atoi(envutil.OrDefault("CLOUD_CONSUMER_COMMIT_BATCH_SIZE", strconv.Itoa(cloudworker.DefaultConsumerCommitBatchSize)))
+	if err != nil || batchSize <= 0 {
+		return CloudWorkerConfig{}, fmt.Errorf("CLOUD_CONSUMER_COMMIT_BATCH_SIZE must be a positive integer")
+	}
 
 	return CloudWorkerConfig{
-		SourcePartitionCount: count,
-		KafkaBroker:          kafkaBroker,
-		InputTopic:           inputTopic,
-		OutputTopic:          outputTopic,
-		GroupID:              groupID,
-		WorkerID:             workerID,
-		WindowSize:           windowSize,
-		WatermarkDelay:       watermarkDelay,
+		ConsumerCommitBatchSize: batchSize,
+		SourcePartitionCount:    count,
+		KafkaBroker:             kafkaBroker,
+		InputTopic:              inputTopic,
+		OutputTopic:             outputTopic,
+		GroupID:                 groupID,
+		WorkerID:                workerID,
+		WindowSize:              windowSize,
+		WatermarkDelay:          watermarkDelay,
 	}, nil
 }
 

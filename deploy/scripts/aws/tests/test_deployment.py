@@ -34,12 +34,14 @@ class ShellTests(unittest.TestCase):
 
     def test_runner_checks_configured_topic_count_exactly(self):
         command = '''
-source deploy/scripts/aws/run-experiment.sh
-PUBLIC_IPS[cloud-core]=local
-CONFIGURED_PARTITIONS=8
 KAFKA_READY_TIMEOUT_SECONDS=2
 POLL_INTERVAL_SECONDS=1
-ssh_run() { shift; "$@"; }
+source deploy/scripts/aws/run-experiment.sh
+PUBLIC_IPS[cloud-core]=local
+PUBLIC_IPS[workers]=local
+CONFIGURED_PARTITIONS=8
+# Exercise the topic-check scripts; other remote deployment actions are mocked.
+ssh_run() { shift; if [[ "$1" == bash ]]; then "$@"; else return 0; fi; }
 docker() {
   if [[ "$1" == inspect ]]; then
     case "$3" in
@@ -54,9 +56,11 @@ docker() {
   fi
 }
 export -f docker
+collect_normalized_compose() { :; }
 verify_kafka_tcp_from_role() { :; }
 wait_for_worker_group() { :; }
 wait_for_edges() { :; }
+wait_for_time_sync() { :; }
 coordinator_status() { :; }
 wait_for_kafka
 quick_preflight
@@ -313,7 +317,8 @@ class ComposeTests(unittest.TestCase):
                         self.assertEqual(service["environment"]["SOURCE_PARTITION_COUNT"], "8")
                     if name == "kafka-init":
                         self.assertIn("--partitions 8", " ".join(service["command"]))
-                        self.assertIn("PartitionCount: 8([[:space:]]|$)", " ".join(service["command"]))
+                        # Compose config escapes literal dollars for reserialization.
+                        self.assertIn("PartitionCount: 8([[:space:]]|$)", " ".join(service["command"]).replace("$$", "$"))
 
     def test_real_generated_configs_for_1_2_4_6_workers(self):
         original = (REPO / "experiments/calibration-aws.yaml").read_text()

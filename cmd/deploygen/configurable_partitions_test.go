@@ -18,6 +18,8 @@ func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 			t.Fatal(err)
 		}
 		cfg.Kafka.Partitions = &count
+		batchSize := experiment.CommitBatchSize(32)
+		cfg.Cloud.ConsumerCommitBatchSize = &batchSize
 		edges := []EdgeDeployment{{EdgeID: "edge-0", SensorCount: 1, MQTTPort: 18830}}
 		contents := []string{buildCompose(edges, experiment.BuildEffective(cfg, time.Now()))}
 		for _, file := range buildDistributedComposes(edges, cfg) {
@@ -30,6 +32,9 @@ func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 				t.Fatal(err)
 			}
 			for name, service := range doc.Services {
+				if strings.HasPrefix(name, "cloud-worker-") && service.Environment["CLOUD_CONSUMER_COMMIT_BATCH_SIZE"] != "32" {
+					t.Fatal("commit batch size lost in deployment")
+				}
 				if name == "partition-coordinator" || name == "global-aggregator" || strings.HasPrefix(name, "cloud-worker-") {
 					consumers++
 					if service.Environment["SOURCE_PARTITION_COUNT"] != strconv.Itoa(count) {

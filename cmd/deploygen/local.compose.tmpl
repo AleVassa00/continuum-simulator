@@ -87,6 +87,7 @@ services:
       KAFKA_GROUP_ID: "cloud-workers"
       CLOUD_WINDOW_SIZE: "{{$.CloudWindowSize}}"
       CLOUD_WATERMARK_DELAY: "{{$.CloudWatermarkDelay}}"
+      CLOUD_CONSUMER_COMMIT_BATCH_SIZE: "{{$.ConsumerCommitBatchSize}}"
       SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
       WORKER_ID: "{{.WorkerID}}"
 

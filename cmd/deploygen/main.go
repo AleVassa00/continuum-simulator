@@ -59,8 +59,9 @@ type composeEdge struct {
 }
 
 type composeTemplateData struct {
-	KafkaPartitions int
-	ExperimentName  string
+	ConsumerCommitBatchSize int
+	KafkaPartitions         int
+	ExperimentName          string
 
 	CloudWorkers        []composeCloudWorker
 	CloudWindowSize     string
@@ -453,8 +454,9 @@ func buildCompose(edges []EdgeDeployment, config experiment.EffectiveConfig) str
 	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(edges, config.Cloud.Workers)
 
 	data := composeTemplateData{
-		KafkaPartitions: config.Kafka.ResolvedPartitions(),
-		ExperimentName:  config.Experiment.Name,
+		ConsumerCommitBatchSize: config.Cloud.ResolvedConsumerCommitBatchSize(),
+		KafkaPartitions:         config.Kafka.ResolvedPartitions(),
+		ExperimentName:          config.Experiment.Name,
 
 		CloudWorkers:        cloudWorkers,
 		CloudWindowSize:     config.Cloud.WindowSize.String(),
@@ -480,8 +482,9 @@ func buildDistributedComposes(edges []EdgeDeployment, config experiment.Config) 
 	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(edges, config.Cloud.Workers)
 
 	data := composeTemplateData{
-		KafkaPartitions: config.Kafka.ResolvedPartitions(),
-		ExperimentName:  config.Experiment.Name,
+		ConsumerCommitBatchSize: config.Cloud.ResolvedConsumerCommitBatchSize(),
+		KafkaPartitions:         config.Kafka.ResolvedPartitions(),
+		ExperimentName:          config.Experiment.Name,
 
 		CloudWorkers:        cloudWorkers,
 		CloudWindowSize:     config.Cloud.WindowSize.String(),

@@ -3,6 +3,7 @@ package cloudworker
 import "time"
 
 const (
-	DefaultWindowSize     time.Duration = 15 * time.Minute
-	DefaultWatermarkDelay time.Duration = 5 * time.Minute
+	DefaultConsumerCommitBatchSize               = 1
+	DefaultWindowSize              time.Duration = 15 * time.Minute
+	DefaultWatermarkDelay          time.Duration = 5 * time.Minute
 )
