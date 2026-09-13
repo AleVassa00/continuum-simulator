@@ -18,6 +18,15 @@ Se gli IP pubblici sono cambiati dopo stop/start delle EC2:
 bash deploy/scripts/aws/run-full.sh experiments/cloud-scale-w1.yaml --refresh
 ```
 
+Se prima della run deve essere eseguito anche il deployment applicativo, aggiornare
+gli output Terraform separatamente e poi procedere con deploy e run:
+
+```bash
+bash deploy/scripts/aws/refresh-infra.sh
+bash deploy/scripts/aws/deploy-pilot.sh experiments/cloud-scale-w1.yaml
+bash deploy/scripts/aws/run-full.sh experiments/cloud-scale-w1.yaml
+```
+
 Se l'infrastruttura deve essere realmente modificata:
 
 ```bash
@@ -27,7 +36,8 @@ bash deploy/scripts/aws/run-full.sh experiments/cloud-scale-w1.yaml --provision
 `--provision` esegue soltanto `terraform init`, `plan` e `apply` prima di avviare
 `run-experiment.sh`. Non distribuisce l'applicazione: `deploy-pilot.sh` resta un
 comando esplicito e separato.
-`--refresh` esegue `terraform init` e `apply -refresh-only`.
+`--refresh` richiama `refresh-infra.sh`, che esegue `terraform init` e
+`apply -refresh-only` senza modificare il deployment applicativo.
 
 Se il provisioning crea o sostituisce una EC2, la run successiva segnalerà che il
 deployment applicativo è assente. In quel caso eseguire esplicitamente

@@ -32,7 +32,7 @@ Senza flag:
   3. esegue run-experiment.sh.
 
 --refresh:
-  prima della run esegue terraform init + apply -refresh-only.
+  prima della run esegue refresh-infra.sh.
 
 --provision:
   prima della run esegue terraform init + plan + apply.
@@ -55,17 +55,6 @@ resolve_experiment() {
 
   resolve_file "${candidate}" ||
     die "file esperimento non trovato: ${input}"
-}
-
-terraform_refresh() {
-  require_command "${TERRAFORM_BIN}"
-
-  log "Terraform refresh-only"
-  "${TERRAFORM_BIN}" -chdir="${TERRAFORM_DIR}" init -input=false
-  "${TERRAFORM_BIN}" -chdir="${TERRAFORM_DIR}" apply \
-    -refresh-only \
-    -auto-approve \
-    -input=false
 }
 
 terraform_provision() {
@@ -143,7 +132,7 @@ main() {
   if (( PROVISION == 1 )); then
     terraform_provision
   elif (( REFRESH == 1 )); then
-    terraform_refresh
+    bash "${SCRIPT_DIR}/refresh-infra.sh"
   fi
 
   log "avvio run-experiment: ${EXPERIMENT_CONFIG}"
