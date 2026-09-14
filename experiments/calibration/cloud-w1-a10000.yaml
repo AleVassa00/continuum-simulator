@@ -1,0 +1,27 @@
+# First calibration point. Continue with A15000 only if the complete pipeline
+# remains correct and the Cloud Worker is not yet sufficiently loaded.
+experiment:
+  name: calibration-w1-a10000
+
+workload:
+  acceleration_factor: 10000
+  start_lead_time: 30s
+
+simulator:
+  telemetry_queue_capacity: 5000
+  start_late_tolerance: 10s
+
+edge:
+  window_size: 5m
+  ingress_queue_capacity: 5000
+  kafka_producer_batch_size: 10
+  kafka_producer_batch_max_wait: 100ms
+
+cloud:
+  consumer_commit_batch_size: 100
+  max_edge_watermark_skew: 720h
+  workers: 1
+  window_size: 15m
+
+kafka:
+  partitions: 6

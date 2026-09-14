@@ -7,7 +7,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/aws-common.sh"
 
-readonly DEFAULT_EXPERIMENT="experiments/cloud-scale-w1.yaml"
+readonly DEFAULT_EXPERIMENT="experiments/worker-scaling/cloud-scale-w1.yaml"
 
 PROVISION=0
 REFRESH=0

@@ -13,7 +13,7 @@ import (
 
 func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 	for _, count := range []int{1, 3, 8} {
-		cfg, err := experiment.Load("../../experiments/baseline.yaml")
+		cfg, err := experiment.Load("../../experiments/worker-scaling/cloud-scale-w1.yaml")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -43,14 +43,14 @@ func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 					if service.Environment["KAFKA_PARTITION"] != "0" || service.Environment["SOURCE_PARTITION_COUNT"] != strconv.Itoa(count) {
 						t.Fatal("static Edge partition assignment lost in deployment")
 					}
-					if service.Environment["KAFKA_PRODUCER_BATCH_SIZE"] != "1" || service.Environment["KAFKA_PRODUCER_BATCH_MAX_WAIT"] != "100ms" {
-						t.Fatal("Edge producer batching defaults lost in deployment")
+					if service.Environment["KAFKA_PRODUCER_BATCH_SIZE"] != "10" || service.Environment["KAFKA_PRODUCER_BATCH_MAX_WAIT"] != "100ms" {
+						t.Fatal("Edge producer batching configuration lost in deployment")
 					}
 				}
 				if strings.HasPrefix(name, "cloud-worker-") && service.Environment["CLOUD_CONSUMER_COMMIT_BATCH_SIZE"] != "32" {
 					t.Fatal("commit batch size lost in deployment")
 				}
-				if strings.HasPrefix(name, "cloud-worker-") && service.Environment["CLOUD_MAX_EDGE_WATERMARK_SKEW"] != "30m0s" {
+				if strings.HasPrefix(name, "cloud-worker-") && service.Environment["CLOUD_MAX_EDGE_WATERMARK_SKEW"] != "720h0m0s" {
 					t.Fatal("maximum Edge watermark skew lost in deployment")
 				}
 				if name == "global-aggregator" || strings.HasPrefix(name, "cloud-worker-") {

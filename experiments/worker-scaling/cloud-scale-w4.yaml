@@ -1,3 +1,5 @@
+# Optional non-divisor point: with six partitions, four Workers receive an
+# uneven 2/2/1/1 assignment. Use the same calibrated factor as the other W runs.
 experiment:
   name: cloud-scale-w4
 
@@ -12,12 +14,14 @@ simulator:
 edge:
   window_size: 5m
   ingress_queue_capacity: 5000
+  kafka_producer_batch_size: 10
+  kafka_producer_batch_max_wait: 100ms
 
 cloud:
   consumer_commit_batch_size: 100
+  max_edge_watermark_skew: 720h
   workers: 4
   window_size: 15m
 
-# Source topic partitions, independent of Edge count and cloud.workers.
 kafka:
   partitions: 6

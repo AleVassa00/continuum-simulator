@@ -1,5 +1,7 @@
+# PROVISIONAL acceleration_factor: replace it with the value selected by
+# experiments/calibration before the official campaign.
 experiment:
-  name: cloud-scale-w1
+  name: cloud-scale-w6
 
 workload:
   acceleration_factor: 10000
@@ -12,13 +14,14 @@ simulator:
 edge:
   window_size: 5m
   ingress_queue_capacity: 5000
+  kafka_producer_batch_size: 10
+  kafka_producer_batch_max_wait: 100ms
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew: 30m
-  workers: 1
+  max_edge_watermark_skew: 720h
+  workers: 6
   window_size: 15m
 
-# Source topic partitions, independent of Edge count and cloud.workers.
 kafka:
   partitions: 6

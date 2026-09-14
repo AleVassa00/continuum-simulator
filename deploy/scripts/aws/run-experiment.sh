@@ -9,7 +9,7 @@ source "${SCRIPT_DIR}/aws-common.sh"
 
 load_pilot_environment
 
-readonly EXPERIMENT_CONFIG_INPUT="${EXPERIMENT_CONFIG:-${REPO_ROOT}/experiments/cloud-scale-w1.yaml}"
+readonly EXPERIMENT_CONFIG_INPUT="${EXPERIMENT_CONFIG:-${REPO_ROOT}/experiments/worker-scaling/cloud-scale-w1.yaml}"
 readonly ARTIFACTS_ROOT="${ARTIFACTS_ROOT:-${REPO_ROOT}/artifacts/aws-runs}"
 readonly KAFKA_READY_TIMEOUT_SECONDS="${KAFKA_READY_TIMEOUT_SECONDS:-300}"
 readonly EDGE_READY_TIMEOUT_SECONDS="${EDGE_READY_TIMEOUT_SECONDS:-300}"

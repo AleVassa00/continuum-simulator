@@ -1,5 +1,5 @@
 param(
-    [string]$Experiment = "experiments/baseline.yaml",
+    [string]$Experiment = "experiments/worker-scaling/cloud-scale-w1.yaml",
 
     # 0 = usa il numero di worker definito nel file YAML.
     [ValidateRange(0, 128)]

@@ -12,7 +12,7 @@ import (
 	"continuum/internal/experiment"
 )
 
-const defaultExperimentPath = "experiments/baseline.yaml"
+const defaultExperimentPath = "experiments/worker-scaling/cloud-scale-w1.yaml"
 
 type experimentDescription struct {
 	KafkaPartitions int    `json:"kafka_partitions"`

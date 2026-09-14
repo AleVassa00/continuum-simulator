@@ -8,7 +8,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/aws-common.sh"
 
-readonly DEFAULT_EXPERIMENT="experiments/cloud-scale-w1.yaml"
+readonly DEFAULT_EXPERIMENT="experiments/worker-scaling/cloud-scale-w1.yaml"
 readonly COMPOSE_BUILD_DIR="${REPO_ROOT}/.build/aws-compose"
 
 EXPERIMENT_INPUT=""
@@ -27,7 +27,7 @@ Uso:
   bash deploy/scripts/aws/deploy-pilot.sh [EXPERIMENT_YAML]
 
 Esempio:
-  bash deploy/scripts/aws/deploy-pilot.sh experiments/cloud-scale-w4.yaml
+  bash deploy/scripts/aws/deploy-pilot.sh experiments/worker-scaling/cloud-scale-w4.yaml
 
 Lo script:
   1. carica deploy/pilot.env;

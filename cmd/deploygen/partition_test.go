@@ -31,9 +31,9 @@ func TestGeneratedCloudGlobalContractsAllWorkerCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, workers := range []int{1, 2, 4, 6} {
+	for _, workers := range []int{1, 2, 3, 4, 6} {
 		t.Run(fmt.Sprintf("W%d", workers), func(t *testing.T) {
-			cfg, err := experiment.Load(fmt.Sprintf("../../experiments/cloud-scale-w%d.yaml", workers))
+			cfg, err := experiment.Load(fmt.Sprintf("../../experiments/worker-scaling/cloud-scale-w%d.yaml", workers))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -25,7 +25,7 @@ const (
 	defaultPartitionWeightsPath = "dataset/output/edge_partition_weights.csv"
 	defaultOutputPath           = "deploy/compose/continuum.generated.yml"
 	defaultDistributedOutputDir = "deploy/compose/distributed"
-	defaultExperimentPath       = "experiments/baseline.yaml"
+	defaultExperimentPath       = "experiments/worker-scaling/cloud-scale-w1.yaml"
 	defaultArtifactsRoot        = "artifacts/experiments"
 	deploymentReplayEpoch       = "2025-01-01T00:00:00Z"
 
