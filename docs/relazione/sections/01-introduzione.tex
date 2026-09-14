@@ -27,7 +27,7 @@ esecuzione; non è implementato autoscaling durante il replay.
 
 Le principali scelte sviluppate nel progetto sono una topologia derivata dai
 dati, l'aggregazione gerarchica di statistiche componibili e un protocollo di
-finalizzazione basato sul progresso effettivo delle sorgenti. La
+finalizzazione basato su watermark espliciti emessi dalle sorgenti Edge. La
 parallelizzazione Cloud conserva sei partizioni logiche anche quando cambia
 il numero degli esecutori. In questo modo i confronti fra configurazioni
 mantengono invariata la computazione richiesta e il significato del risultato.

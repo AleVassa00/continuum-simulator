@@ -41,8 +41,9 @@ gateway validano temperatura, umidità e pressione e producono statistiche su
 finestre di cinque minuti. Nel Cloud, worker appartenenti allo stesso consumer
 group Kafka aggregano i dati su finestre di quindici minuti; un componente
 finale combina i contributi delle partizioni. L'identità degli aggregati è
-indipendente dal numero di worker, mentre un protocollo di progresso e fine
-replay consente di distinguere contributi assenti da contributi ancora attesi.
+indipendente dal numero di worker, mentre watermark espliciti prodotti dagli
+Edge e marker terminali consentono di distinguere contributi assenti da
+contributi ancora attesi.
 La relazione descrive la costruzione del workload, le scelte di comunicazione,
 il deployment automatizzato e le verifiche disponibili. Le prove AWS
 preliminari conservano i conteggi degli eventi, ma non superano i controlli di

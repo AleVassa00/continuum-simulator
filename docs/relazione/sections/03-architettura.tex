@@ -17,10 +17,10 @@ minimo e massimo per ciascuna grandezza.
   flow/.style={-{Latex[length=1.8mm]},semithick}]
 \node[box,fill=gray!7] (sim) {13 Simulator: replay di 150 sensori};
 \node[box,below=of sim,fill=blue!6] (edge) {13 siti Edge: Mosquitto + Gateway\\
-  validazione e aggregazione locale, finestre 5 min};
+  aggregazione locale 5 min e watermark per Edge};
 \node[box,below=of edge] (k1) {Kafka: \texttt{edge-aggregates}\\6 partizioni, chiave \texttt{edge\_id}};
 \node[box,below=of k1,fill=orange!9] (workers) {$W$ Cloud Worker, stesso consumer group\\
-  aggregazione per partizione, finestre 15 min};
+  finestre 15 min, minimo dei watermark per partizione};
 \node[box,below=of workers] (k2) {Kafka: \texttt{cloud-partition-aggregates}\\
   1 partizione fisica, 6 sorgenti logiche};
 \node[box,below=of k2,fill=orange!9] (global) {Global Aggregator\\
@@ -37,17 +37,18 @@ Le repliche dei worker non modificano le sei sorgenti logiche del Global.}
 Kafka disaccoppia la produzione Edge dal consumo Cloud e mantiene i record in
 un log persistente~\cite{kafka}. Il topic \code{edge-aggregates} ha sei
 partizioni. La chiave \code{edge\_id} e il partizionatore hash mantengono
-aggregati, watermark ed End of Stream (EOS) dello stesso Edge nella stessa partizione.
-Il numero di partizioni e la membership degli Edge rimangono invariati per
-l'intera run.
+\code{EdgeAggregate}, \code{EdgeWatermark} e marker terminale dello stesso
+Edge nella medesima partizione e nello stesso ordine. Il numero di partizioni
+e la membership degli Edge rimangono invariati per l'intera run.
 
 I Cloud Worker condividono un consumer group: ciascuna partizione è assegnata
-a un solo membro del gruppo. Ogni worker mantiene uno stato separato per le
-partizioni assegnate e combina i contributi Edge su finestre di quindici
-minuti. Gli output sono \code{CloudPartitionAggregate}, identificati da
-partizione sorgente e confini temporali, pubblicati sul secondo topic Kafka.
-Il Global Aggregator combina i partial con la stessa coppia di confini e
-produce il risultato finale nel sink configurato.
+a un solo membro del gruppo. La topologia Edge è proiettata sulle partizioni
+con lo stesso hash del producer; ogni worker mantiene uno stato separato per
+ciascuna partizione assegnata, indipendente dalla propria identità. I contributi
+Edge sono combinati su finestre di quindici minuti. Gli output sono
+\code{CloudPartitionAggregate}, identificati da partizione sorgente e confini
+temporali, pubblicati sul secondo topic Kafka. Il Global Aggregator combina i
+partial con la stessa coppia di confini e produce il risultato nel sink.
 
 \subsection{Aggregazione componibile}
 Per una metrica $m$, ogni aggregato conserva il numero di misure valide $n_m$,
@@ -71,27 +72,41 @@ finestra Cloud. Un aggregato che attraversa un confine Cloud viene rifiutato.
 
 \subsection{Progresso, contributi vuoti e completamento}
 L'Edge mantiene una finestra corrente in event time. L'arrivo di un evento
-della finestra successiva determina la pubblicazione della precedente; EOS
-chiude l'ultima. Gli eventi appartenenti a finestre già chiuse sono scartati
-e conteggiati. Il contratto richiede pertanto shard ordinati temporalmente;
-non è prevista la riapertura di finestre per dati tardivi.
+della finestra successiva determina la pubblicazione della precedente, seguita
+da \code{EdgeWatermark(e,t)}. Tale controllo certifica che l'Edge $e$ non
+pubblicherà successivamente aggregati con \code{window\_end} minore o uguale
+a $t$. Il watermark è monotono. L'EOS ricevuto dal Simulator chiude l'ultima
+finestra; dopo averne completato la scrittura Kafka, l'Edge pubblica il distinto
+marker \code{EdgeEndOfInput}. Gli eventi appartenenti a finestre già chiuse
+sono scartati e conteggiati; il contratto richiede shard ordinati temporalmente.
 
-Una partizione Cloud può contenere Edge con velocità differenti. Quando apre
-una nuova finestra, ciascun Edge pubblica un watermark esplicito dopo
-l'aggregato appena chiuso. Il worker memorizza, per ogni Edge atteso, il
-watermark monotono e l'eventuale EOS. Finché un Edge non ha prodotto un
-watermark né EOS, non è possibile certificarne il progresso. Tra gli Edge non
-terminati si considera il minimo dei watermark: solo gli intervalli interamente
-coperti da tale frontiera sono definitivi. La cessazione temporanea del
-traffico non equivale alla conclusione di una sorgente.
+Una partizione Cloud può contenere Edge con velocità differenti. Il worker
+memorizza, per ogni Edge atteso nella partizione $P$, il watermark
+$W_e$ e il flag terminale. Finché un Edge attivo non ha prodotto un watermark,
+non è possibile certificarne il progresso. La frontiera locale è
+\begin{equation}
+W_P=\min_{e\in E_P,\ e\ \mathrm{attivo}} W_e .
+\end{equation}
+Solo le finestre con fine non successiva a $W_P$ sono definitive. Un Edge
+terminato non partecipa più al minimo; la cessazione temporanea del traffico,
+invece, non equivale alla conclusione della sorgente.
 
-Il worker pubblica prima i partial definitivi e poi un controllo di progresso
-che certifica l'assenza di ulteriori contributi precedenti alla frontiera.
-Quando tutti gli Edge di una partizione terminano, pubblica gli ultimi partial
-e infine EOS della partizione. Una partizione senza Edge produce direttamente
-EOS. L'ordine fra dati e controlli permette di rappresentare in modo sparso
-le finestre: se una sorgente certifica il superamento di un intervallo senza
-averne pubblicato un partial, il suo contributo è zero.
+Il worker pubblica prima i partial definitivi e poi il controllo di progresso
+\code{PartitionProgress(P,t)}, con $t=W_P$. Quando tutti gli Edge di $P$ terminano,
+pubblica in ordine gli ultimi partial e infine \code{PartitionEndOfReplay(P)};
+una partizione senza Edge produce direttamente tale controllo. Un aggregato
+ricevuto dietro un watermark già certificato viola il protocollo e invalida la
+run: una finestra emessa non viene riaperta. L'ordine fra dati e controlli
+permette una rappresentazione sparsa: l'assenza di un partial, dopo il relativo
+progresso o EOS, equivale a un contributo zero.
+
+È stata considerata anche un'alternativa in cui il Cloud conoscesse soltanto
+le partizioni Kafka, senza la membership degli Edge, e stimasse la frontiera
+come massimo event time osservato meno un ritardo. La soluzione ridurrebbe
+l'accoppiamento con la topologia, ma un Edge veloce potrebbe anticipare la
+chiusura rispetto a uno lento; inoltre il ritardo sarebbe un parametro euristico.
+Si è quindi preferita la certificazione esplicita degli Edge e il minimo per
+partizione, privilegiando la correttezza nel deployment statico adottato.
 
 Il Global conosce soltanto le sei partizioni sorgente. Per una finestra attende
 da ciascuna un partial oppure un controllo di progresso/EOS che certifichi il

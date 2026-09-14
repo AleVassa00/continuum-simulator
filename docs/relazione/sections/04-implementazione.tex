@@ -24,9 +24,11 @@ Paho MQTT & 1.5.1 & Client MQTT Simulator/Edge\\
 \end{tabularx}
 \end{table}
 
-La telemetria MQTT e il sink di log usano JSON. I dati Kafka sono record Avro
-binari con schema incorporato nei binari, senza Schema Registry o prefissi
-aggiuntivi. Avro descrive esplicitamente campi e tipi del record~\cite{avro};
+La telemetria MQTT e il sink di log usano JSON. Gli aggregati, gli
+\code{EdgeWatermark} e i \code{PartitionProgress} sono record Avro binari con
+schema incorporato nei binari, senza Schema Registry o prefissi aggiuntivi;
+i marker terminali hanno payload vuoto e tipo nell'header Kafka. Avro descrive
+esplicitamente campi e tipi del record~\cite{avro};
 nel progetto producer e consumer devono condividere la stessa versione degli
 schemi. Le metriche nullable distinguono l'assenza di valori validi da un
 valore numerico nullo. I timestamp sono rappresentati come nanosecondi Unix e
@@ -51,10 +53,13 @@ capacità destinata alla telemetria. La readiness del gateway diventa positiva
 soltanto dopo connessione e subscription ai topic richiesti.
 
 I writer Kafka sono sincroni e richiedono gli acknowledgment del broker.
-L'ultimo aggregato Edge precede il suo EOS nello stesso flusso ordinato. I
-worker committano l'offset successivo solo dopo l'elaborazione e la
-pubblicazione degli eventuali output; il Global effettua il commit dopo
-l'elaborazione e la scrittura nel sink.
+Aggregati, watermark e marker terminale di ciascun Edge usano la stessa chiave
+e lo stesso writer: l'ultimo aggregato precede quindi \code{EdgeEndOfInput}
+nello stream della partizione. I worker accumulano, per ogni partizione, il
+massimo offset successivo elaborato e lo committano in batch configurabili,
+sempre dopo il successo di elaborazione e pubblicazione. Gli offset pendenti
+sono scaricati al termine regolare della generazione; il Global effettua il
+commit dopo elaborazione e scrittura nel sink.
 
 Worker e Global riconoscono i duplicati nelle finestre pendenti e conservano
 anche l'ultimo record per sorgente. Un duplicato identico non modifica lo
@@ -66,7 +71,9 @@ atomica fra stato applicativo, output e offset.
 
 \subsection{Deployment e riproducibilità}
 \code{cmd/deploygen} genera i file Compose a partire dalla topologia e dalla
-configurazione YAML. L'infrastruttura Terraform prevede quattro host EC2:
+configurazione YAML, includendo numero di partizioni, repliche Cloud e
+membership Edge richiesta dai worker. L'infrastruttura Terraform prevede
+quattro host EC2:
 Simulator, Edge, Cloud Core e Workers. Cloud Core ospita Kafka e il Global;
 l'host Workers ospita le repliche da confrontare. Più siti Edge condividono
 quindi una macchina, mentre i confini Simulator--Edge e Edge--Cloud attraversano
@@ -81,10 +88,11 @@ aumenta il budget aggregato dei worker, ma la capacità dell'host rimane un
 vincolo. I template locali utilizzano Apache Kafka 4.3.0; il manifest delle
 immagini identifica il software effettivamente distribuito.
 
-Lo script \code{prepare-pilot.sh} prepara la release; \code{run-experiment.sh}
-coordina readiness, stabilizzazione del gruppo, avvio comune, attesa degli EOS
-e raccolta degli artefatti. I risultati includono configurazione effettiva,
-hash di provenienza, log, statistiche dei container e offset Kafka. Un
+\code{deploy-pilot.sh} distribuisce esplicitamente configurazione e immagini;
+\code{run-full.sh} separa l'eventuale aggiornamento Terraform dall'esecuzione,
+mentre \code{run-experiment.sh} coordina readiness, stabilizzazione del gruppo,
+avvio comune, attesa degli EOS e raccolta degli artefatti. I risultati includono
+configurazione effettiva, log, statistiche dei container e offset Kafka. Un
 collector Go dedicato legge gli offset senza entrare nei consumer group;
 le sue risorse restano separate da quelle del broker. I riepiloghi sono
 prodotti da script Python. Il notebook offline usa pandas, NumPy,

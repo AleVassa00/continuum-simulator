@@ -2,9 +2,9 @@
 \label{sec:limiti}
 \subsection{Persistenza e guasti}
 La persistenza del log Kafka non implica il ripristino dello stato delle
-finestre. Worker e Global mantengono gli aggregati in RAM e committano gli
-offset dopo ogni elaborazione; non esiste un checkpoint coordinato fra
-offset e stato. Un crash può quindi perdere contributi già consumati e
+finestre. Worker e Global mantengono gli aggregati in RAM; i Worker committano
+in batch soltanto offset già elaborati, ma non esiste un checkpoint coordinato
+fra offset e stato. Un crash può quindi perdere contributi già consumati e
 committati, che non verrebbero riletti al riavvio. Non è garantita una
 semantica exactly-once end-to-end. Il sink PostgreSQL finale non è uno
 state store degli aggregatori.
@@ -26,14 +26,12 @@ esperimenti di saturazione o rete degradata le perdite sono a loro volta
 un risultato da riportare; un throughput apparentemente stabile ottenuto
 scartando dati non soddisfa il requisito di scalabilità.
 
-L'attesa di tutte le sorgenti evita risultati prematuri ma può trattenere
+Il minimo dei watermark Edge evita risultati prematuri ma può trattenere
 finestre in memoria quando un Edge non avanza. Un timeout del runner
 interrompe una prova incompleta senza autorizzare il Global a ignorare la
 sorgente. Non sono implementati checkpoint, migrazione dello stato o una
 politica di esclusione dinamica degli Edge.
 
-% Bilanciamento manuale dell'ultima pagina della bozza; rimuovere se cambia il testo.
-\newpage
 Il workload bilancia i sensori per zona e riguarda un solo tipo di dispositivo
 in un solo mese. Le medie sono pesate per numero di campioni validi: sensori
 più frequenti contribuiscono maggiormente. I risultati non possono essere
@@ -46,9 +44,9 @@ repliche entro un host non dimostra un'illimitata capacità di espansione.
 L'applicazione realizza una pipeline Edge--Cloud in Go con validazione locale,
 aggregazione gerarchica e comunicazione persistente nei passaggi Kafka. La
 separazione fra partizioni logiche ed esecutori mantiene invariato il
-significato degli output al variare delle repliche. Progresso ed EOS
-permettono di concludere le finestre soltanto quando ogni contributo è
-determinato, includendo le sorgenti senza dati.
+significato degli output al variare delle repliche. Watermark espliciti,
+progresso di partizione ed EOS permettono di concludere le finestre soltanto
+quando ogni contributo è determinato, includendo le sorgenti senza dati.
 
 Le verifiche funzionali e gli artefatti preliminari forniscono una base per
 la valutazione, ma non consentono ancora di concludere che la scalabilità
