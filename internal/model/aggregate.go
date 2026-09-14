@@ -29,6 +29,13 @@ type EdgeAggregate struct {
 	EmittedAt time.Time
 }
 
+// EdgeWatermark certifies that the Edge will not subsequently publish an
+// EdgeAggregate whose WindowEnd is at or before CompleteThrough.
+type EdgeWatermark struct {
+	EdgeID          string
+	CompleteThrough time.Time
+}
+
 type CloudPartitionAggregate struct {
 	AggregateID string
 
@@ -67,10 +74,8 @@ type GlobalAggregate struct {
 }
 
 // PartitionProgress certifies that all nonempty partials ending at or before
-// CompleteThrough (the source partition event-time watermark) have already been
-// published on the same ordered stream. Later arrivals for those closed windows
-// are dropped by Cloud. Missing partials therefore mean zero accepted contribution,
-// not proof that every original Edge event has arrived.
+// CompleteThrough (the minimum watermark of the active Edge sources assigned to
+// the partition) have already been published on the same ordered output stream.
 type PartitionProgress struct {
 	SourcePartition int
 	CompleteThrough time.Time

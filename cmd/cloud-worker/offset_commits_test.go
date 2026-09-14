@@ -52,8 +52,14 @@ func TestOffsetCommitFailureAndProcessOrdering(t *testing.T) {
 	if !errors.Is(err, errOffsetCommit) || !errors.Is(err, failure) || b.pending[0] != 11 || b.processed != 1 {
 		t.Fatalf("failed commit lost state: %v %+v", err, b)
 	}
-	input := edgeInput(t, "edge-0", 0, 1)
-	p, _ := processorFixture(t, input.Partition, 0)
+	p, _, partition := processorFixture(t, "edge-0")
+	aggregate := edgeInput(t, "edge-0", 0, 1)
+	aggregate.Partition = partition
+	if err := p.Process(context.Background(), aggregate); err != nil {
+		t.Fatal(err)
+	}
+	input := edgeWatermarkInput(t, "edge-0", 15)
+	input.Partition = partition
 	p.publishMessage = func(context.Context, kafka.Message) error { return failure }
 	b, _ = newOffsetCommitBatch("input", 1, func(map[string]map[int]int64) error { t.Fatal("commit before successful publish"); return nil })
 	if err := processAndCommitMessage(context.Background(), input, p, b.add); err == nil || len(b.pending) != 0 {
@@ -66,6 +72,7 @@ func TestOffsetCommitFailureAndProcessOrdering(t *testing.T) {
 
 func TestCommitBatchConfiguration(t *testing.T) {
 	t.Setenv("KAFKA_BROKER", "unused:9092")
+	t.Setenv("CLOUD_EXPECTED_EDGE_IDS", "edge-0")
 	for _, tc := range []struct {
 		value string
 		want  int

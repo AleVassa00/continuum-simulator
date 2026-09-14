@@ -37,7 +37,7 @@ Le repliche dei worker non modificano le sei sorgenti logiche del Global.}
 Kafka disaccoppia la produzione Edge dal consumo Cloud e mantiene i record in
 un log persistente~\cite{kafka}. Il topic \code{edge-aggregates} ha sei
 partizioni. La chiave \code{edge\_id} e il partizionatore hash mantengono
-aggregati ed End of Stream (EOS) dello stesso Edge nella stessa partizione.
+aggregati, watermark ed End of Stream (EOS) dello stesso Edge nella stessa partizione.
 Il numero di partizioni e la membership degli Edge rimangono invariati per
 l'intera run.
 
@@ -76,11 +76,12 @@ chiude l'ultima. Gli eventi appartenenti a finestre già chiuse sono scartati
 e conteggiati. Il contratto richiede pertanto shard ordinati temporalmente;
 non è prevista la riapertura di finestre per dati tardivi.
 
-Una partizione Cloud può contenere Edge con velocità differenti. Il worker
-memorizza, per ogni Edge atteso, l'ultimo fine-finestra osservato e l'eventuale
-EOS. Finché un Edge non ha prodotto né dati né EOS, non è possibile
-certificarne il progresso. Tra gli Edge non terminati si considera il minimo
-dei fine-finestra, allineato al confine Cloud: solo gli intervalli interamente
+Una partizione Cloud può contenere Edge con velocità differenti. Quando apre
+una nuova finestra, ciascun Edge pubblica un watermark esplicito dopo
+l'aggregato appena chiuso. Il worker memorizza, per ogni Edge atteso, il
+watermark monotono e l'eventuale EOS. Finché un Edge non ha prodotto un
+watermark né EOS, non è possibile certificarne il progresso. Tra gli Edge non
+terminati si considera il minimo dei watermark: solo gli intervalli interamente
 coperti da tale frontiera sono definitivi. La cessazione temporanea del
 traffico non equivale alla conclusione di una sorgente.
 

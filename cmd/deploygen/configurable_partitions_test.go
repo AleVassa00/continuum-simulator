@@ -35,7 +35,7 @@ func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 				if strings.HasPrefix(name, "cloud-worker-") && service.Environment["CLOUD_CONSUMER_COMMIT_BATCH_SIZE"] != "32" {
 					t.Fatal("commit batch size lost in deployment")
 				}
-				if name == "partition-coordinator" || name == "global-aggregator" || strings.HasPrefix(name, "cloud-worker-") {
+				if name == "global-aggregator" || strings.HasPrefix(name, "cloud-worker-") {
 					consumers++
 					if service.Environment["SOURCE_PARTITION_COUNT"] != strconv.Itoa(count) {
 						t.Fatalf("%s: wrong count", name)
@@ -55,7 +55,7 @@ func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 				}
 			}
 		}
-		if consumers != 2*(cfg.Cloud.Workers+2) || initializers != 2 {
+		if consumers != 2*(cfg.Cloud.Workers+1) || initializers != 2 {
 			t.Fatal("missing deployment coverage")
 		}
 	}

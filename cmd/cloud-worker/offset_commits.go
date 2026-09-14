@@ -38,7 +38,7 @@ func (b *offsetCommitBatch) add(message kafka.Message) error {
 	return nil
 }
 
-// Source partition EOS is a logical input boundary: include its next offset
+// An Edge terminal marker is a durable source boundary: include its next offset
 // and commit every successfully processed offset still pending for this worker.
 func (b *offsetCommitBatch) addAndFlush(message kafka.Message) error {
 	if err := b.add(message); err != nil {

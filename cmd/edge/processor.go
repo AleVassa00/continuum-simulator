@@ -46,8 +46,9 @@ func runEdgeLoop(ingress *EdgeIngress, aggregator *WindowAggregator, output chan
 				}
 			}
 
-			// Simulator EOS only: the Kafka stream contains data, never per-Edge EOS.
-			// runEdge reports completion only after the Kafka egress has drained.
+			if err := emitEdgeOutput(output, egressStopped, EdgeOutputRecord{Kind: EdgeOutputEndOfInput}); err != nil {
+				return fmt.Errorf("pubblicazione fine input Edge %s fallita: %w", edgeID, err)
+			}
 			stats.endOfReplayProcessed.Add(1)
 
 			return nil
@@ -84,6 +85,15 @@ func processTelemetry(payload []byte, aggregator *WindowAggregator, output chan<
 
 	if aggregate != nil {
 		if err := emitEdgeOutput(output, egressStopped, EdgeOutputRecord{Kind: EdgeOutputAggregate, Aggregate: *aggregate}); err != nil {
+			return err
+		}
+		// Opening this newer Edge window makes every earlier Edge window
+		// definitive: the Edge rejects later telemetry behind its current window.
+		watermark := model.EdgeWatermark{
+			EdgeID:          aggregator.edgeID,
+			CompleteThrough: event.EventTime.UTC().Truncate(aggregator.windowSize),
+		}
+		if err := emitEdgeOutput(output, egressStopped, EdgeOutputRecord{Kind: EdgeOutputWatermark, Watermark: watermark}); err != nil {
 			return err
 		}
 	}

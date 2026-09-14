@@ -31,8 +31,17 @@ func edgeInput(t *testing.T, id string, minute int, n uint64) kafka.Message {
 	}
 	return kafka.Message{Partition: kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount), Key: []byte(id), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeAggregate)}}}
 }
-func sourceEOS(partition int) kafka.Message {
-	return kafka.Message{Partition: partition, Key: []byte(model.PartitionKey(partition)), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeSourcePartitionEndOfInput)}}}
+func edgeWatermarkInput(t *testing.T, id string, minute int) kafka.Message {
+	t.Helper()
+	watermark := model.EdgeWatermark{EdgeID: id, CompleteThrough: testEpoch.Add(time.Duration(minute) * time.Minute)}
+	payload, err := avrocodec.EncodeEdgeWatermark(watermark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kafka.Message{Partition: kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount), Key: []byte(id), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeWatermark)}}}
+}
+func edgeEndInput(id string) kafka.Message {
+	return kafka.Message{Partition: kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount), Key: []byte(id), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeEndOfInput)}}}
 }
 func feedGlobal(ctx context.Context, g *globalaggregator.Aggregator, m kafka.Message) error {
 	kind, err := kafkautil.ParseRecordType(m.Headers)
@@ -81,6 +90,10 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 			for i := 0; i < 13; i++ {
 				ids = append(ids, fmt.Sprintf("edge-%d", i))
 			}
+			membership, err := cloudworker.BuildMembership(ids, model.DefaultSourcePartitionCount)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var members []kafka.GroupMember
 			var partitions []kafka.Partition
 			for w := 0; w < workers; w++ {
@@ -96,7 +109,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 			for w, m := range members {
 				workerPartitions[w] = assignments[m.ID]["edge-aggregates"]
 				for _, p := range workerPartitions[w] {
-					a, err := cloudworker.NewPartitionAggregator(p, model.DefaultSourcePartitionCount, cloudworker.DefaultWindowSize, cloudworker.DefaultWatermarkDelay)
+					a, err := cloudworker.NewPartitionAggregator(p, model.DefaultSourcePartitionCount, membership[p], cloudworker.DefaultWindowSize)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -111,11 +124,14 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 				for i, id := range ids {
 					p := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
 					m := edgeInput(t, id, minute, uint64(i+1))
-					streams[p] = append(streams[p], m, m)
+					watermark := edgeWatermarkInput(t, id, minute+5)
+					streams[p] = append(streams[p], m, m, watermark)
 				}
 			}
-			for p := 0; p < model.DefaultSourcePartitionCount; p++ {
-				streams[p] = append(streams[p], sourceEOS(p), sourceEOS(p))
+			for _, id := range ids {
+				p := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
+				end := edgeEndInput(id)
+				streams[p] = append(streams[p], end, end)
 			}
 			// Different inter-partition scheduling per worker count, same partition logs.
 			for pending := true; pending; {
@@ -217,7 +233,7 @@ func TestPublishBeforeCommitAndNoCommitOnFailure(t *testing.T) {
 	partition := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
 	for _, failAt := range []int{0, 1, 2} {
 		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
-			a, _ := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, cloudworker.DefaultWindowSize, cloudworker.DefaultWatermarkDelay)
+			a, _ := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, []string{id}, cloudworker.DefaultWindowSize)
 			var order []string
 			calls := 0
 			committed := false
@@ -234,11 +250,12 @@ func TestPublishBeforeCommitAndNoCommitOnFailure(t *testing.T) {
 			if err := p.Process(context.Background(), edgeInput(t, id, 0, 1)); err != nil {
 				t.Fatal(err)
 			}
-			// Initial progress precedes any data for this incomplete window. Reset log.
 			calls = 0
 			order = nil
 			armed = true
-			err := processAndCommitMessage(context.Background(), sourceEOS(partition), p, func(kafka.Message) error { committed = true; order = append(order, "commit"); return nil })
+			end := edgeEndInput(id)
+			end.Partition = partition
+			err := processAndCommitMessage(context.Background(), end, p, func(kafka.Message) error { committed = true; order = append(order, "commit"); return nil })
 			if failAt == 0 {
 				want := []string{model.RecordTypeCloudPartitionAggregate, model.RecordTypePartitionEndOfReplay, "commit"}
 				if err != nil || !reflect.DeepEqual(order, want) {
@@ -254,12 +271,12 @@ func TestWorkerConfigDefaultsAndPositivePartitions(t *testing.T) {
 	t.Setenv("KAFKA_BROKER", "unused:9092")
 	t.Setenv("SOURCE_PARTITION_COUNT", "6")
 	t.Setenv("CLOUD_WINDOW_SIZE", "")
-	t.Setenv("CLOUD_WATERMARK_DELAY", "")
+	t.Setenv("CLOUD_EXPECTED_EDGE_IDS", "edge-0")
 	cfg, err := loadCloudWorkerConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WindowSize != cloudworker.DefaultWindowSize || cfg.WatermarkDelay != cloudworker.DefaultWatermarkDelay {
+	if cfg.WindowSize != cloudworker.DefaultWindowSize || len(cfg.Membership) != model.DefaultSourcePartitionCount {
 		t.Fatalf("wrong defaults: %+v", cfg)
 	}
 	for _, value := range []string{"0", "-1", "invalid"} {

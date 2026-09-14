@@ -76,7 +76,7 @@ load_pilot_environment() {
 load_resource_profile() {
   local input="${RESOURCE_PROFILE:-${REPO_ROOT}/deploy/resources/aws-pilot.env}"
   local line key value prefix suffix
-  local -a prefixes=(SIMULATOR EDGE MQTT CLOUD_WORKER KAFKA KAFKA_INIT GLOBAL COORDINATOR)
+  local -a prefixes=(SIMULATOR EDGE MQTT CLOUD_WORKER KAFKA KAFKA_INIT GLOBAL)
   declare -A values=()
 
   RESOURCE_PROFILE_PATH="$(resolve_repo_file "${input}")" ||
@@ -86,7 +86,7 @@ load_resource_profile() {
     line="${line%$'\r'}"
     [[ -z "${line}" || "${line}" == \#* ]] && continue
 
-    [[ "${line}" =~ ^(SIMULATOR|EDGE|MQTT|CLOUD_WORKER|KAFKA|KAFKA_INIT|GLOBAL|COORDINATOR)_(CPUS|MEMORY)=([0-9.mMgG]+)$ ]] ||
+    [[ "${line}" =~ ^(SIMULATOR|EDGE|MQTT|CLOUD_WORKER|KAFKA|KAFKA_INIT|GLOBAL)_(CPUS|MEMORY)=([0-9.mMgG]+)$ ]] ||
       die "resource profile: assegnazione non valida: ${line}"
 
     key="${line%%=*}"
@@ -103,9 +103,6 @@ load_resource_profile() {
     fi
     values["${key}"]="${value}"
   done <"${RESOURCE_PROFILE_PATH}"
-
-  values[COORDINATOR_CPUS]="${values[COORDINATOR_CPUS]:-0.1}"
-  values[COORDINATOR_MEMORY]="${values[COORDINATOR_MEMORY]:-64m}"
 
   RESOURCE_PROFILE_VALUES=""
   for prefix in "${prefixes[@]}"; do

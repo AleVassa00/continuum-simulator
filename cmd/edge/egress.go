@@ -15,11 +15,14 @@ type EdgeOutputKind byte
 
 const (
 	EdgeOutputAggregate EdgeOutputKind = iota
+	EdgeOutputWatermark
+	EdgeOutputEndOfInput
 )
 
 type EdgeOutputRecord struct {
 	Kind      EdgeOutputKind
 	Aggregate model.EdgeAggregate
+	Watermark model.EdgeWatermark
 }
 type KafkaEgress struct {
 	edgeID string
@@ -48,12 +51,52 @@ func (egress *KafkaEgress) Run() error {
 			if err := egress.publishAggregate(record.Aggregate); err != nil {
 				return err
 			}
+		case EdgeOutputWatermark:
+			if err := egress.publishWatermark(record.Watermark); err != nil {
+				return err
+			}
+		case EdgeOutputEndOfInput:
+			if err := egress.publishEndOfInput(); err != nil {
+				return err
+			}
 
 		default:
 			return fmt.Errorf("tipo Edge output sconosciuto: %d", record.Kind)
 		}
 	}
 
+	return nil
+}
+
+func (egress *KafkaEgress) publishWatermark(watermark model.EdgeWatermark) error {
+	payload, err := avrocodec.EncodeEdgeWatermark(watermark)
+	if err != nil {
+		return fmt.Errorf("serializzazione EdgeWatermark fallita: %w", err)
+	}
+	message := kafka.Message{
+		Key:     []byte(egress.edgeID),
+		Value:   payload,
+		Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeWatermark)}},
+		Time:    time.Now().UTC(),
+	}
+	if err := egress.writer.WriteMessages(context.Background(), message); err != nil {
+		return fmt.Errorf("pubblicazione Kafka watermark edge=%s complete_through=%s fallita: %w", egress.edgeID, watermark.CompleteThrough.Format(time.RFC3339Nano), err)
+	}
+	return nil
+}
+
+// The terminal marker is appended by the same synchronous writer only after
+// every preceding aggregate/watermark has been acknowledged by Kafka.
+func (egress *KafkaEgress) publishEndOfInput() error {
+	message := kafka.Message{
+		Key:     []byte(egress.edgeID),
+		Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeEndOfInput)}},
+		Time:    time.Now().UTC(),
+	}
+	if err := egress.writer.WriteMessages(context.Background(), message); err != nil {
+		return fmt.Errorf("pubblicazione Kafka EdgeEndOfInput edge=%s fallita: %w", egress.edgeID, err)
+	}
+	fmt.Printf("EDGE_PRODUCTION_COMPLETED edge=%s topic=%s\n", egress.edgeID, egress.writer.Topic)
 	return nil
 }
 

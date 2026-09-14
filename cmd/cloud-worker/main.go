@@ -31,7 +31,7 @@ func runCloudWorker() error {
 	writer := newKafkaWriter(config.KafkaBroker, config.OutputTopic)
 	defer writer.Close()
 
-	fmt.Printf("Avvio Cloud Worker %s: %s -> %s window=%s watermark_delay=%s partitions=%d\n", config.WorkerID, config.InputTopic, config.OutputTopic, config.WindowSize, config.WatermarkDelay, config.SourcePartitionCount)
+	fmt.Printf("Avvio Cloud Worker %s: %s -> %s window=%s partitions=%d\n", config.WorkerID, config.InputTopic, config.OutputTopic, config.WindowSize, config.SourcePartitionCount)
 	// Shutdown does not certify open windows. Only deterministic progress/EOS can.
 	return consume(ctx, config, func(ctx context.Context, m kafka.Message) error { return writer.WriteMessages(ctx, m) })
 }

@@ -188,20 +188,6 @@ function Wait-CloudWorkerGroup {
     throw "Consumer group cloud-workers non Stable con $ExpectedWorkers membri."
 }
 
-function Get-PartitionCoordinatorStatus {
-    $state = Get-RunContainerState -Name "partition-coordinator"
-    if ($state.Status -ne "running" -or $state.Health.Status -ne "healthy") {
-        throw "partition-coordinator non running/healthy."
-    }
-    $response = (& docker exec partition-coordinator wget -q -T 5 -O - http://localhost:8081/status) -join "`n"
-    if ($LASTEXITCODE -ne 0) { throw "GET partition-coordinator/status fallita." }
-    $status = $response | ConvertFrom-Json
-    if ($status.complete -isnot [bool] -or $status.failed -isnot [bool] -or $status.failed) {
-        throw "partition-coordinator status non valido o failed: $response"
-    }
-    return $status
-}
-
 function Test-WorkloadContainersCompleted {
     param([string[]]$Names)
     $complete = $true
@@ -1367,7 +1353,6 @@ $RunFinishedAt = $null
 $Status = "failed"
 $Failure = $null
 $MetricsJob = $null
-$CoordinatorStarted = $false
 
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Green
@@ -1425,7 +1410,6 @@ try {
     )
 
     Write-Host "`nAvvio infrastruttura senza Simulator..." -ForegroundColor Yellow
-    $CoordinatorStarted = $true
     Invoke-External "docker" @(
         "compose",
         "-f", $ComposePath,
@@ -1433,9 +1417,7 @@ try {
         "-d"
     )
 
-    # The listener is healthy before /start; only activation enables empty EOS.
     Wait-CloudWorkerGroup -ExpectedWorkers $EffectiveWorkers
-    Wait-RunContainerHealthy -Name "partition-coordinator"
     $services = @(& docker compose -f $ComposePath --profile replay config --services)
     if ($LASTEXITCODE -ne 0) { throw "Impossibile leggere i servizi Compose." }
     $edgeServices = @($services | Where-Object { $_ -match '^edge-\d+$' })
@@ -1444,7 +1426,6 @@ try {
         throw "Servizi Edge/Simulator mancanti o non allineati."
     }
     foreach ($edgeService in $edgeServices) { Wait-RunContainerHealthy -Name $edgeService }
-    Invoke-External "docker" @("exec", "partition-coordinator", "wget", "-q", "-T", "10", "-O", "-", "--post-data=", "http://localhost:8081/start")
 
     # Rigenerazione intenzionale dopo l'avvio dell'infrastruttura:
     # deploygen calcola un nuovo REPLAY_START_AT usando start_lead_time.
@@ -1492,7 +1473,6 @@ try {
     $globalExited = $false
 
     while ((Get-Date) -lt $deadline) {
-        $coordinatorStatus = Get-PartitionCoordinatorStatus
         $workloadComplete = Test-WorkloadContainersCompleted -Names ($edgeServices + $simulatorServices)
         $state = (& docker inspect --format "{{.State.Status}}" global-aggregator 2>$null)
         if ($LASTEXITCODE -ne 0) {
@@ -1504,7 +1484,7 @@ try {
         if ($state -eq "exited") {
             $globalState = Get-RunContainerState -Name "global-aggregator"
             if ($globalState.ExitCode -ne 0) { throw "Global Aggregator terminato con exit code $($globalState.ExitCode)." }
-            if ($workloadComplete -and $coordinatorStatus.complete) {
+            if ($workloadComplete) {
                 $globalExited = $true
                 break
             }
@@ -1541,12 +1521,6 @@ catch {
 }
 finally {
     $RunFinishedAt = (Get-Date).ToUniversalTime()
-
-    # A failed run must not keep emitting completion records, including when
-    # -KeepContainers preserves the other containers for diagnosis.
-    if ($CoordinatorStarted -and $Status -ne "success") {
-        & docker stop --time 10 partition-coordinator 2>&1 | Out-Host
-    }
 
     Stop-MetricsCollector -Job $MetricsJob -StopFile $StopMetricsFile
     Remove-Item $StopMetricsFile -Force -ErrorAction SilentlyContinue

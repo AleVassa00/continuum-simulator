@@ -14,13 +14,13 @@ import (
 type CloudWorkerConfig struct {
 	ConsumerCommitBatchSize int
 	SourcePartitionCount    int
+	Membership              map[int][]string
 	KafkaBroker             string
 	InputTopic              string
 	OutputTopic             string
 	GroupID                 string
 	WorkerID                string
 	WindowSize              time.Duration
-	WatermarkDelay          time.Duration
 }
 
 func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
@@ -38,7 +38,11 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	if err != nil {
 		return CloudWorkerConfig{}, err
 	}
-	watermarkDelay, err := loadCloudWatermarkDelay()
+	expectedEdgeIDs := strings.TrimSpace(os.Getenv("CLOUD_EXPECTED_EDGE_IDS"))
+	if expectedEdgeIDs == "" {
+		return CloudWorkerConfig{}, fmt.Errorf("CLOUD_EXPECTED_EDGE_IDS is required")
+	}
+	membership, err := cloudworker.BuildMembership(strings.Split(expectedEdgeIDs, ","), count)
 	if err != nil {
 		return CloudWorkerConfig{}, err
 	}
@@ -50,13 +54,13 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	return CloudWorkerConfig{
 		ConsumerCommitBatchSize: batchSize,
 		SourcePartitionCount:    count,
+		Membership:              membership,
 		KafkaBroker:             kafkaBroker,
 		InputTopic:              inputTopic,
 		OutputTopic:             outputTopic,
 		GroupID:                 groupID,
 		WorkerID:                workerID,
 		WindowSize:              windowSize,
-		WatermarkDelay:          watermarkDelay,
 	}, nil
 }
 
@@ -89,18 +93,6 @@ func loadCloudWindowSize() (
 	}
 
 	return windowSize, nil
-}
-
-func loadCloudWatermarkDelay() (time.Duration, error) {
-	value := envutil.OrDefault("CLOUD_WATERMARK_DELAY", cloudworker.DefaultWatermarkDelay.String())
-	delay, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf("invalid CLOUD_WATERMARK_DELAY %q: %w", value, err)
-	}
-	if delay < 0 {
-		return 0, fmt.Errorf("CLOUD_WATERMARK_DELAY must be nonnegative")
-	}
-	return delay, nil
 }
 
 func loadInputTopic() string {

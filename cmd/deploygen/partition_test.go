@@ -11,15 +11,9 @@ import (
 
 type checkedCompose struct {
 	Services map[string]struct {
-		Environment   map[string]string
-		Command       []string
-		Image         string
-		Entrypoint    []string
-		ContainerName string `yaml:"container_name"`
-		Restart       string
-		Ports         []string
-		Networks      []string
-		DependsOn     map[string]struct{ Condition string } `yaml:"depends_on"`
+		Environment map[string]string
+		Command     []string
+		DependsOn   map[string]struct{ Condition string } `yaml:"depends_on"`
 	}
 }
 
@@ -45,7 +39,11 @@ func TestGeneratedCloudGlobalContractsAllWorkerCounts(t *testing.T) {
 			}
 			workerInstances := 0
 			globals := 0
-			coordinators := 0
+			var expected []string
+			for _, edge := range edges {
+				expected = append(expected, edge.EdgeID)
+			}
+			expectedMembership := strings.Join(expected, ",")
 			for _, content := range contents {
 				var doc checkedCompose
 				if err := yaml.Unmarshal([]byte(content), &doc); err != nil {
@@ -53,39 +51,15 @@ func TestGeneratedCloudGlobalContractsAllWorkerCounts(t *testing.T) {
 				}
 				for name, service := range doc.Services {
 					env := service.Environment
-					if _, exists := env["CLOUD_EXPECTED_EDGE_IDS"]; exists {
-						t.Fatal("Cloud membership must not be deployed")
-					}
 					if name == "partition-coordinator" {
-						coordinators++
-						if service.ContainerName != name || len(service.Entrypoint) != 1 || service.Entrypoint[0] != "/app/partition-coordinator" || service.Restart != "no" || len(service.Ports) != 0 {
-							t.Fatalf("coordinator lifecycle: %+v", service)
-						}
-						if service.Image != doc.Services["edge-0"].Image || env["KAFKA_BROKER"] != doc.Services["edge-0"].Environment["KAFKA_BROKER"] || env["KAFKA_TOPIC"] != "edge-aggregates" {
-							t.Fatal("coordinator must share Edge image and Kafka target")
-						}
-						var expected []string
-						for _, edge := range edges {
-							expected = append(expected, edge.EdgeID)
-						}
-						if env["COORDINATOR_EXPECTED_EDGE_IDS"] != strings.Join(expected, ",") {
-							t.Fatalf("producer mapping: %v", env)
-						}
+						t.Fatal("obsolete partition coordinator deployed")
 					}
 					if strings.HasPrefix(name, "edge-") {
-						if env["EDGE_COMPLETION_URL"] != "http://partition-coordinator:8081/completed" || service.DependsOn["partition-coordinator"].Condition != "service_healthy" {
-							t.Fatalf("Edge completion contract: %+v", service)
+						if _, exists := env["EDGE_COMPLETION_URL"]; exists {
+							t.Fatal("obsolete HTTP completion configured on Edge")
 						}
-						shared := false
-						for _, network := range service.Networks {
-							for _, coordinatorNetwork := range doc.Services["partition-coordinator"].Networks {
-								if network == coordinatorNetwork {
-									shared = true
-								}
-							}
-						}
-						if !shared {
-							t.Fatal("Edge cannot reach coordinator")
+						if _, exists := service.DependsOn["partition-coordinator"]; exists {
+							t.Fatal("Edge still depends on partition coordinator")
 						}
 					}
 					if name == "global-aggregator" {
@@ -104,8 +78,8 @@ func TestGeneratedCloudGlobalContractsAllWorkerCounts(t *testing.T) {
 						if env["SOURCE_PARTITION_COUNT"] != "6" || env["KAFKA_OUTPUT_TOPIC"] != "cloud-partition-aggregates" {
 							t.Fatalf("Worker config: %v", env)
 						}
-						if env["CLOUD_WATERMARK_DELAY"] != "5m0s" {
-							t.Fatalf("watermark delay: %v", env)
+						if env["CLOUD_EXPECTED_EDGE_IDS"] != expectedMembership {
+							t.Fatalf("worker membership: %v", env)
 						}
 					}
 					if name == "kafka-init" {
@@ -116,29 +90,9 @@ func TestGeneratedCloudGlobalContractsAllWorkerCounts(t *testing.T) {
 					}
 				}
 			}
-			if globals != 2 || workerInstances != 2*workers || coordinators != 2 {
+			if globals != 2 || workerInstances != 2*workers {
 				t.Fatalf("local/distributed instances: Global=%d Worker=%d", globals, workerInstances)
 			}
 		})
-	}
-}
-
-func TestExplicitZeroWatermarkRendered(t *testing.T) {
-	zero := experiment.Duration(0)
-	cfg := experiment.Config{Cloud: experiment.CloudConfig{Workers: 1, WatermarkDelay: &zero}}
-	contents := []string{buildCompose(nil, experiment.BuildEffective(cfg, time.Now()))}
-	for _, file := range buildDistributedComposes(nil, cfg) {
-		contents = append(contents, file.Content)
-	}
-	for _, content := range contents {
-		var doc checkedCompose
-		if err := yaml.Unmarshal([]byte(content), &doc); err != nil {
-			t.Fatal(err)
-		}
-		for name, service := range doc.Services {
-			if strings.HasPrefix(name, "cloud-worker-") && service.Environment["CLOUD_WATERMARK_DELAY"] != "0s" {
-				t.Fatal("explicit zero lost")
-			}
-		}
 	}
 }

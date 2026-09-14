@@ -86,7 +86,7 @@ services:
       KAFKA_OUTPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "cloud-workers"
       CLOUD_WINDOW_SIZE: "{{$.CloudWindowSize}}"
-      CLOUD_WATERMARK_DELAY: "{{$.CloudWatermarkDelay}}"
+      CLOUD_EXPECTED_EDGE_IDS: "{{$.ExpectedEdgeIDs}}"
       CLOUD_CONSUMER_COMMIT_BATCH_SIZE: "{{$.ConsumerCommitBatchSize}}"
       SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
       WORKER_ID: "{{.WorkerID}}"
@@ -119,27 +119,6 @@ services:
     networks:
       - continuum-backbone
 
-  partition-coordinator:
-    image: continuum-edge:local
-    container_name: partition-coordinator
-    entrypoint: ["/app/partition-coordinator"]
-    environment:
-      KAFKA_BROKER: "kafka:29092"
-      KAFKA_TOPIC: "edge-aggregates"
-      SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
-      COORDINATOR_EXPECTED_EDGE_IDS: "{{.ExpectedEdgeIDs}}"
-    depends_on:
-      kafka-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/readyz >/dev/null 2>&1"]
-      interval: 2s
-      timeout: 1s
-      retries: 15
-    restart: "no"
-    networks:
-      - continuum-backbone
-
 {{range .Edges}}  # {{.EdgeID}}: {{.SensorCount}} sensors
   {{.MQTTService}}:
     image: eclipse-mosquitto:2
@@ -167,14 +146,11 @@ services:
       EDGE_INGRESS_QUEUE_CAPACITY: "{{$.EdgeIngressQueueCapacity}}"
       KAFKA_BROKER: "kafka:29092"
       KAFKA_TOPIC: "edge-aggregates"
-      EDGE_COMPLETION_URL: "http://partition-coordinator:8081/completed"
     depends_on:
       {{.MQTTService}}:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
-      partition-coordinator:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/readyz >/dev/null 2>&1"]
       interval: 2s

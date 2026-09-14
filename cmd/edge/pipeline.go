@@ -8,7 +8,7 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// edgePipeline conserva i completamenti già ricevuti dall'orchestratore.
+// edgePipeline conserva l'esito dei due stadi concorrenti.
 // L'aggregatore rimane di esclusiva competenza di runEdgeLoop.
 type edgePipeline struct {
 	processorDone <-chan error

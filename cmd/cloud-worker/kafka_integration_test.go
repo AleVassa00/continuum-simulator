@@ -57,9 +57,13 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					for e := 0; e < edgeCount; e++ {
 						ids = append(ids, fmt.Sprintf("edge-%d", e))
 					}
+					membership, err := cloudworker.BuildMembership(ids, count)
+					if err != nil {
+						t.Fatal(err)
+					}
 					done := make(chan error, workers)
 					for w := 0; w < workers; w++ {
-						cfg := CloudWorkerConfig{ConsumerCommitBatchSize: 100, SourcePartitionCount: count, KafkaBroker: broker, InputTopic: input, OutputTopic: output, GroupID: group, WorkerID: fmt.Sprintf("executor-%d", w), WindowSize: cloudworker.DefaultWindowSize, WatermarkDelay: cloudworker.DefaultWatermarkDelay}
+						cfg := CloudWorkerConfig{ConsumerCommitBatchSize: 100, SourcePartitionCount: count, KafkaBroker: broker, InputTopic: input, OutputTopic: output, GroupID: group, WorkerID: fmt.Sprintf("executor-%d", w), WindowSize: cloudworker.DefaultWindowSize, Membership: membership}
 						go func() {
 							writer := newKafkaWriter(broker, output)
 							writer.Transport = transport
@@ -117,27 +121,27 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					wantOffsets := make([]int64, count)
 					for minute := 0; minute < 35; minute += 5 {
 						for e, id := range ids {
-							m := edgeInput(t, id, minute, uint64(e+1))
-							m.Partition = kafkautil.PartitionForEdge(id, count)
-							if err := producer.WriteMessages(ctx, m); err != nil {
+							aggregate := edgeInput(t, id, minute, uint64(e+1))
+							watermark := edgeWatermarkInput(t, id, minute+5)
+							partition := kafkautil.PartitionForEdge(id, count)
+							aggregate.Partition = partition
+							watermark.Partition = partition
+							if err := producer.WriteMessages(ctx, aggregate, watermark); err != nil {
 								t.Fatal(err)
 							}
-							wantOffsets[m.Partition]++
+							wantOffsets[partition] += 2
 						}
 					}
-					// Source EOS uses the decimal partition key but must be routed to
-					// that actual partition, independently of the Edge Hash balancer.
-					// All Edge writes have completed before any partition is ended.
-					eosProducer := newKafkaWriter(broker, input)
-					eosProducer.Transport = transport
-					eosProducer.Balancer = sourcePartitionBalancer{}
-					defer eosProducer.Close()
-					for p := 0; p < count; p++ {
-						m := sourceEOS(p)
-						if err := eosProducer.WriteMessages(ctx, m, m); err != nil {
+					// Each Edge writes its terminal marker with the same synchronous
+					// writer/key, after all of that Edge's data and watermarks.
+					for _, id := range ids {
+						end := edgeEndInput(id)
+						partition := kafkautil.PartitionForEdge(id, count)
+						end.Partition = partition
+						if err := producer.WriteMessages(ctx, end); err != nil {
 							t.Fatal(err)
 						}
-						wantOffsets[p] += 2
+						wantOffsets[partition]++
 					}
 					var globals []model.GlobalAggregate
 					g, err := globalaggregator.New(count, func(_ context.Context, a model.GlobalAggregate) error {
@@ -216,17 +220,6 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 			}
 		}
 	}
-}
-
-type sourcePartitionBalancer struct{}
-
-func (sourcePartitionBalancer) Balance(message kafka.Message, partitions ...int) int {
-	for _, partition := range partitions {
-		if partition == message.Partition {
-			return partition
-		}
-	}
-	panic(fmt.Sprintf("source EOS partition %d unavailable", message.Partition))
 }
 
 func pollKafka(t *testing.T, ctx context.Context, ready func() bool) {

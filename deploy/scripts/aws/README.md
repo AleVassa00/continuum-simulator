@@ -78,7 +78,6 @@ Si occupa soltanto del ciclo dell'esperimento:
 - reset dei container della run precedente;
 - verifica/inizializzazione schema RDS;
 - avvio Kafka, Global Aggregator, Cloud Worker, Edge e Simulator;
-- attivazione del Partition Coordinator;
 - raccolta metriche;
 - attesa del completamento;
 - export dei risultati PostgreSQL;

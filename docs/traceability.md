@@ -52,7 +52,7 @@ Cloud Worker e Global deduplicano gli input nelle finestre pendenti, conservando
 anche l'ultimo record per sorgente. I conflitti e i nuovi record dietro progresso
 gia certificato invalidano la run; non esiste uno storico di deduplica illimitato.
 Il Cloud conosce la membership Edge -> partition usando lo stesso Hash del
-producer; finalizza tramite il minimo progresso degli Edge non terminati.
+producer; finalizza tramite il minimo dei watermark espliciti degli Edge non terminati.
 Il Global conosce solo P0...P5: riduce finestre identiche dopo partial o certificati
 di contributo zero. EOS e progresso hanno ordine rispetto ai dati, mai semantica
 basata sul silenzio. Le partition restano sei per tutta la run; crash o rebalance

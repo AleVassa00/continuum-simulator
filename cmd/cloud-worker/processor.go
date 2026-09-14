@@ -7,7 +7,6 @@ import (
 	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 	"fmt"
-	"log/slog"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -35,30 +34,29 @@ func (p *CloudMessageProcessor) Process(ctx context.Context, message kafka.Messa
 			return fmt.Errorf("Kafka key does not match EdgeAggregate edge_id")
 		}
 		out, err = p.aggregator.Add(message.Partition, input)
-	case model.RecordTypeSourcePartitionEndOfInput:
+	case model.RecordTypeEdgeWatermark:
+		watermark, decodeErr := avrocodec.DecodeEdgeWatermark(message.Value)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		if string(message.Key) != watermark.EdgeID {
+			return fmt.Errorf("Kafka key does not match EdgeWatermark edge_id")
+		}
+		out, err = p.aggregator.AdvanceEdgeWatermark(message.Partition, watermark)
+	case model.RecordTypeEdgeEndOfInput:
 		if len(message.Value) != 0 {
-			return fmt.Errorf("source partition EOS must have empty payload")
+			return fmt.Errorf("Edge end-of-input must have empty payload")
 		}
-		partition, keyErr := model.ParsePartitionKey(message.Key)
-		if keyErr != nil {
-			return keyErr
+		edgeID := string(message.Key)
+		if edgeID == "" {
+			return fmt.Errorf("Edge end-of-input must have an Edge key")
 		}
-		if partition != message.Partition || string(message.Key) != model.PartitionKey(partition) {
-			return fmt.Errorf("source partition EOS key does not match actual partition %d", message.Partition)
-		}
-		out, err = p.aggregator.EndPartitionInput(message.Partition)
+		out, err = p.aggregator.EndEdge(message.Partition, edgeID)
 	default:
 		return fmt.Errorf("unexpected Cloud record_type %q", kind)
 	}
 	if err != nil {
 		return err
-	}
-	if late := out.Late; late != nil {
-		slog.WarnContext(ctx, "CLOUD_LATE_RECORD_DROPPED",
-			"worker", p.workerID, "source_partition", out.SourcePartition,
-			"offset", message.Offset, "aggregate_id", late.AggregateID, "edge_id", late.EdgeID,
-			"events", late.Events,
-			"cloud_window_end", late.CloudWindowEnd, "watermark", late.Watermark)
 	}
 	return p.publishOutput(ctx, out)
 }

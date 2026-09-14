@@ -5,8 +5,9 @@
 La macroarchitettura rimane Sensor -> MQTT -> Edge -> Kafka -> Cloud Workers ->
 Kafka -> Global Aggregator -> sink. Le sei partition di `edge-aggregates` sono
 unita logiche stabili; i Worker sono esecutori intercambiabili, non sorgenti degli
-aggregati. Il refactor non cambia Sensor/MQTT, le finestre Edge, il producer Edge
-o la strategia sperimentale W1/W2/W4/W6. Il Global non conosce membership Edge.
+aggregati. Il refactor non cambia Sensor/MQTT, le finestre Edge o la strategia
+sperimentale W1/W2/W4/W6; estende il producer Edge con i controlli espliciti di
+progresso e termine. Il Global non conosce membership Edge.
 
 | Worker | Partition per esecutore (distribuzione bilanciata) | Partial logici per finestra con dati ovunque |
 | --- | --- | --- |
@@ -33,14 +34,15 @@ Anche W1 pubblica i partial su Kafka e passa sempre dal Global.
   Non ci sono altre dimensioni di raggruppamento nel modello corrente: le tre
   misure sono campi dello stesso record, non gruppi per sensor type.
 - Il topic di output e `cloud-partition-aggregates`, con una partition fisica.
-  La sua key `0`...`5` identifica la source partition del topic di input.
-- I payload data e `PartitionProgress` restano Avro binario con schema embedded;
+  La sua key `0`...`N-1` identifica la source partition del topic di input.
+- I payload data, `EdgeWatermark` e `PartitionProgress` sono Avro binario con
+  schema embedded;
   nessun JSON nel percorso Kafka, Schema Registry o discovery aggiuntivo.
 
 `CLOUD_EXPECTED_EDGE_IDS` viene configurata solo sui Worker. La membership e
 proiettata sulle partition usando direttamente `kafka.Hash.Balance` della stessa
-versione della libreria usata dall'Edge, sulla lista ordinata `[0,1,2,3,4,5]`.
-`SOURCE_PARTITION_COUNT` vale obbligatoriamente 6 su Worker e Global. I Worker
+versione della libreria usata dall'Edge, sulla lista ordinata delle partition.
+`SOURCE_PARTITION_COUNT` ha lo stesso valore configurato su Worker e Global. I Worker
 verificano anche metadata e ID delle partition all'avvio di ogni generazione.
 Questa configurazione esplicita e sufficiente per il deployment fisso: non serve
 far scoprire al Global gli Edge o introdurre nuovi servizi.
@@ -53,24 +55,27 @@ partition ed e **non supportato**. Il controllo dei metadata non e una migrazion
 ## Perche la finalizzazione e deterministica
 
 Il producer Edge (`cmd/edge/egress.go`) e sincrono (`Async=false`, `BatchSize=1`,
-`RequireAll`) e pubblica aggregati ed EOS dalla stessa coda, sulla stessa key
-edgeID con `kafka.Hash`. Su EOF l'ultimo EdgeAggregate precede l'EOS nella stessa
-partition Kafka. Gli aggregati Edge sono finestre definitive, ordinate e non
-sovrapposte; l'Edge corrente non riapre finestre per accettare dati tardivi.
+`RequireAll`) e pubblica aggregati, watermark e `EdgeEndOfInput` dalla stessa
+coda, sulla stessa key edgeID con `kafka.Hash`. Su EOF l'ultimo EdgeAggregate
+precede il marker terminale nella stessa partition Kafka. Gli aggregati Edge
+sono finestre definitive, ordinate e non sovrapposte; l'Edge corrente non
+riapre finestre per accettare dati tardivi.
 
-Di conseguenza, dopo aver consumato un aggregato Edge `[a,b)`, Cloud sa che quel
-producer non emettera nuovi contributi precedenti a `b`. Questo e un contratto
-di progresso, non una supposizione fondata sulla frequenza degli eventi.
+Quando apre una nuova finestra, l'Edge pubblica prima l'aggregato appena chiuso e
+poi `EdgeWatermark(edgeID, completeThrough)`. Il watermark certifica che non
+verranno successivamente pubblicati aggregati con `window_end <= completeThrough`.
+Questo e un contratto esplicito di progresso, non un'inferenza dalla frequenza
+degli eventi o dall'orologio.
 
 Per una partition P:
 
-1. Cloud tiene l'ultimo `window_end` e il flag EOS di **ogni Edge atteso in P**.
-2. Un Edge mai osservato e non terminato blocca la finalizzazione.
-3. La frontiera e il minimo dei `window_end` degli Edge non terminati, troncato
-   al confine Cloud da 15 minuti. Gli Edge terminati non limitano piu la frontiera.
+1. Cloud tiene il watermark monotono e il flag terminale di **ogni Edge atteso in P**.
+2. Un Edge senza watermark e non terminato blocca la finalizzazione.
+3. La frontiera e il minimo dei watermark degli Edge non terminati. Gli Edge
+   terminati non limitano piu la frontiera.
 4. Solo le finestre con `window_end <= frontiera` producono partial definitivi.
 5. Gli eventuali partial sono pubblicati prima di `PartitionProgress(P, frontiera)`.
-6. Quando tutti gli Edge di P hanno inviato EOS, Cloud pubblica le finestre
+6. Quando tutti gli Edge di P hanno inviato `EdgeEndOfInput`, Cloud pubblica le
    residue in ordine temporale e infine `PartitionEndOfReplay(P)`.
 
 Un Edge veloce non puo certificare un Edge lento nella stessa partition. Non
@@ -90,7 +95,8 @@ finestre su partition che non hanno mai ricevuto alcun dato.
 gia stati pubblicati. Se una di quelle finestre non ha partial, il suo contributo
 e quindi zero. `PartitionEndOfReplay(P)` estende la garanzia a tutte le finestre.
 Una partition senza Edge configurati emette EOS all'assegnazione, anche senza
-ricevere record Kafka. Un Edge con shard vuoto deve comunque inviare il suo EOS.
+ricevere record Kafka. Un Edge con shard vuoto deve comunque inviare il proprio
+`EdgeEndOfInput`.
 
 Il numero di partial **con dati** dipende dai dati nelle partition, mai dal numero
 di Worker. Con dati in tutte le sei partition si producono esattamente sei

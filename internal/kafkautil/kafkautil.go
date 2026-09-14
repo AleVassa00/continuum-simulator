@@ -11,7 +11,7 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// PartitionForEdge is used by orchestration, never by Cloud window completeness.
+// PartitionForEdge projects the configured Edge topology onto source partitions.
 // It must match the Edge writer's kafka.Hash balancer on the configured partitions.
 // count must have been validated as positive before starting orchestration.
 func PartitionForEdge(edgeID string, count int) int {

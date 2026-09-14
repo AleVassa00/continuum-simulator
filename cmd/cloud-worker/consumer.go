@@ -107,13 +107,16 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 
 	for _, assignment := range gen.Assignments[config.InputTopic] {
 
-		a, err := cloudworker.NewPartitionAggregator(assignment.ID, config.SourcePartitionCount, config.WindowSize, config.WatermarkDelay)
+		a, err := cloudworker.NewPartitionAggregator(assignment.ID, config.SourcePartitionCount, config.Membership[assignment.ID], config.WindowSize)
 		if err != nil {
 			return err
 		}
 
 		p := &CloudMessageProcessor{aggregator: a, workerID: config.WorkerID, outputTopic: config.OutputTopic, publishMessage: publish}
 		processors[assignment.ID] = p
+		if err := p.publishOutput(ctx, a.Initialize()); err != nil {
+			return fmt.Errorf("initialize source partition %d: %w", assignment.ID, err)
+		}
 
 		reader := kafka.NewReader(kafka.ReaderConfig{
 			Brokers: []string{config.KafkaBroker}, Topic: config.InputTopic, Partition: assignment.ID,
@@ -166,7 +169,7 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 			if err != nil {
 				return fmt.Errorf("worker=%s partition=%d offset=%d: %w", config.WorkerID, msg.Partition, msg.Offset, err)
 			}
-			if kind == model.RecordTypeSourcePartitionEndOfInput {
+			if kind == model.RecordTypeEdgeEndOfInput {
 				commit = commits.addAndFlush
 			}
 			if err := processAndCommitMessage(ctx, msg, p, commit); err != nil {

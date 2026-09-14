@@ -10,7 +10,6 @@ import (
 	"continuum/internal/globalaggregator"
 	"continuum/internal/kafkautil"
 	"continuum/internal/model"
-	"continuum/internal/partitioncompletion"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -27,26 +26,24 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			processors := make([]*CloudMessageProcessor, count)
-			for p := range processors {
-				a, err := cloudworker.NewPartitionAggregator(p, count, cloudworker.DefaultWindowSize, cloudworker.DefaultWatermarkDelay)
-				if err != nil {
-					t.Fatal(err)
-				}
-				processors[p] = &CloudMessageProcessor{aggregator: a, publishMessage: func(ctx context.Context, m kafka.Message) error { return feedGlobal(ctx, g, m) }}
-			}
 			ids := make([]string, 13) // Producer count is independent of the source partition count.
 			for e := range ids {
 				ids[e] = fmt.Sprintf("edge-%d", e)
 			}
-			markers := make(chan int, count)
-			c, err := partitioncompletion.New(ctx, count, ids, func(_ context.Context, p int) error { markers <- p; return nil })
+			membership, err := cloudworker.BuildMembership(ids, count)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer func() { cancel(); c.Wait() }()
-			if err := c.Start(); err != nil {
-				t.Fatal(err)
+			processors := make([]*CloudMessageProcessor, count)
+			for p := range processors {
+				a, err := cloudworker.NewPartitionAggregator(p, count, membership[p], cloudworker.DefaultWindowSize)
+				if err != nil {
+					t.Fatal(err)
+				}
+				processors[p] = &CloudMessageProcessor{aggregator: a, publishMessage: func(ctx context.Context, m kafka.Message) error { return feedGlobal(ctx, g, m) }}
+				if err := processors[p].publishOutput(ctx, a.Initialize()); err != nil {
+					t.Fatal(err)
+				}
 			}
 			for minute := 0; minute < 35; minute += 5 {
 				for _, id := range ids {
@@ -55,22 +52,18 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 					if err := processors[m.Partition].Process(ctx, m); err != nil {
 						t.Fatal(err)
 					}
+					watermark := edgeWatermarkInput(t, id, minute+5)
+					watermark.Partition = m.Partition
+					if err := processors[m.Partition].Process(ctx, watermark); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
 			for _, id := range ids {
-				if err := c.Complete(id); err != nil {
-					t.Fatal(err)
-				}
-			}
-			c.Wait()
-			seen := make(map[int]bool)
-			for range count {
-				p := <-markers
-				if seen[p] {
-					t.Fatal("duplicate partition EOS")
-				}
-				seen[p] = true
-				if err := processors[p].Process(ctx, sourceEOS(p)); err != nil {
+				partition := kafkautil.PartitionForEdge(id, count)
+				end := edgeEndInput(id)
+				end.Partition = partition
+				if err := processors[partition].Process(ctx, end); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -93,7 +86,7 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 			if err := g.Progress(ctx, model.PartitionProgress{SourcePartition: count, CompleteThrough: testEpoch}); err == nil {
 				t.Fatal("out-of-range progress accepted")
 			}
-			if _, err := cloudworker.NewPartitionAggregator(count, count, cloudworker.DefaultWindowSize, 0); err == nil {
+			if _, err := cloudworker.NewPartitionAggregator(count, count, nil, cloudworker.DefaultWindowSize); err == nil {
 				t.Fatal("out-of-range owner accepted")
 			}
 		})
@@ -102,6 +95,7 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 
 func TestWorkerPartitionCountConfiguration(t *testing.T) {
 	t.Setenv("KAFKA_BROKER", "unused:9092")
+	t.Setenv("CLOUD_EXPECTED_EDGE_IDS", "edge-0")
 	for _, tc := range []struct {
 		value string
 		want  int

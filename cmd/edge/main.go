@@ -85,17 +85,13 @@ func runEdge() error {
 		return pipelineErr
 	}
 	if stats.endOfReplayProcessed.Load() != 1 {
-		return fmt.Errorf("Edge %s stopped without Simulator EOS; no completion notified", config.EdgeID)
+		return fmt.Errorf("Edge %s stopped without Simulator EOS; EdgeEndOfInput not published", config.EdgeID)
 	}
-	// All synchronous WriteMessages calls have succeeded and the producer is closed
-	// before control-plane completion can authorize a source-partition terminal marker.
+	// The synchronous egress has already appended EdgeEndOfInput after every data
+	// record. Closing the writer completes the producer lifecycle.
 	writerClosed = true
 	if err := kafkaWriter.Close(); err != nil {
 		return fmt.Errorf("Edge %s: Kafka writer close failed: %w", config.EdgeID, err)
 	}
-	if err := notifyEdgeCompletion(context.Background(), config.CompletionURL, config.EdgeID); err != nil {
-		return err
-	}
-	fmt.Printf("EDGE_PRODUCTION_COMPLETED edge=%s\n", config.EdgeID)
 	return nil
 }

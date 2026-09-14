@@ -39,7 +39,6 @@ RUN_STATUS="failed"
 ADDRESSES_LOADED="false"
 METRICS_STARTED="false"
 KAFKA_METRICS_STARTED="false"
-COORDINATOR_STARTED="false"
 
 validate_positive_integer() {
   local name="$1"
@@ -291,10 +290,6 @@ finalize_run() {
 
   trap - EXIT
   set +e
-
-  if [[ "${exit_code}" != "0" && "${COORDINATOR_STARTED}" == "true" && "${ADDRESSES_LOADED}" == "true" ]]; then
-    ssh_run "${PUBLIC_IPS[edge]}" docker stop --time 10 partition-coordinator >/dev/null 2>&1 || true
-  fi
 
   stop_metric_collectors
 
@@ -688,36 +683,10 @@ REMOTE
 
 start_edges() {
   log "5/9 avvio Edge Host"
-  COORDINATOR_STARTED="true"
   ssh_run "${PUBLIC_IPS[edge]}" 'set -euo pipefail
 cd /opt/continuum/current
 docker compose --env-file .env -f deploy/compose/distributed/edge.generated.yml up -d'
   collect_normalized_compose edge
-}
-
-coordinator_status() {
-  local status
-
-  status="$(ssh_run "${PUBLIC_IPS[edge]}" 'set -euo pipefail
-state="$(docker inspect --format "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{.RestartCount}}|{{.State.OOMKilled}}" partition-coordinator)"
-[[ "${state}" == "running|healthy|0|false" ]] || {
-  echo "partition-coordinator lifecycle non valido: ${state}" >&2
-  exit 1
-}
-docker exec partition-coordinator wget -q -T 5 -O - http://localhost:8081/status')" || return 1
-
-  jq -e '(.complete | type == "boolean") and .failed == false' <<<"${status}" >/dev/null || {
-    log "partition-coordinator status non valido o failed: ${status}" >&2
-    return 1
-  }
-
-  printf '%s\n' "${status}"
-}
-
-activate_partition_coordinator() {
-  coordinator_status >/dev/null
-  ssh_run "${PUBLIC_IPS[edge]}" docker exec partition-coordinator \
-    wget -q -T 10 -O - --post-data= http://localhost:8081/start >/dev/null
 }
 
 wait_for_edges() {
@@ -780,7 +749,6 @@ REMOTE
   verify_kafka_tcp_from_role workers
   wait_for_worker_group "${KAFKA_READY_TIMEOUT_SECONDS}"
   wait_for_edges
-  coordinator_status >/dev/null
 
   ssh_run "${PUBLIC_IPS[workers]}" bash -s -- "${WORKER_COUNT}" <<'REMOTE'
 set -euo pipefail
@@ -922,7 +890,6 @@ case "${role}" in
     done
     ;;
   edge)
-    check_container partition-coordinator running healthy
     for edge_number in $(seq 0 12); do
       check_container "mqtt-edge-${edge_number}" running healthy
       if [[ "${phase}" == "before" ]]; then
@@ -995,20 +962,18 @@ REMOTE
 
 wait_for_run_completion() {
   local deadline=$(( $(date +%s) + RUN_COMPLETION_TIMEOUT_SECONDS ))
-  local coordinator simulators_done edges_done global_done
+  local simulators_done edges_done global_done
 
-  log "attesa completamento Simulator, Edge, coordinator e Global Aggregator"
+  log "attesa completamento Simulator, Edge e Global Aggregator"
 
   while (( $(date +%s) < deadline )); do
-    coordinator="$(coordinator_status)" || return 1
     simulators_done="$(workload_role_completed simulator)" || return 1
     edges_done="$(workload_role_completed edge)" || return 1
     global_done="$(workload_role_completed cloud-core)" || return 1
 
     if [[ "${simulators_done}" == true &&
           "${edges_done}" == true &&
-          "${global_done}" == true ]] &&
-       jq -e '.complete == true' <<<"${coordinator}" >/dev/null; then
+          "${global_done}" == true ]]; then
       return 0
     fi
 
@@ -1062,7 +1027,6 @@ main_run() {
   wait_for_edges
   verify_all_clocks
   quick_preflight
-  activate_partition_coordinator
   materialize_replay_start
   start_simulators
   validate_container_lifecycle before

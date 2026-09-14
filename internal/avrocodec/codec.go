@@ -14,6 +14,9 @@ import (
 //go:embed schemas/edge_aggregate.avsc
 var edgeSchema string
 
+//go:embed schemas/edge_watermark.avsc
+var edgeWatermarkSchema string
+
 //go:embed schemas/cloud_partition_aggregate.avsc
 var cloudSchema string
 
@@ -21,9 +24,10 @@ var cloudSchema string
 var progressSchema string
 
 var (
-	progressCodec = mustCompileSchema(progressSchema)
-	edgeCodec     = mustCompileSchema(edgeSchema)
-	cloudCodec    = mustCompileSchema(cloudSchema)
+	progressCodec      = mustCompileSchema(progressSchema)
+	edgeCodec          = mustCompileSchema(edgeSchema)
+	edgeWatermarkCodec = mustCompileSchema(edgeWatermarkSchema)
+	cloudCodec         = mustCompileSchema(cloudSchema)
 )
 
 func mustCompileSchema(schema string) *goavro.Codec {
@@ -64,6 +68,28 @@ func DecodeEdgeAggregate(payload []byte) (model.EdgeAggregate, error) {
 		Pressure:    record["pressure"].(model.MetricAggregate),
 		EmittedAt:   record["emitted_at"].(time.Time),
 	}, nil
+}
+
+func EncodeEdgeWatermark(watermark model.EdgeWatermark) ([]byte, error) {
+	if err := model.ValidateEdgeWatermark(watermark); err != nil {
+		return nil, err
+	}
+	return encodeRecord(edgeWatermarkCodec, map[string]any{
+		"edge_id":          watermark.EdgeID,
+		"complete_through": watermark.CompleteThrough,
+	})
+}
+
+func DecodeEdgeWatermark(payload []byte) (model.EdgeWatermark, error) {
+	record, err := decodeRecord(edgeWatermarkCodec, payload)
+	if err != nil {
+		return model.EdgeWatermark{}, err
+	}
+	watermark := model.EdgeWatermark{
+		EdgeID:          record["edge_id"].(string),
+		CompleteThrough: record["complete_through"].(time.Time),
+	}
+	return watermark, model.ValidateEdgeWatermark(watermark)
 }
 
 func EncodeCloudPartitionAggregate(aggregate model.CloudPartitionAggregate) ([]byte, error) {

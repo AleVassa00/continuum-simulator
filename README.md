@@ -43,8 +43,8 @@ Lo stato dei requisiti della traccia e mantenuto in
   MQTT a `sensors/+/telemetry` e `replay/<edgeID>/end`; altrimenti restituisce
   `503`. Una subscription fallita temporaneamente viene riprovata fino a tre tentativi complessivi con
   backoff breve, restando non-ready fino al successo effettivo.
-- **Kafka** persiste gli `EdgeAggregate` e li distribuisce ai Cloud Worker usando
-  la chiave `edge_id`.
+- **Kafka** persiste gli `EdgeAggregate` e i relativi controlli di progresso e
+  li distribuisce ai Cloud Worker usando la chiave `edge_id`.
 - I **Cloud Worker** mantengono stato distinto per ogni partition Kafka di input
   assegnata dal consumer group. Combinano gli Edge di quella partition in finestre
   Cloud da 15 minuti. La membership Edge rimane qui, per certificare il progresso.
@@ -57,9 +57,9 @@ finalizzazione, contributi vuoti, EOS, deduplica e limiti di recovery.
 
 ## Contratti Kafka
 
-I payload di `EdgeAggregate` su `edge-aggregates` e di `CloudPartitionAggregate` su
-`cloud-partition-aggregates` sono singoli record Apache Avro binari, senza prefissi
-aggiuntivi. Gli schema statici sono in
+I payload di `EdgeAggregate`/`EdgeWatermark` su `edge-aggregates` e di
+`CloudPartitionAggregate`/`PartitionProgress` su `cloud-partition-aggregates`
+sono singoli record Apache Avro binari, senza prefissi aggiuntivi. Gli schema statici sono in
 [`internal/avrocodec/schemas`](internal/avrocodec/schemas) e vengono incorporati
 nei binari; producer e consumer utilizzano lo stesso contratto durante ogni run.
 Le nuove esecuzioni richiedono topic e offset nuovi: i precedenti record JSON
@@ -72,8 +72,8 @@ le struct di `internal/model`. MQTT e il sink finale `log` restano JSON; il sink
 valid, invalid, sum, average, min, max
 ```
 
-Ogni schema definisce `MetricAggregate` una sola volta e lo riutilizza per le tre
-misure; la definizione e identica nei due schema. `average`, `min` e `max` usano
+Gli schema degli aggregati definiscono `MetricAggregate` una sola volta e lo
+riutilizzano per le tre misure; la definizione e identica nei due schema. `average`, `min` e `max` usano
 union `["null", "double"]`, con default `null`.
 
 I timestamp usano `long` con logical type `timestamp-nanos`: il mapping esplicito
@@ -101,9 +101,10 @@ La dimensione `CLOUD_WINDOW_SIZE` deve essere un multiplo della finestra Edge. U
 input fuori ordine o che attraversa il confine di una finestra Cloud viene
 rifiutato esplicitamente.
 
-Su `edge-aggregates`, EOS resta key `edgeID`, header `record_type=end_of_replay`
-e value vuoto. L'Edge pubblica sincronicamente l'ultimo aggregato prima dell'EOS,
-usando lo stesso `kafka.Hash` e la stessa key. Le sei partition restano fisse.
+Su `edge-aggregates`, `edge_watermark` ha key `edgeID` e payload Avro;
+`edge_end_of_input` ha la stessa key e value vuoto. L'Edge pubblica
+sincronicamente aggregati, watermark e marker terminale usando lo stesso
+`kafka.Hash`: l'ultimo aggregato precede sempre il marker terminale.
 Su `cloud-partition-aggregates`, data e controlli usano key `source_partition`:
 `partition_progress` ha payload Avro, `partition_end_of_replay` ha value vuoto.
 Ogni controllo segue tutti i partial che certifica. La source partition e quella
@@ -133,8 +134,8 @@ l'eventuale pubblicazione dell'output. I normali retry Kafka restano attivi;
 la deduplica degli `EdgeAggregate` e responsabilita del Cloud Worker.
 
 Lo stato delle finestre dei Cloud Worker e del Global Aggregator risiede
-esclusivamente in RAM. Gli offset Kafka vengono committati dopo l'elaborazione
-di ciascun record, ma non esiste un checkpoint coordinato tra offset e stato
+esclusivamente in RAM. Gli offset Kafka vengono committati in batch configurabili
+solo dopo l'elaborazione riuscita dei record, ma non esiste un checkpoint coordinato tra offset e stato
 applicativo. Di conseguenza un crash durante una finestra aperta puo perdere
 stato derivato da record il cui offset e gia stato committato: al riavvio tali
 record non vengono riconsumati e la finestra parziale non e ricostruibile
@@ -142,9 +143,11 @@ automaticamente. Il numero di repliche deve quindi essere fissato prima del repl
 e mantenuto invariato durante il singolo esperimento. La fault tolerance non e il
 requisito individuale scelto ed e documentata come limitazione architetturale nota.
 
-L'Edge chiude una finestra quando passa alla successiva; su EOS pubblica l'ultima
-prima del marker Kafka. Il Cloud finalizza una finestra solo quando tutti gli Edge
-della relativa partition hanno certificato progresso oltre il suo confine o EOS.
+L'Edge chiude una finestra quando passa alla successiva e pubblica un watermark
+esplicito che certifica il relativo progresso; su EOS pubblica l'ultima finestra
+prima del marker Kafka. Il Cloud finalizza una finestra solo quando il minimo dei
+watermark degli Edge attivi della relativa partition ne supera il confine, oppure
+quando tali Edge sono terminati.
 Un Edge non ancora osservato blocca il progresso: nessun timeout lo esclude.
 Su EOS dell'ultimo Edge della partition il Cloud emette i partial rimasti, poi
 `PartitionEndOfReplay`. Lo shutdown del Worker non forza il flush di stato incompleto.

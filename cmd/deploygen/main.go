@@ -63,10 +63,9 @@ type composeTemplateData struct {
 	KafkaPartitions         int
 	ExperimentName          string
 
-	CloudWorkers        []composeCloudWorker
-	CloudWindowSize     string
-	CloudWatermarkDelay string
-	ExpectedEdgeIDs     string
+	CloudWorkers    []composeCloudWorker
+	CloudWindowSize string
+	ExpectedEdgeIDs string
 
 	Edges                    []composeEdge
 	EdgeWindowSize           string
@@ -460,10 +459,9 @@ func buildCompose(edges []EdgeDeployment, config experiment.EffectiveConfig) str
 		KafkaPartitions:         config.Kafka.ResolvedPartitions(),
 		ExperimentName:          config.Experiment.Name,
 
-		CloudWorkers:        cloudWorkers,
-		CloudWindowSize:     config.Cloud.WindowSize.String(),
-		CloudWatermarkDelay: config.Cloud.ResolvedWatermarkDelay().String(),
-		ExpectedEdgeIDs:     expectedEdgeIDs,
+		CloudWorkers:    cloudWorkers,
+		CloudWindowSize: config.Cloud.WindowSize.String(),
+		ExpectedEdgeIDs: expectedEdgeIDs,
 
 		Edges:                    composeEdges,
 		EdgeWindowSize:           config.Edge.WindowSize.String(),
@@ -488,10 +486,9 @@ func buildDistributedComposes(edges []EdgeDeployment, config experiment.Config) 
 		KafkaPartitions:         config.Kafka.ResolvedPartitions(),
 		ExperimentName:          config.Experiment.Name,
 
-		CloudWorkers:        cloudWorkers,
-		CloudWindowSize:     config.Cloud.WindowSize.String(),
-		CloudWatermarkDelay: config.Cloud.ResolvedWatermarkDelay().String(),
-		ExpectedEdgeIDs:     expectedEdgeIDs,
+		CloudWorkers:    cloudWorkers,
+		CloudWindowSize: config.Cloud.WindowSize.String(),
+		ExpectedEdgeIDs: expectedEdgeIDs,
 
 		Edges:                    composeEdges,
 		EdgeWindowSize:           config.Edge.WindowSize.String(),
