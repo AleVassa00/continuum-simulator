@@ -3,7 +3,6 @@ package model
 import (
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -72,16 +71,6 @@ func ValidatePartitionProgress(p PartitionProgress) error {
 	}
 	if p.CompleteThrough.IsZero() {
 		return fmt.Errorf("partition progress without complete_through")
-	}
-	return nil
-}
-
-func ValidateEdgeWatermark(w EdgeWatermark) error {
-	if strings.TrimSpace(w.EdgeID) == "" || strings.TrimSpace(w.EdgeID) != w.EdgeID {
-		return fmt.Errorf("edge watermark without canonical edge_id")
-	}
-	if w.CompleteThrough.IsZero() {
-		return fmt.Errorf("edge watermark without complete_through")
 	}
 	return nil
 }

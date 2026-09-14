@@ -36,7 +36,7 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 			}
 			processors := make([]*CloudMessageProcessor, count)
 			for p := range processors {
-				a, err := cloudworker.NewPartitionAggregator(p, count, membership[p], cloudworker.DefaultWindowSize)
+				a, err := cloudworker.NewPartitionAggregator(p, count, membership[p], cloudworker.DefaultWindowSize, cloudworker.DefaultMaxEdgeWatermarkSkew)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -50,11 +50,6 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 					m := edgeInput(t, id, minute, 1)
 					m.Partition = kafkautil.PartitionForEdge(id, count)
 					if err := processors[m.Partition].Process(ctx, m); err != nil {
-						t.Fatal(err)
-					}
-					watermark := edgeWatermarkInput(t, id, minute+5)
-					watermark.Partition = m.Partition
-					if err := processors[m.Partition].Process(ctx, watermark); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -86,7 +81,7 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 			if err := g.Progress(ctx, model.PartitionProgress{SourcePartition: count, CompleteThrough: testEpoch}); err == nil {
 				t.Fatal("out-of-range progress accepted")
 			}
-			if _, err := cloudworker.NewPartitionAggregator(count, count, nil, cloudworker.DefaultWindowSize); err == nil {
+			if _, err := cloudworker.NewPartitionAggregator(count, count, nil, cloudworker.DefaultWindowSize, cloudworker.DefaultMaxEdgeWatermarkSkew); err == nil {
 				t.Fatal("out-of-range owner accepted")
 			}
 		})

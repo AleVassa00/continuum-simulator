@@ -87,15 +87,6 @@ func processTelemetry(payload []byte, aggregator *WindowAggregator, output chan<
 		if err := emitEdgeOutput(output, egressStopped, EdgeOutputRecord{Kind: EdgeOutputAggregate, Aggregate: *aggregate}); err != nil {
 			return err
 		}
-		// Opening this newer Edge window makes every earlier Edge window
-		// definitive: the Edge rejects later telemetry behind its current window.
-		watermark := model.EdgeWatermark{
-			EdgeID:          aggregator.edgeID,
-			CompleteThrough: event.EventTime.UTC().Truncate(aggregator.windowSize),
-		}
-		if err := emitEdgeOutput(output, egressStopped, EdgeOutputRecord{Kind: EdgeOutputWatermark, Watermark: watermark}); err != nil {
-			return err
-		}
 	}
 
 	stats.processed.Add(1)

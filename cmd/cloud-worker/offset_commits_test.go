@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"continuum/internal/avrocodec"
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -53,13 +55,17 @@ func TestOffsetCommitFailureAndProcessOrdering(t *testing.T) {
 		t.Fatalf("failed commit lost state: %v %+v", err, b)
 	}
 	p, _, partition := processorFixture(t, "edge-0")
-	aggregate := edgeInput(t, "edge-0", 0, 1)
-	aggregate.Partition = partition
-	if err := p.Process(context.Background(), aggregate); err != nil {
+	input := edgeInput(t, "edge-0", 0, 1)
+	input.Partition = partition
+	aggregate, err := avrocodec.DecodeEdgeAggregate(input.Value)
+	if err != nil {
 		t.Fatal(err)
 	}
-	input := edgeWatermarkInput(t, "edge-0", 15)
-	input.Partition = partition
+	aggregate.CompleteThrough = testEpoch.Add(15 * time.Minute)
+	input.Value, err = avrocodec.EncodeEdgeAggregate(aggregate)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p.publishMessage = func(context.Context, kafka.Message) error { return failure }
 	b, _ = newOffsetCommitBatch("input", 1, func(map[string]map[int]int64) error { t.Fatal("commit before successful publish"); return nil })
 	if err := processAndCommitMessage(context.Background(), input, p, b.add); err == nil || len(b.pending) != 0 {

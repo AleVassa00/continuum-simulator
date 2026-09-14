@@ -85,6 +85,7 @@ type EdgeConfig struct {
 
 type CloudConfig struct {
 	ConsumerCommitBatchSize *CommitBatchSize `yaml:"consumer_commit_batch_size,omitempty"`
+	MaxEdgeWatermarkSkew    *Duration        `yaml:"max_edge_watermark_skew,omitempty"`
 	Workers                 int              `yaml:"workers"`
 	WindowSize              Duration         `yaml:"window_size"`
 }
@@ -112,6 +113,13 @@ func (config CloudConfig) ResolvedConsumerCommitBatchSize() int {
 		return int(*config.ConsumerCommitBatchSize)
 	}
 	return cloudworker.DefaultConsumerCommitBatchSize
+}
+
+func (config CloudConfig) ResolvedMaxEdgeWatermarkSkew() time.Duration {
+	if config.MaxEdgeWatermarkSkew != nil {
+		return config.MaxEdgeWatermarkSkew.Duration()
+	}
+	return cloudworker.DefaultMaxEdgeWatermarkSkew
 }
 
 type EffectiveConfig struct {
@@ -198,6 +206,9 @@ func (config Config) Validate() error {
 	if config.Cloud.ResolvedConsumerCommitBatchSize() <= 0 {
 		return fmt.Errorf("cloud.consumer_commit_batch_size must be a positive integer")
 	}
+	if config.Cloud.ResolvedMaxEdgeWatermarkSkew() <= 0 {
+		return fmt.Errorf("cloud.max_edge_watermark_skew deve essere maggiore di zero")
+	}
 	if config.Kafka.ResolvedPartitions() <= 0 {
 		return fmt.Errorf("kafka.partitions deve essere maggiore di zero")
 	}
@@ -245,6 +256,10 @@ func ResolveDefaults(config Config) Config {
 	if config.Cloud.ConsumerCommitBatchSize == nil {
 		size := CommitBatchSize(config.Cloud.ResolvedConsumerCommitBatchSize())
 		config.Cloud.ConsumerCommitBatchSize = &size
+	}
+	if config.Cloud.MaxEdgeWatermarkSkew == nil {
+		duration := Duration(config.Cloud.ResolvedMaxEdgeWatermarkSkew())
+		config.Cloud.MaxEdgeWatermarkSkew = &duration
 	}
 	if config.Kafka.Partitions == nil {
 		count := config.Kafka.ResolvedPartitions()

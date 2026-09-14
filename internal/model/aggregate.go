@@ -19,6 +19,9 @@ type EdgeAggregate struct {
 
 	WindowStart time.Time
 	WindowEnd   time.Time
+	// CompleteThrough certifies that this Edge will not subsequently publish
+	// an aggregate whose WindowEnd is at or before this event-time frontier.
+	CompleteThrough time.Time
 
 	Events uint64
 
@@ -27,13 +30,6 @@ type EdgeAggregate struct {
 	Pressure    MetricAggregate
 
 	EmittedAt time.Time
-}
-
-// EdgeWatermark certifies that the Edge will not subsequently publish an
-// EdgeAggregate whose WindowEnd is at or before CompleteThrough.
-type EdgeWatermark struct {
-	EdgeID          string
-	CompleteThrough time.Time
 }
 
 type CloudPartitionAggregate struct {
@@ -73,9 +69,9 @@ type GlobalAggregate struct {
 	EmittedAt time.Time
 }
 
-// PartitionProgress certifies that all nonempty partials ending at or before
-// CompleteThrough (the minimum watermark of the active Edge sources assigned to
-// the partition) have already been published on the same ordered output stream.
+// PartitionProgress certifies that all accepted nonempty partials ending at or
+// before CompleteThrough have already been published on the same ordered output
+// stream. The frontier is monotonic and may apply the configured maximum skew.
 type PartitionProgress struct {
 	SourcePartition int
 	CompleteThrough time.Time

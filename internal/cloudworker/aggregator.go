@@ -9,41 +9,53 @@ import (
 )
 
 type edgeProgress struct {
-	watermark time.Time
-	ended     bool
-	last      *model.EdgeAggregate
+	completeThrough time.Time
+	ended           bool
+	last            *model.EdgeAggregate
 }
 
 // PartitionAggregator is owned by an input partition, never a worker.
 // Single-threaded and volatile: a mid-run ownership change invalidates the run.
 type PartitionAggregator struct {
-	partition       int
-	windowSize      time.Duration
-	edges           map[string]*edgeProgress
-	windows         map[time.Time]*cloudWindowState
-	completeThrough time.Time
-	ended           bool
+	partition            int
+	windowSize           time.Duration
+	maxEdgeWatermarkSkew time.Duration
+	edges                map[string]*edgeProgress
+	windows              map[time.Time]*cloudWindowState
+	completeThrough      time.Time
+	ended                bool
 }
 
 type Output struct {
 	SourcePartition int
 	Aggregates      []model.CloudPartitionAggregate
 	Progress        *model.PartitionProgress
+	Late            *LateAggregate
 	End             bool
 }
 
-func NewPartitionAggregator(partition, count int, members []string, windowSize time.Duration) (*PartitionAggregator, error) {
+type LateAggregate struct {
+	Aggregate          model.EdgeAggregate
+	CloudWindowEnd     time.Time
+	PartitionWatermark time.Time
+}
+
+func NewPartitionAggregator(partition, count int, members []string, windowSize, maxEdgeWatermarkSkew time.Duration) (*PartitionAggregator, error) {
 	if err := model.ValidateSourcePartition(partition, count); err != nil {
 		return nil, err
 	}
 	if windowSize <= 0 {
 		return nil, fmt.Errorf("Cloud window must be positive")
 	}
+	if maxEdgeWatermarkSkew <= 0 {
+		return nil, fmt.Errorf("maximum Edge watermark skew must be positive")
+	}
 	a := &PartitionAggregator{
-		partition:  partition,
-		windowSize: windowSize,
-		edges:      make(map[string]*edgeProgress, len(members)),
-		windows:    make(map[time.Time]*cloudWindowState),
+		partition:            partition,
+		windowSize:           windowSize,
+		maxEdgeWatermarkSkew: maxEdgeWatermarkSkew,
+		edges:                make(map[string]*edgeProgress, len(members)),
+		windows:              make(map[time.Time]*cloudWindowState),
 	}
 	for _, id := range members {
 		if id == "" || a.edges[id] != nil {
@@ -77,8 +89,9 @@ func (a *PartitionAggregator) Add(partition int, input model.EdgeAggregate) (Out
 	}
 
 	start, end := input.WindowStart.UTC(), input.WindowEnd.UTC()
+	through := input.CompleteThrough.UTC()
 	size := end.Sub(start)
-	if a.windowSize%size != 0 || !start.Equal(start.Truncate(size)) {
+	if a.windowSize%size != 0 || !start.Equal(start.Truncate(size)) || !through.Equal(through.Truncate(size)) {
 		return out, fmt.Errorf("Edge window is not an aligned divisor of Cloud window")
 	}
 	cloudStart := start.Truncate(a.windowSize)
@@ -101,14 +114,30 @@ func (a *PartitionAggregator) Add(partition int, input model.EdgeAggregate) (Out
 		}
 		return out, nil
 	}
+
+	// A late aggregate belongs to a Cloud window that the partition watermark
+	// has already finalized. It must not reopen that window. Its embedded
+	// progress is still useful and may let this Edge catch up with its peers.
+	if !a.completeThrough.IsZero() && !cloudEnd.After(a.completeThrough) {
+		if through.After(edge.completeThrough) {
+			edge.completeThrough = through
+		}
+		if edge.last == nil || !start.Before(edge.last.WindowEnd) {
+			copy := input
+			edge.last = &copy
+		}
+		out = a.advance()
+		out.Late = &LateAggregate{Aggregate: input, CloudWindowEnd: cloudEnd, PartitionWatermark: a.completeThrough}
+		return out, nil
+	}
 	if edge.last != nil && start.Before(edge.last.WindowEnd) {
 		return out, fmt.Errorf("out-of-order/overlapping EdgeAggregate edge=%s", input.EdgeID)
 	}
-	if !edge.watermark.IsZero() && !end.After(edge.watermark) {
-		return out, fmt.Errorf("EdgeAggregate edge=%s behind its certified watermark %s", input.EdgeID, edge.watermark.Format(time.RFC3339Nano))
+	if through.Before(edge.completeThrough) {
+		return out, fmt.Errorf("embedded progress regressed for Edge %s", input.EdgeID)
 	}
-	if !a.completeThrough.IsZero() && !cloudEnd.After(a.completeThrough) {
-		return out, fmt.Errorf("EdgeAggregate edge=%s behind partition watermark %s", input.EdgeID, a.completeThrough.Format(time.RFC3339Nano))
+	if !edge.completeThrough.IsZero() && !end.After(edge.completeThrough) {
+		return out, fmt.Errorf("EdgeAggregate edge=%s behind its certified progress %s", input.EdgeID, edge.completeThrough.Format(time.RFC3339Nano))
 	}
 
 	state := a.windows[cloudStart]
@@ -119,32 +148,7 @@ func (a *PartitionAggregator) Add(partition int, input model.EdgeAggregate) (Out
 	state.add(input)
 	copy := input
 	edge.last = &copy
-	return out, nil
-}
-
-func (a *PartitionAggregator) AdvanceEdgeWatermark(partition int, input model.EdgeWatermark) (Output, error) {
-	out := Output{SourcePartition: a.partition}
-	if partition != a.partition {
-		return out, fmt.Errorf("watermark partition %d does not match owner %d", partition, a.partition)
-	}
-	if err := model.ValidateEdgeWatermark(input); err != nil {
-		return out, err
-	}
-	edge := a.edges[input.EdgeID]
-	if edge == nil {
-		return out, fmt.Errorf("watermark from unexpected Edge %q in partition %d", input.EdgeID, partition)
-	}
-	if a.ended || edge.ended {
-		return out, fmt.Errorf("watermark after Edge end-of-input edge=%s", input.EdgeID)
-	}
-	through := input.CompleteThrough.UTC()
-	if through.Before(edge.watermark) {
-		return out, fmt.Errorf("watermark regressed for Edge %s", input.EdgeID)
-	}
-	if through.Equal(edge.watermark) {
-		return out, nil
-	}
-	edge.watermark = through
+	edge.completeThrough = through
 	return a.advance(), nil
 }
 
@@ -174,20 +178,33 @@ func (a *PartitionAggregator) advance() Output {
 	}
 
 	allEnded := true
-	var frontier time.Time
+	var minimum, maximum time.Time
 	for _, edge := range a.edges {
 		if edge.ended {
 			continue
 		}
 		allEnded = false
-		if edge.watermark.IsZero() {
+		if edge.completeThrough.IsZero() {
 			return out
 		}
-		if frontier.IsZero() || edge.watermark.Before(frontier) {
-			frontier = edge.watermark
+		if minimum.IsZero() || edge.completeThrough.Before(minimum) {
+			minimum = edge.completeThrough
+		}
+		if maximum.IsZero() || edge.completeThrough.After(maximum) {
+			maximum = edge.completeThrough
 		}
 	}
 
+	frontier := minimum
+	if !allEnded {
+		// Preserve the natural minimum while no Edge is excessively delayed.
+		// Once max-min exceeds the configured bound, advance only to max-skew;
+		// records for Cloud windows already crossed become explicit late drops.
+		boundedFrontier := maximum.Add(-a.maxEdgeWatermarkSkew)
+		if boundedFrontier.After(frontier) {
+			frontier = boundedFrontier
+		}
+	}
 	out.Aggregates = a.flush(allEnded, frontier)
 	if allEnded {
 		a.ended = true
@@ -224,5 +241,7 @@ func sameEdgeAggregate(a, b model.EdgeAggregate) bool {
 	b.WindowStart = b.WindowStart.UTC()
 	a.WindowEnd = a.WindowEnd.UTC()
 	b.WindowEnd = b.WindowEnd.UTC()
+	a.CompleteThrough = a.CompleteThrough.UTC()
+	b.CompleteThrough = b.CompleteThrough.UTC()
 	return reflect.DeepEqual(a, b)
 }

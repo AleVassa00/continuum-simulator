@@ -1,9 +1,0 @@
-{
-  "type": "record",
-  "name": "EdgeWatermark",
-  "namespace": "continuum",
-  "fields": [
-    {"name": "edge_id", "type": "string"},
-    {"name": "complete_through", "type": {"type": "long", "logicalType": "timestamp-nanos"}}
-  ]
-}

@@ -1,6 +1,7 @@
 package experiment
 
 import (
+	"continuum/internal/cloudworker"
 	"strings"
 	"testing"
 )
@@ -22,7 +23,7 @@ cloud:
 
 func TestConsumerCommitBatchSizeConfig(t *testing.T) {
 	base, err := Decode(strings.NewReader(configFixture))
-	if err != nil || base.Cloud.ResolvedConsumerCommitBatchSize() != 1 {
+	if err != nil || base.Cloud.ResolvedConsumerCommitBatchSize() != 1 || base.Cloud.ResolvedMaxEdgeWatermarkSkew() != cloudworker.DefaultMaxEdgeWatermarkSkew {
 		t.Fatalf("default: %+v %v", base, err)
 	}
 	for _, value := range []string{"0", "-1", "1.5", "bad"} {

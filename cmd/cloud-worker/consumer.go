@@ -107,7 +107,7 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 
 	for _, assignment := range gen.Assignments[config.InputTopic] {
 
-		a, err := cloudworker.NewPartitionAggregator(assignment.ID, config.SourcePartitionCount, config.Membership[assignment.ID], config.WindowSize)
+		a, err := cloudworker.NewPartitionAggregator(assignment.ID, config.SourcePartitionCount, config.Membership[assignment.ID], config.WindowSize, config.MaxEdgeWatermarkSkew)
 		if err != nil {
 			return err
 		}

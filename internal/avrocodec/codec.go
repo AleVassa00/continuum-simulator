@@ -14,9 +14,6 @@ import (
 //go:embed schemas/edge_aggregate.avsc
 var edgeSchema string
 
-//go:embed schemas/edge_watermark.avsc
-var edgeWatermarkSchema string
-
 //go:embed schemas/cloud_partition_aggregate.avsc
 var cloudSchema string
 
@@ -24,10 +21,9 @@ var cloudSchema string
 var progressSchema string
 
 var (
-	progressCodec      = mustCompileSchema(progressSchema)
-	edgeCodec          = mustCompileSchema(edgeSchema)
-	edgeWatermarkCodec = mustCompileSchema(edgeWatermarkSchema)
-	cloudCodec         = mustCompileSchema(cloudSchema)
+	progressCodec = mustCompileSchema(progressSchema)
+	edgeCodec     = mustCompileSchema(edgeSchema)
+	cloudCodec    = mustCompileSchema(cloudSchema)
 )
 
 func mustCompileSchema(schema string) *goavro.Codec {
@@ -40,15 +36,16 @@ func mustCompileSchema(schema string) *goavro.Codec {
 
 func EncodeEdgeAggregate(aggregate model.EdgeAggregate) ([]byte, error) {
 	return encodeRecord(edgeCodec, map[string]any{
-		"aggregate_id": aggregate.AggregateID,
-		"edge_id":      aggregate.EdgeID,
-		"window_start": aggregate.WindowStart,
-		"window_end":   aggregate.WindowEnd,
-		"events":       aggregate.Events,
-		"temperature":  aggregate.Temperature,
-		"humidity":     aggregate.Humidity,
-		"pressure":     aggregate.Pressure,
-		"emitted_at":   aggregate.EmittedAt,
+		"aggregate_id":     aggregate.AggregateID,
+		"edge_id":          aggregate.EdgeID,
+		"window_start":     aggregate.WindowStart,
+		"window_end":       aggregate.WindowEnd,
+		"complete_through": aggregate.CompleteThrough,
+		"events":           aggregate.Events,
+		"temperature":      aggregate.Temperature,
+		"humidity":         aggregate.Humidity,
+		"pressure":         aggregate.Pressure,
+		"emitted_at":       aggregate.EmittedAt,
 	})
 }
 
@@ -58,38 +55,17 @@ func DecodeEdgeAggregate(payload []byte) (model.EdgeAggregate, error) {
 		return model.EdgeAggregate{}, err
 	}
 	return model.EdgeAggregate{
-		AggregateID: record["aggregate_id"].(string),
-		EdgeID:      record["edge_id"].(string),
-		WindowStart: record["window_start"].(time.Time),
-		WindowEnd:   record["window_end"].(time.Time),
-		Events:      record["events"].(uint64),
-		Temperature: record["temperature"].(model.MetricAggregate),
-		Humidity:    record["humidity"].(model.MetricAggregate),
-		Pressure:    record["pressure"].(model.MetricAggregate),
-		EmittedAt:   record["emitted_at"].(time.Time),
-	}, nil
-}
-
-func EncodeEdgeWatermark(watermark model.EdgeWatermark) ([]byte, error) {
-	if err := model.ValidateEdgeWatermark(watermark); err != nil {
-		return nil, err
-	}
-	return encodeRecord(edgeWatermarkCodec, map[string]any{
-		"edge_id":          watermark.EdgeID,
-		"complete_through": watermark.CompleteThrough,
-	})
-}
-
-func DecodeEdgeWatermark(payload []byte) (model.EdgeWatermark, error) {
-	record, err := decodeRecord(edgeWatermarkCodec, payload)
-	if err != nil {
-		return model.EdgeWatermark{}, err
-	}
-	watermark := model.EdgeWatermark{
+		AggregateID:     record["aggregate_id"].(string),
 		EdgeID:          record["edge_id"].(string),
+		WindowStart:     record["window_start"].(time.Time),
+		WindowEnd:       record["window_end"].(time.Time),
 		CompleteThrough: record["complete_through"].(time.Time),
-	}
-	return watermark, model.ValidateEdgeWatermark(watermark)
+		Events:          record["events"].(uint64),
+		Temperature:     record["temperature"].(model.MetricAggregate),
+		Humidity:        record["humidity"].(model.MetricAggregate),
+		Pressure:        record["pressure"].(model.MetricAggregate),
+		EmittedAt:       record["emitted_at"].(time.Time),
+	}, nil
 }
 
 func EncodeCloudPartitionAggregate(aggregate model.CloudPartitionAggregate) ([]byte, error) {

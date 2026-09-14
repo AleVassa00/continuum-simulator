@@ -81,6 +81,11 @@ func (aggregator *WindowAggregator) Add(eventID string, eventTime time.Time, mea
 
 	if !windowStart.Equal(aggregator.current.Start) {
 		completedAggregate = aggregator.Flush()
+		if completedAggregate != nil {
+			// The incoming event opens windowStart, so all earlier Edge
+			// windows are definitive, including any empty gaps.
+			completedAggregate.CompleteThrough = windowStart.UTC()
+		}
 
 		aggregator.current = newWindowState(windowStart, windowEnd)
 	}
@@ -178,10 +183,13 @@ func buildEdgeAggregate(edgeID string, window *WindowState) model.EdgeAggregate 
 		EdgeID:      edgeID,
 		WindowStart: window.Start,
 		WindowEnd:   window.End,
-		Events:      window.Events,
-		Temperature: buildMetricAggregate(window.Temperature),
-		Humidity:    buildMetricAggregate(window.Humidity),
-		Pressure:    buildMetricAggregate(window.Pressure),
-		EmittedAt:   time.Now().UTC(),
+		// A regular transition may move this frontier farther ahead. For a
+		// final flush, the following EOS provides the terminal guarantee.
+		CompleteThrough: window.End,
+		Events:          window.Events,
+		Temperature:     buildMetricAggregate(window.Temperature),
+		Humidity:        buildMetricAggregate(window.Humidity),
+		Pressure:        buildMetricAggregate(window.Pressure),
+		EmittedAt:       time.Now().UTC(),
 	}
 }

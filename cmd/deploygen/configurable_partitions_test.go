@@ -35,6 +35,9 @@ func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 				if strings.HasPrefix(name, "cloud-worker-") && service.Environment["CLOUD_CONSUMER_COMMIT_BATCH_SIZE"] != "32" {
 					t.Fatal("commit batch size lost in deployment")
 				}
+				if strings.HasPrefix(name, "cloud-worker-") && service.Environment["CLOUD_MAX_EDGE_WATERMARK_SKEW"] != "30m0s" {
+					t.Fatal("maximum Edge watermark skew lost in deployment")
+				}
 				if name == "global-aggregator" || strings.HasPrefix(name, "cloud-worker-") {
 					consumers++
 					if service.Environment["SOURCE_PARTITION_COUNT"] != strconv.Itoa(count) {

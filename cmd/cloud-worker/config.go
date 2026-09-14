@@ -21,6 +21,7 @@ type CloudWorkerConfig struct {
 	GroupID                 string
 	WorkerID                string
 	WindowSize              time.Duration
+	MaxEdgeWatermarkSkew    time.Duration
 }
 
 func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
@@ -31,6 +32,10 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	groupID := envutil.OrDefault("KAFKA_GROUP_ID", "cloud-workers")
 	workerID := loadWorkerID()
 	windowSize, err := loadCloudWindowSize()
+	if err != nil {
+		return CloudWorkerConfig{}, err
+	}
+	maxEdgeWatermarkSkew, err := loadMaxEdgeWatermarkSkew()
 	if err != nil {
 		return CloudWorkerConfig{}, err
 	}
@@ -61,7 +66,20 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 		GroupID:                 groupID,
 		WorkerID:                workerID,
 		WindowSize:              windowSize,
+		MaxEdgeWatermarkSkew:    maxEdgeWatermarkSkew,
 	}, nil
+}
+
+func loadMaxEdgeWatermarkSkew() (time.Duration, error) {
+	value := envutil.OrDefault("CLOUD_MAX_EDGE_WATERMARK_SKEW", cloudworker.DefaultMaxEdgeWatermarkSkew.String())
+	maxSkew, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("CLOUD_MAX_EDGE_WATERMARK_SKEW non valida %q: %w", value, err)
+	}
+	if maxSkew <= 0 {
+		return 0, fmt.Errorf("CLOUD_MAX_EDGE_WATERMARK_SKEW deve essere maggiore di zero")
+	}
+	return maxSkew, nil
 }
 
 func loadCloudWindowSize() (

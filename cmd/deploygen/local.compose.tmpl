@@ -86,6 +86,7 @@ services:
       KAFKA_OUTPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "cloud-workers"
       CLOUD_WINDOW_SIZE: "{{$.CloudWindowSize}}"
+      CLOUD_MAX_EDGE_WATERMARK_SKEW: "{{$.MaxEdgeWatermarkSkew}}"
       CLOUD_EXPECTED_EDGE_IDS: "{{$.ExpectedEdgeIDs}}"
       CLOUD_CONSUMER_COMMIT_BATCH_SIZE: "{{$.ConsumerCommitBatchSize}}"
       SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"

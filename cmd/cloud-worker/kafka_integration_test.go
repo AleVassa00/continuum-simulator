@@ -63,7 +63,7 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					}
 					done := make(chan error, workers)
 					for w := 0; w < workers; w++ {
-						cfg := CloudWorkerConfig{ConsumerCommitBatchSize: 100, SourcePartitionCount: count, KafkaBroker: broker, InputTopic: input, OutputTopic: output, GroupID: group, WorkerID: fmt.Sprintf("executor-%d", w), WindowSize: cloudworker.DefaultWindowSize, Membership: membership}
+						cfg := CloudWorkerConfig{ConsumerCommitBatchSize: 100, SourcePartitionCount: count, KafkaBroker: broker, InputTopic: input, OutputTopic: output, GroupID: group, WorkerID: fmt.Sprintf("executor-%d", w), WindowSize: cloudworker.DefaultWindowSize, MaxEdgeWatermarkSkew: cloudworker.DefaultMaxEdgeWatermarkSkew, Membership: membership}
 						go func() {
 							writer := newKafkaWriter(broker, output)
 							writer.Transport = transport
@@ -122,18 +122,16 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					for minute := 0; minute < 35; minute += 5 {
 						for e, id := range ids {
 							aggregate := edgeInput(t, id, minute, uint64(e+1))
-							watermark := edgeWatermarkInput(t, id, minute+5)
 							partition := kafkautil.PartitionForEdge(id, count)
 							aggregate.Partition = partition
-							watermark.Partition = partition
-							if err := producer.WriteMessages(ctx, aggregate, watermark); err != nil {
+							if err := producer.WriteMessages(ctx, aggregate); err != nil {
 								t.Fatal(err)
 							}
-							wantOffsets[partition] += 2
+							wantOffsets[partition]++
 						}
 					}
 					// Each Edge writes its terminal marker with the same synchronous
-					// writer/key, after all of that Edge's data and watermarks.
+					// writer/key, after all of that Edge's aggregate/progress records.
 					for _, id := range ids {
 						end := edgeEndInput(id)
 						partition := kafkautil.PartitionForEdge(id, count)

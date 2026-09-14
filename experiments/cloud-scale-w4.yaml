@@ -2,7 +2,7 @@ experiment:
   name: cloud-scale-w4
 
 workload:
-  acceleration_factor: 40000
+  acceleration_factor: 10000
   start_lead_time: 30s
 
 simulator:
@@ -14,6 +14,7 @@ edge:
   ingress_queue_capacity: 5000
 
 cloud:
+  consumer_commit_batch_size: 100
   workers: 4
   window_size: 15m
 

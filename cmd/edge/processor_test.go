@@ -8,10 +8,10 @@ import (
 	"continuum/internal/model"
 )
 
-func TestEdgeEmitsWatermarkAndTerminalMarkerInOrder(t *testing.T) {
+func TestEdgeEmbedsProgressAndEmitsTerminalMarkerInOrder(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	ingress := newEdgeIngress(2)
-	for i, eventTime := range []time.Time{start, start.Add(5 * time.Minute)} {
+	for i, eventTime := range []time.Time{start, start.Add(11 * time.Minute)} {
 		payload, err := json.Marshal(model.SensorEvent{EventID: string(rune('a' + i)), SensorID: "sensor-0", EventTime: eventTime})
 		if err != nil {
 			t.Fatal(err)
@@ -32,7 +32,7 @@ func TestEdgeEmitsWatermarkAndTerminalMarkerInOrder(t *testing.T) {
 	for record := range output {
 		records = append(records, record)
 	}
-	wantKinds := []EdgeOutputKind{EdgeOutputAggregate, EdgeOutputWatermark, EdgeOutputAggregate, EdgeOutputEndOfInput}
+	wantKinds := []EdgeOutputKind{EdgeOutputAggregate, EdgeOutputAggregate, EdgeOutputEndOfInput}
 	if len(records) != len(wantKinds) {
 		t.Fatalf("output records=%d want=%d", len(records), len(wantKinds))
 	}
@@ -41,8 +41,8 @@ func TestEdgeEmitsWatermarkAndTerminalMarkerInOrder(t *testing.T) {
 			t.Fatalf("output[%d].kind=%d want=%d", i, records[i].Kind, want)
 		}
 	}
-	if !records[1].Watermark.CompleteThrough.Equal(start.Add(5 * time.Minute)) {
-		t.Fatalf("watermark=%s", records[1].Watermark.CompleteThrough)
+	if !records[0].Aggregate.CompleteThrough.Equal(start.Add(10 * time.Minute)) {
+		t.Fatalf("complete_through=%s", records[0].Aggregate.CompleteThrough)
 	}
 	if stats.endOfReplayProcessed.Load() != 1 {
 		t.Fatal("Simulator EOS not processed")

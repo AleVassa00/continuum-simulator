@@ -16,7 +16,7 @@ import (
 func processorFixture(t *testing.T, edgeIDs ...string) (*CloudMessageProcessor, *[]kafka.Message, int) {
 	t.Helper()
 	partition := kafkautil.PartitionForEdge(edgeIDs[0], model.DefaultSourcePartitionCount)
-	a, err := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, edgeIDs, cloudworker.DefaultWindowSize)
+	a, err := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, edgeIDs, cloudworker.DefaultWindowSize, cloudworker.DefaultMaxEdgeWatermarkSkew)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,16 +25,20 @@ func processorFixture(t *testing.T, edgeIDs ...string) (*CloudMessageProcessor, 
 	return p, &wire, partition
 }
 
-func TestEdgeWatermarkFinalizesBeforePublishingProgress(t *testing.T) {
+func TestEmbeddedEdgeProgressFinalizesBeforePublishingProgress(t *testing.T) {
 	p, wire, partition := processorFixture(t, "edge-0")
 	input := edgeInput(t, "edge-0", 0, 1)
 	input.Partition = partition
-	if err := p.Process(context.Background(), input); err != nil {
+	aggregate, err := avrocodec.DecodeEdgeAggregate(input.Value)
+	if err != nil {
 		t.Fatal(err)
 	}
-	watermark := edgeWatermarkInput(t, "edge-0", 15)
-	watermark.Partition = partition
-	if err := p.Process(context.Background(), watermark); err != nil {
+	aggregate.CompleteThrough = testEpoch.Add(15 * time.Minute)
+	input.Value, err = avrocodec.EncodeEdgeAggregate(aggregate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Process(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
 	if len(*wire) != 2 {
@@ -61,6 +65,7 @@ func TestEdgeEndValidationAndPartitionCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	*wire = nil
 	firstEnd := edgeEndInput(edgeIDs[0])
 	firstEnd.Partition = partition
 	if err := p.Process(context.Background(), firstEnd); err != nil || len(*wire) != 0 {
@@ -101,13 +106,13 @@ func samePartitionEdgeIDs(t *testing.T, count int) []string {
 func TestEdgeControlWireValidation(t *testing.T) {
 	p, _, partition := processorFixture(t, "edge-0")
 	for name, message := range map[string]kafka.Message{
-		"watermark-key": func() kafka.Message {
-			m := edgeWatermarkInput(t, "edge-0", 5)
+		"aggregate-key": func() kafka.Message {
+			m := edgeInput(t, "edge-0", 0, 1)
 			m.Partition, m.Key = partition, []byte("wrong")
 			return m
 		}(),
-		"watermark-payload": func() kafka.Message {
-			m := edgeWatermarkInput(t, "edge-0", 5)
+		"aggregate-payload": func() kafka.Message {
+			m := edgeInput(t, "edge-0", 0, 1)
 			m.Partition, m.Value = partition, []byte("bad")
 			return m
 		}(),
@@ -139,8 +144,9 @@ func TestCloudConfigurationRequiresTopology(t *testing.T) {
 	}
 	t.Setenv("CLOUD_EXPECTED_EDGE_IDS", "edge-0,edge-1")
 	t.Setenv("CLOUD_WINDOW_SIZE", "30m")
+	t.Setenv("CLOUD_MAX_EDGE_WATERMARK_SKEW", "45m")
 	cfg, err := loadCloudWorkerConfig()
-	if err != nil || cfg.WindowSize != 30*time.Minute || len(cfg.Membership) != 6 {
+	if err != nil || cfg.WindowSize != 30*time.Minute || cfg.MaxEdgeWatermarkSkew != 45*time.Minute || len(cfg.Membership) != 6 {
 		t.Fatalf("config: %+v %v", cfg, err)
 	}
 }

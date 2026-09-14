@@ -26,6 +26,13 @@
       }
     },
     {
+      "name": "complete_through",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-nanos"
+      }
+    },
+    {
       "name": "events",
       "type": "long"
     },

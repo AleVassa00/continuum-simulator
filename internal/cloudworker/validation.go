@@ -14,6 +14,7 @@ func ValidateEdgeAggregate(aggregate model.EdgeAggregate) error {
 		aggregate.EdgeID,
 		aggregate.WindowStart,
 		aggregate.WindowEnd,
+		aggregate.CompleteThrough,
 		aggregate.Events,
 	); err != nil {
 		return err
@@ -42,7 +43,7 @@ func ValidateEdgeAggregate(aggregate model.EdgeAggregate) error {
 	)
 }
 
-func validateAggregateHeader(aggregateID string, edgeID string, windowStart time.Time, windowEnd time.Time, events uint64) error {
+func validateAggregateHeader(aggregateID string, edgeID string, windowStart time.Time, windowEnd time.Time, completeThrough time.Time, events uint64) error {
 	if strings.TrimSpace(aggregateID) == "" {
 		return fmt.Errorf("aggregate_id mancante")
 	}
@@ -62,6 +63,12 @@ func validateAggregateHeader(aggregateID string, edgeID string, windowStart time
 	if !windowEnd.After(windowStart) {
 		return fmt.Errorf("finestra non valida: start=%s end=%s",
 			windowStart.Format(time.RFC3339),
+			windowEnd.Format(time.RFC3339),
+		)
+	}
+	if completeThrough.IsZero() || completeThrough.Before(windowEnd) {
+		return fmt.Errorf("complete_through %s precede la fine della finestra %s",
+			completeThrough.Format(time.RFC3339),
 			windowEnd.Format(time.RFC3339),
 		)
 	}

@@ -24,21 +24,13 @@ func edgeInput(t *testing.T, id string, minute int, n uint64) kafka.Message {
 	start := testEpoch.Add(time.Duration(minute) * time.Minute)
 	v := float64(n)
 	m := model.MetricAggregate{Valid: n, Sum: v * float64(n), Average: &v, Min: &v, Max: &v}
-	a := model.EdgeAggregate{AggregateID: fmt.Sprintf("%s:%d", id, minute), EdgeID: id, WindowStart: start, WindowEnd: start.Add(5 * time.Minute), Events: n, Temperature: m, Humidity: m, Pressure: m, EmittedAt: testEpoch}
+	end := start.Add(5 * time.Minute)
+	a := model.EdgeAggregate{AggregateID: fmt.Sprintf("%s:%d", id, minute), EdgeID: id, WindowStart: start, WindowEnd: end, CompleteThrough: end, Events: n, Temperature: m, Humidity: m, Pressure: m, EmittedAt: testEpoch}
 	payload, err := avrocodec.EncodeEdgeAggregate(a)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return kafka.Message{Partition: kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount), Key: []byte(id), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeAggregate)}}}
-}
-func edgeWatermarkInput(t *testing.T, id string, minute int) kafka.Message {
-	t.Helper()
-	watermark := model.EdgeWatermark{EdgeID: id, CompleteThrough: testEpoch.Add(time.Duration(minute) * time.Minute)}
-	payload, err := avrocodec.EncodeEdgeWatermark(watermark)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return kafka.Message{Partition: kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount), Key: []byte(id), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeWatermark)}}}
 }
 func edgeEndInput(id string) kafka.Message {
 	return kafka.Message{Partition: kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount), Key: []byte(id), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeEndOfInput)}}}
@@ -109,7 +101,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 			for w, m := range members {
 				workerPartitions[w] = assignments[m.ID]["edge-aggregates"]
 				for _, p := range workerPartitions[w] {
-					a, err := cloudworker.NewPartitionAggregator(p, model.DefaultSourcePartitionCount, membership[p], cloudworker.DefaultWindowSize)
+					a, err := cloudworker.NewPartitionAggregator(p, model.DefaultSourcePartitionCount, membership[p], cloudworker.DefaultWindowSize, cloudworker.DefaultMaxEdgeWatermarkSkew)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -124,8 +116,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 				for i, id := range ids {
 					p := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
 					m := edgeInput(t, id, minute, uint64(i+1))
-					watermark := edgeWatermarkInput(t, id, minute+5)
-					streams[p] = append(streams[p], m, m, watermark)
+					streams[p] = append(streams[p], m, m)
 				}
 			}
 			for _, id := range ids {
@@ -233,7 +224,7 @@ func TestPublishBeforeCommitAndNoCommitOnFailure(t *testing.T) {
 	partition := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
 	for _, failAt := range []int{0, 1, 2} {
 		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
-			a, _ := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, []string{id}, cloudworker.DefaultWindowSize)
+			a, _ := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, []string{id}, cloudworker.DefaultWindowSize, cloudworker.DefaultMaxEdgeWatermarkSkew)
 			var order []string
 			calls := 0
 			committed := false
@@ -276,7 +267,7 @@ func TestWorkerConfigDefaultsAndPositivePartitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WindowSize != cloudworker.DefaultWindowSize || len(cfg.Membership) != model.DefaultSourcePartitionCount {
+	if cfg.WindowSize != cloudworker.DefaultWindowSize || cfg.MaxEdgeWatermarkSkew != cloudworker.DefaultMaxEdgeWatermarkSkew || len(cfg.Membership) != model.DefaultSourcePartitionCount {
 		t.Fatalf("wrong defaults: %+v", cfg)
 	}
 	for _, value := range []string{"0", "-1", "invalid"} {
