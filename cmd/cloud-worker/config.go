@@ -43,11 +43,15 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	if err != nil {
 		return CloudWorkerConfig{}, err
 	}
-	expectedEdgeIDs := strings.TrimSpace(os.Getenv("CLOUD_EXPECTED_EDGE_IDS"))
-	if expectedEdgeIDs == "" {
-		return CloudWorkerConfig{}, fmt.Errorf("CLOUD_EXPECTED_EDGE_IDS is required")
+	edgePartitionValue := strings.TrimSpace(os.Getenv("CLOUD_EDGE_PARTITIONS"))
+	if edgePartitionValue == "" {
+		return CloudWorkerConfig{}, fmt.Errorf("CLOUD_EDGE_PARTITIONS is required")
 	}
-	membership, err := cloudworker.BuildMembership(strings.Split(expectedEdgeIDs, ","), count)
+	edgePartitions, err := parseEdgePartitions(edgePartitionValue)
+	if err != nil {
+		return CloudWorkerConfig{}, err
+	}
+	membership, err := cloudworker.BuildMembership(edgePartitions, count)
 	if err != nil {
 		return CloudWorkerConfig{}, err
 	}
@@ -68,6 +72,25 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 		WindowSize:              windowSize,
 		MaxEdgeWatermarkSkew:    maxEdgeWatermarkSkew,
 	}, nil
+}
+
+func parseEdgePartitions(value string) (map[string]int, error) {
+	assignments := make(map[string]int)
+	for _, entry := range strings.Split(value, ",") {
+		parts := strings.Split(entry, ":")
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) != parts[0] || parts[0] == "" {
+			return nil, fmt.Errorf("CLOUD_EDGE_PARTITIONS entry non valida %q", entry)
+		}
+		partition, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("CLOUD_EDGE_PARTITIONS partition non valida in %q: %w", entry, err)
+		}
+		if _, duplicate := assignments[parts[0]]; duplicate {
+			return nil, fmt.Errorf("CLOUD_EDGE_PARTITIONS contiene Edge duplicato %q", parts[0])
+		}
+		assignments[parts[0]] = partition
+	}
+	return assignments, nil
 }
 
 func loadMaxEdgeWatermarkSkew() (time.Duration, error) {

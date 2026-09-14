@@ -1,15 +1,14 @@
 package cloudworker
 
 import (
-	"continuum/internal/kafkautil"
 	"fmt"
 	"sort"
 	"strings"
 )
 
-// BuildMembership projects the immutable Edge topology through the exact same
-// Kafka Hash balancer used by every Edge producer.
-func BuildMembership(edgeIDs []string, partitionCount int) (map[int][]string, error) {
+// BuildMembership validates the static Edge-to-partition plan generated before
+// the experiment and indexes it by Kafka source partition.
+func BuildMembership(edgePartitions map[string]int, partitionCount int) (map[int][]string, error) {
 	if partitionCount <= 0 {
 		return nil, fmt.Errorf("source partition count must be positive")
 	}
@@ -17,20 +16,16 @@ func BuildMembership(edgeIDs []string, partitionCount int) (map[int][]string, er
 	for partition := 0; partition < partitionCount; partition++ {
 		membership[partition] = nil
 	}
-	seen := make(map[string]struct{}, len(edgeIDs))
-	for _, raw := range edgeIDs {
-		id := strings.TrimSpace(raw)
-		if id == "" || id != raw {
-			return nil, fmt.Errorf("invalid Edge membership entry %q", raw)
+	for id, partition := range edgePartitions {
+		if strings.TrimSpace(id) == "" || strings.TrimSpace(id) != id {
+			return nil, fmt.Errorf("invalid Edge membership entry %q", id)
 		}
-		if _, duplicate := seen[id]; duplicate {
-			return nil, fmt.Errorf("duplicate Edge membership entry %q", id)
+		if partition < 0 || partition >= partitionCount {
+			return nil, fmt.Errorf("partition %d for Edge %q is outside [0,%d)", partition, id, partitionCount)
 		}
-		seen[id] = struct{}{}
-		partition := kafkautil.PartitionForEdge(id, partitionCount)
 		membership[partition] = append(membership[partition], id)
 	}
-	if len(seen) == 0 {
+	if len(edgePartitions) == 0 {
 		return nil, fmt.Errorf("Cloud Edge membership is required")
 	}
 	for partition := range membership {

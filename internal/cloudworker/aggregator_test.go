@@ -1,7 +1,6 @@
 package cloudworker
 
 import (
-	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 	"fmt"
 	"testing"
@@ -161,14 +160,13 @@ func TestPendingDuplicateIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestMembershipUsesProducerPartitioner(t *testing.T) {
-	ids := []string{"edge-0", "edge-1", "edge-2"}
-	membership, err := BuildMembership(ids, model.DefaultSourcePartitionCount)
+func TestMembershipUsesExplicitPartitionPlan(t *testing.T) {
+	plan := map[string]int{"edge-0": 2, "edge-1": 0, "edge-2": 2}
+	membership, err := BuildMembership(plan, model.DefaultSourcePartitionCount)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range ids {
-		partition := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
+	for id, partition := range plan {
 		found := false
 		for _, member := range membership[partition] {
 			found = found || member == id
@@ -177,8 +175,8 @@ func TestMembershipUsesProducerPartitioner(t *testing.T) {
 			t.Fatalf("%s missing from partition %d", id, partition)
 		}
 	}
-	if _, err := BuildMembership([]string{"edge-0", "edge-0"}, 6); err == nil {
-		t.Fatal("duplicate membership accepted")
+	if _, err := BuildMembership(map[string]int{"edge-0": 6}, 6); err == nil {
+		t.Fatal("out-of-range membership accepted")
 	}
 	if _, err := NewPartitionAggregator(6, 6, nil, time.Minute, time.Minute); err == nil {
 		t.Fatal("invalid owner accepted")

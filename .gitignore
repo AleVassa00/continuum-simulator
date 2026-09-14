@@ -51,6 +51,7 @@ dataset/output/*
 !dataset/output/workload_by_edge.csv
 !dataset/output/workload_edge_summary.csv
 !dataset/output/kmeans_topology.csv
+!dataset/output/edge_partition_weights.csv
 !dataset/output/replay_load_scenarios.csv
 !dataset/output/replay_shards_summary.csv
 docs/discussione-professoressa-architettura.md

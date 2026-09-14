@@ -30,7 +30,12 @@ func runEdge() error {
 	ingress := newEdgeIngress(config.IngressQueueCapacity)
 	stats := &EdgeStats{}
 
-	kafkaWriter := newKafkaWriter(config.KafkaBroker, config.KafkaTopic)
+	kafkaWriter := newKafkaWriter(
+		config.KafkaBroker,
+		config.KafkaTopic,
+		config.KafkaPartition,
+		config.KafkaProducerBatchSize,
+	)
 	writerClosed := false
 	defer func() {
 		if writerClosed {
@@ -50,13 +55,26 @@ func runEdge() error {
 		windowSize: config.WindowSize,
 	}
 
-	pipeline := startEdgePipeline(ingress, aggregator, kafkaWriter, stats)
+	pipeline := startEdgePipeline(
+		ingress,
+		aggregator,
+		kafkaWriter,
+		stats,
+		config.KafkaProducerBatchSize,
+		config.KafkaProducerBatchMaxWait,
+	)
 
 	fmt.Printf("Avvio Edge %s\n", config.EdgeID)
 	fmt.Printf("Broker MQTT: %s\n", config.MQTTBroker)
 	fmt.Printf("Window size: %s\n", config.WindowSize)
 	fmt.Printf("Kafka broker: %s\n", config.KafkaBroker)
 	fmt.Printf("Kafka topic: %s\n\n", config.KafkaTopic)
+	fmt.Printf("Kafka partition: %d/%d\n", config.KafkaPartition, config.SourcePartitionCount)
+	fmt.Printf(
+		"Kafka producer batch: size=%d max_wait=%s\n",
+		config.KafkaProducerBatchSize,
+		config.KafkaProducerBatchMaxWait,
+	)
 	fmt.Printf(
 		"Edge ingress queue capacity: %d\n\n",
 		config.IngressQueueCapacity,

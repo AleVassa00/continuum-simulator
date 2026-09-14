@@ -12,11 +12,18 @@ import (
 	"continuum/internal/avrocodec"
 	"continuum/internal/cloudworker"
 	"continuum/internal/globalaggregator"
-	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 
 	"github.com/segmentio/kafka-go"
 )
+
+type testFixedPartitionBalancer struct {
+	partition int
+}
+
+func (balancer testFixedPartitionBalancer) Balance(_ kafka.Message, _ ...int) int {
+	return balancer.partition
+}
 
 // Opt-in: KAFKA_INTEGRATION_BROKER must point to a disposable, single-broker
 // Kafka. Unique test topics/groups are created and left there for inspection.
@@ -57,7 +64,8 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					for e := 0; e < edgeCount; e++ {
 						ids = append(ids, fmt.Sprintf("edge-%d", e))
 					}
-					membership, err := cloudworker.BuildMembership(ids, count)
+					partitionPlan := testEdgePartitionPlan(ids, count)
+					membership, err := cloudworker.BuildMembership(partitionPlan, count)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -115,16 +123,20 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 						}
 						return len(seen) == count
 					})
-					producer := newKafkaWriter(broker, input) // Same Hash/key and synchronous ordering as Edge.
-					producer.Transport = transport
-					defer producer.Close()
+					producers := make([]*kafka.Writer, count)
+					for partition := range producers {
+						producers[partition] = newKafkaWriter(broker, input)
+						producers[partition].Balancer = testFixedPartitionBalancer{partition: partition}
+						producers[partition].Transport = transport
+						defer producers[partition].Close()
+					}
 					wantOffsets := make([]int64, count)
 					for minute := 0; minute < 35; minute += 5 {
 						for e, id := range ids {
 							aggregate := edgeInput(t, id, minute, uint64(e+1))
-							partition := kafkautil.PartitionForEdge(id, count)
+							partition := partitionPlan[id]
 							aggregate.Partition = partition
-							if err := producer.WriteMessages(ctx, aggregate); err != nil {
+							if err := producers[partition].WriteMessages(ctx, aggregate); err != nil {
 								t.Fatal(err)
 							}
 							wantOffsets[partition]++
@@ -134,9 +146,9 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					// writer/key, after all of that Edge's aggregate/progress records.
 					for _, id := range ids {
 						end := edgeEndInput(id)
-						partition := kafkautil.PartitionForEdge(id, count)
+						partition := partitionPlan[id]
 						end.Partition = partition
-						if err := producer.WriteMessages(ctx, end); err != nil {
+						if err := producers[partition].WriteMessages(ctx, end); err != nil {
 							t.Fatal(err)
 						}
 						wantOffsets[partition]++
@@ -174,7 +186,7 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					}
 					activePartitions := map[int]bool{}
 					for _, id := range ids {
-						activePartitions[kafkautil.PartitionForEdge(id, count)] = true
+						activePartitions[partitionPlan[id]] = true
 					}
 					if len(partials) != 3*len(activePartitions) || len(globals) != 3 {
 						t.Fatalf("partials=%d globals=%d", len(partials), len(globals))

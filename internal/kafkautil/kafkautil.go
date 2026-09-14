@@ -11,17 +11,6 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// PartitionForEdge projects the configured Edge topology onto source partitions.
-// It must match the Edge writer's kafka.Hash balancer on the configured partitions.
-// count must have been validated as positive before starting orchestration.
-func PartitionForEdge(edgeID string, count int) int {
-	partitions := make([]int, count)
-	for p := range partitions {
-		partitions[p] = p
-	}
-	return (&kafka.Hash{}).Balance(kafka.Message{Key: []byte(edgeID)}, partitions...)
-}
-
 func ParseRecordType(headers []kafka.Header) (string, error) {
 	var recordType string
 

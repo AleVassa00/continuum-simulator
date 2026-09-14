@@ -22,6 +22,15 @@ func TestGeneratedCloudGlobalContractsAllWorkerCounts(t *testing.T) {
 	for i := 0; i < 13; i++ {
 		edges = append(edges, EdgeDeployment{EdgeID: fmt.Sprintf("edge-%d", i), EdgeNumber: i, SensorCount: 1, MQTTPort: 18830 + i})
 	}
+	weights := make(map[string]uint64, len(edges))
+	for _, edge := range edges {
+		weights[edge.EdgeID] = 1
+	}
+	var err error
+	edges, err = assignEdgePartitions(edges, weights, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, workers := range []int{1, 2, 4, 6} {
 		t.Run(fmt.Sprintf("W%d", workers), func(t *testing.T) {
 			cfg, err := experiment.Load(fmt.Sprintf("../../experiments/cloud-scale-w%d.yaml", workers))
@@ -41,7 +50,7 @@ func TestGeneratedCloudGlobalContractsAllWorkerCounts(t *testing.T) {
 			globals := 0
 			var expected []string
 			for _, edge := range edges {
-				expected = append(expected, edge.EdgeID)
+				expected = append(expected, fmt.Sprintf("%s:%d", edge.EdgeID, edge.KafkaPartition))
 			}
 			expectedMembership := strings.Join(expected, ",")
 			for _, content := range contents {
@@ -78,7 +87,7 @@ func TestGeneratedCloudGlobalContractsAllWorkerCounts(t *testing.T) {
 						if env["SOURCE_PARTITION_COUNT"] != "6" || env["KAFKA_OUTPUT_TOPIC"] != "cloud-partition-aggregates" {
 							t.Fatalf("Worker config: %v", env)
 						}
-						if env["CLOUD_EXPECTED_EDGE_IDS"] != expectedMembership {
+						if env["CLOUD_EDGE_PARTITIONS"] != expectedMembership {
 							t.Fatalf("worker membership: %v", env)
 						}
 					}

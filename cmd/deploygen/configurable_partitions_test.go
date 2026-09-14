@@ -20,7 +20,14 @@ func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 		cfg.Kafka.Partitions = &count
 		batchSize := experiment.CommitBatchSize(32)
 		cfg.Cloud.ConsumerCommitBatchSize = &batchSize
-		edges := []EdgeDeployment{{EdgeID: "edge-0", SensorCount: 1, MQTTPort: 18830}}
+		edges, err := assignEdgePartitions(
+			[]EdgeDeployment{{EdgeID: "edge-0", SensorCount: 1, MQTTPort: 18830}},
+			map[string]uint64{"edge-0": 1},
+			count,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
 		contents := []string{buildCompose(edges, experiment.BuildEffective(cfg, time.Now()))}
 		for _, file := range buildDistributedComposes(edges, cfg) {
 			contents = append(contents, file.Content)
@@ -32,6 +39,14 @@ func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 				t.Fatal(err)
 			}
 			for name, service := range doc.Services {
+				if name == "edge-0" {
+					if service.Environment["KAFKA_PARTITION"] != "0" || service.Environment["SOURCE_PARTITION_COUNT"] != strconv.Itoa(count) {
+						t.Fatal("static Edge partition assignment lost in deployment")
+					}
+					if service.Environment["KAFKA_PRODUCER_BATCH_SIZE"] != "1" || service.Environment["KAFKA_PRODUCER_BATCH_MAX_WAIT"] != "100ms" {
+						t.Fatal("Edge producer batching defaults lost in deployment")
+					}
+				}
 				if strings.HasPrefix(name, "cloud-worker-") && service.Environment["CLOUD_CONSUMER_COMMIT_BATCH_SIZE"] != "32" {
 					t.Fatal("commit batch size lost in deployment")
 				}

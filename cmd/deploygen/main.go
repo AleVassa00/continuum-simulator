@@ -22,6 +22,7 @@ import (
 
 const (
 	defaultTopologyPath         = "dataset/output/kmeans_topology.csv"
+	defaultPartitionWeightsPath = "dataset/output/edge_partition_weights.csv"
 	defaultOutputPath           = "deploy/compose/continuum.generated.yml"
 	defaultDistributedOutputDir = "deploy/compose/distributed"
 	defaultExperimentPath       = "experiments/baseline.yaml"
@@ -41,10 +42,12 @@ const (
 )
 
 type EdgeDeployment struct {
-	EdgeID      string
-	EdgeNumber  int
-	SensorCount int
-	MQTTPort    int
+	EdgeID           string
+	EdgeNumber       int
+	SensorCount      int
+	MQTTPort         int
+	KafkaPartition   int
+	ReplayEventCount uint64
 }
 
 type composeCloudWorker struct {
@@ -63,14 +66,16 @@ type composeTemplateData struct {
 	KafkaPartitions         int
 	ExperimentName          string
 
-	CloudWorkers         []composeCloudWorker
-	CloudWindowSize      string
-	MaxEdgeWatermarkSkew string
-	ExpectedEdgeIDs      string
+	CloudWorkers             []composeCloudWorker
+	CloudWindowSize          string
+	MaxEdgeWatermarkSkew     string
+	EdgePartitionAssignments string
 
-	Edges                    []composeEdge
-	EdgeWindowSize           string
-	EdgeIngressQueueCapacity int
+	Edges                         []composeEdge
+	EdgeWindowSize                string
+	EdgeIngressQueueCapacity      int
+	EdgeKafkaProducerBatchSize    int
+	EdgeKafkaProducerBatchMaxWait string
 
 	ReplayEpoch            string
 	ReplayStartAt          string
@@ -81,6 +86,7 @@ type composeTemplateData struct {
 
 type deploygenOptions struct {
 	TopologyPath         string
+	PartitionWeightsPath string
 	OutputPath           string
 	DistributedOutputDir string
 	ArtifactsRoot        string
@@ -143,6 +149,7 @@ var distributedSimulatorTemplate = template.Must(
 func main() {
 	if err := runDeploygen(os.Args[1:], deploygenOptions{
 		TopologyPath:         defaultTopologyPath,
+		PartitionWeightsPath: defaultPartitionWeightsPath,
 		OutputPath:           defaultOutputPath,
 		DistributedOutputDir: defaultDistributedOutputDir,
 		ArtifactsRoot:        defaultArtifactsRoot,
@@ -167,6 +174,8 @@ func runDeploygen(args []string, options deploygenOptions) error {
 	)
 	flags.StringVar(&options.DistributedOutputDir, "distributed-output-dir", options.DistributedOutputDir,
 		"directory Compose e manifest distribuiti generati")
+	flags.StringVar(&options.PartitionWeightsPath, "partition-weights", options.PartitionWeightsPath,
+		"CSV dei pesi Edge usato per il piano statico delle partition")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -184,6 +193,17 @@ func runDeploygen(args []string, options deploygenOptions) error {
 	}
 	if len(edges) == 0 {
 		return fmt.Errorf("nessun Edge trovato nella topologia")
+	}
+	weights, err := loadEdgePartitionWeights(
+		options.PartitionWeightsPath,
+		edges,
+	)
+	if err != nil {
+		return err
+	}
+	edges, err = assignEdgePartitions(edges, weights, config.Kafka.ResolvedPartitions())
+	if err != nil {
+		return err
 	}
 
 	switch *mode {
@@ -227,9 +247,11 @@ func generateLocalDeployment(config experiment.Config, edges []EdgeDeployment, o
 	for _, edge := range edges {
 		fmt.Fprintf(
 			options.Stdout,
-			"%s -> sensors=%d mqtt=tcp://mqtt-%s:1883 host_port=%d simulator=simulator-%s\n",
+			"%s -> sensors=%d replay_event_count=%d kafka_partition=%d mqtt=tcp://mqtt-%s:1883 host_port=%d simulator=simulator-%s\n",
 			edge.EdgeID,
 			edge.SensorCount,
+			edge.ReplayEventCount,
+			edge.KafkaPartition,
 			edge.EdgeID,
 			edge.MQTTPort,
 			edge.EdgeID,
@@ -272,6 +294,16 @@ func generateDistributedDeployment(config experiment.Config, edges []EdgeDeploym
 	fmt.Fprintln(options.Stdout, "Replay start at: runtime REPLAY_START_AT (required)")
 	fmt.Fprintf(options.Stdout, "Topologia letta: %d Edge\n", len(edges))
 	fmt.Fprintf(options.Stdout, "Cloud workers: %d\n\n", resolved.Cloud.Workers)
+	for _, edge := range edges {
+		fmt.Fprintf(
+			options.Stdout,
+			"%s -> replay_event_count=%d kafka_partition=%d\n",
+			edge.EdgeID,
+			edge.ReplayEventCount,
+			edge.KafkaPartition,
+		)
+	}
+	fmt.Fprintln(options.Stdout)
 
 	for _, compose := range composes {
 		fmt.Fprintf(options.Stdout, "Generato: %s\n", filepath.Join(options.DistributedOutputDir, compose.Filename))
@@ -329,7 +361,9 @@ func printExperimentSummary(output io.Writer, config experiment.EffectiveConfig,
 	fmt.Fprintf(output, "  telemetry queue capacity: %d\n\n", config.Simulator.TelemetryQueueCapacity)
 	fmt.Fprintln(output, "Edge:")
 	fmt.Fprintf(output, "  ingress queue capacity: %d\n", config.Edge.IngressQueueCapacity)
-	fmt.Fprintf(output, "  window: %s\n\n", config.Edge.WindowSize)
+	fmt.Fprintf(output, "  window: %s\n", config.Edge.WindowSize)
+	fmt.Fprintf(output, "  Kafka producer batch size: %d\n", config.Edge.ResolvedKafkaProducerBatchSize())
+	fmt.Fprintf(output, "  Kafka producer batch max wait: %s\n\n", config.Edge.ResolvedKafkaProducerBatchMaxWait())
 	fmt.Fprintln(output, "Cloud:")
 	fmt.Fprintf(output, "  workers: %d\n", config.Cloud.Workers)
 	fmt.Fprintf(output, "  window: %s\n\n", config.Cloud.WindowSize)
@@ -453,21 +487,23 @@ func parseEdgeNumber(
 }
 
 func buildCompose(edges []EdgeDeployment, config experiment.EffectiveConfig) string {
-	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(edges, config.Cloud.Workers)
+	cloudWorkers, composeEdges, edgePartitionAssignments := buildComposeTopology(edges, config.Cloud.Workers)
 
 	data := composeTemplateData{
 		ConsumerCommitBatchSize: config.Cloud.ResolvedConsumerCommitBatchSize(),
 		KafkaPartitions:         config.Kafka.ResolvedPartitions(),
 		ExperimentName:          config.Experiment.Name,
 
-		CloudWorkers:         cloudWorkers,
-		CloudWindowSize:      config.Cloud.WindowSize.String(),
-		MaxEdgeWatermarkSkew: config.Cloud.ResolvedMaxEdgeWatermarkSkew().String(),
-		ExpectedEdgeIDs:      expectedEdgeIDs,
+		CloudWorkers:             cloudWorkers,
+		CloudWindowSize:          config.Cloud.WindowSize.String(),
+		MaxEdgeWatermarkSkew:     config.Cloud.ResolvedMaxEdgeWatermarkSkew().String(),
+		EdgePartitionAssignments: edgePartitionAssignments,
 
-		Edges:                    composeEdges,
-		EdgeWindowSize:           config.Edge.WindowSize.String(),
-		EdgeIngressQueueCapacity: config.Edge.IngressQueueCapacity,
+		Edges:                         composeEdges,
+		EdgeWindowSize:                config.Edge.WindowSize.String(),
+		EdgeIngressQueueCapacity:      config.Edge.IngressQueueCapacity,
+		EdgeKafkaProducerBatchSize:    config.Edge.ResolvedKafkaProducerBatchSize(),
+		EdgeKafkaProducerBatchMaxWait: config.Edge.ResolvedKafkaProducerBatchMaxWait().String(),
 
 		ReplayEpoch:            deploymentReplayEpoch,
 		ReplayStartAt:          config.Workload.ReplayStartAt,
@@ -481,21 +517,23 @@ func buildCompose(edges []EdgeDeployment, config experiment.EffectiveConfig) str
 
 func buildDistributedComposes(edges []EdgeDeployment, config experiment.Config) []generatedCompose {
 	config = experiment.ResolveDefaults(config)
-	cloudWorkers, composeEdges, expectedEdgeIDs := buildComposeTopology(edges, config.Cloud.Workers)
+	cloudWorkers, composeEdges, edgePartitionAssignments := buildComposeTopology(edges, config.Cloud.Workers)
 
 	data := composeTemplateData{
 		ConsumerCommitBatchSize: config.Cloud.ResolvedConsumerCommitBatchSize(),
 		KafkaPartitions:         config.Kafka.ResolvedPartitions(),
 		ExperimentName:          config.Experiment.Name,
 
-		CloudWorkers:         cloudWorkers,
-		CloudWindowSize:      config.Cloud.WindowSize.String(),
-		MaxEdgeWatermarkSkew: config.Cloud.ResolvedMaxEdgeWatermarkSkew().String(),
-		ExpectedEdgeIDs:      expectedEdgeIDs,
+		CloudWorkers:             cloudWorkers,
+		CloudWindowSize:          config.Cloud.WindowSize.String(),
+		MaxEdgeWatermarkSkew:     config.Cloud.ResolvedMaxEdgeWatermarkSkew().String(),
+		EdgePartitionAssignments: edgePartitionAssignments,
 
-		Edges:                    composeEdges,
-		EdgeWindowSize:           config.Edge.WindowSize.String(),
-		EdgeIngressQueueCapacity: config.Edge.IngressQueueCapacity,
+		Edges:                         composeEdges,
+		EdgeWindowSize:                config.Edge.WindowSize.String(),
+		EdgeIngressQueueCapacity:      config.Edge.IngressQueueCapacity,
+		EdgeKafkaProducerBatchSize:    config.Edge.ResolvedKafkaProducerBatchSize(),
+		EdgeKafkaProducerBatchMaxWait: config.Edge.ResolvedKafkaProducerBatchMaxWait().String(),
 
 		ReplayEpoch:            deploymentReplayEpoch,
 		AccelerationFactor:     formatFloat(config.Workload.AccelerationFactor),
@@ -532,7 +570,7 @@ func buildComposeTopology(edges []EdgeDeployment, workers int) ([]composeCloudWo
 	}
 
 	composeEdges := make([]composeEdge, 0, len(edges))
-	expectedEdgeIDs := make([]string, 0, len(edges))
+	edgePartitionAssignments := make([]string, 0, len(edges))
 	for _, edge := range edges {
 		composeEdges = append(composeEdges, composeEdge{
 			EdgeDeployment:   edge,
@@ -540,10 +578,13 @@ func buildComposeTopology(edges []EdgeDeployment, workers int) ([]composeCloudWo
 			SimulatorService: "simulator-" + edge.EdgeID,
 			ZoneNetwork:      "zone-" + edge.EdgeID,
 		})
-		expectedEdgeIDs = append(expectedEdgeIDs, edge.EdgeID)
+		edgePartitionAssignments = append(
+			edgePartitionAssignments,
+			fmt.Sprintf("%s:%d", edge.EdgeID, edge.KafkaPartition),
+		)
 	}
 
-	return cloudWorkers, composeEdges, strings.Join(expectedEdgeIDs, ",")
+	return cloudWorkers, composeEdges, strings.Join(edgePartitionAssignments, ",")
 }
 
 func renderCompose(composeTemplate *template.Template, data composeTemplateData) string {

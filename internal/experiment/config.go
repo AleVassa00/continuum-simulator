@@ -79,8 +79,47 @@ type SimulatorConfig struct {
 }
 
 type EdgeConfig struct {
-	WindowSize           Duration `yaml:"window_size"`
-	IngressQueueCapacity int      `yaml:"ingress_queue_capacity"`
+	WindowSize                Duration               `yaml:"window_size"`
+	IngressQueueCapacity      int                    `yaml:"ingress_queue_capacity"`
+	KafkaProducerBatchSize    *EdgeProducerBatchSize `yaml:"kafka_producer_batch_size,omitempty"`
+	KafkaProducerBatchMaxWait *Duration              `yaml:"kafka_producer_batch_max_wait,omitempty"`
+}
+
+const (
+	DefaultEdgeKafkaProducerBatchSize    = 1
+	DefaultEdgeKafkaProducerBatchMaxWait = 100 * time.Millisecond
+)
+
+// EdgeProducerBatchSize rejects fractional YAML values instead of truncating them.
+type EdgeProducerBatchSize int
+
+func (size *EdgeProducerBatchSize) UnmarshalYAML(node *yaml.Node) error {
+	if node.Tag != "!!int" {
+		return fmt.Errorf("edge.kafka_producer_batch_size must be a positive integer")
+	}
+	var value int
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	if value <= 0 {
+		return fmt.Errorf("edge.kafka_producer_batch_size must be a positive integer")
+	}
+	*size = EdgeProducerBatchSize(value)
+	return nil
+}
+
+func (config EdgeConfig) ResolvedKafkaProducerBatchSize() int {
+	if config.KafkaProducerBatchSize != nil {
+		return int(*config.KafkaProducerBatchSize)
+	}
+	return DefaultEdgeKafkaProducerBatchSize
+}
+
+func (config EdgeConfig) ResolvedKafkaProducerBatchMaxWait() time.Duration {
+	if config.KafkaProducerBatchMaxWait != nil {
+		return config.KafkaProducerBatchMaxWait.Duration()
+	}
+	return DefaultEdgeKafkaProducerBatchMaxWait
 }
 
 type CloudConfig struct {
@@ -235,6 +274,12 @@ func (config Config) Validate() error {
 	if config.Edge.IngressQueueCapacity <= 0 {
 		return fmt.Errorf("edge.ingress_queue_capacity deve essere maggiore di zero")
 	}
+	if config.Edge.ResolvedKafkaProducerBatchSize() <= 0 {
+		return fmt.Errorf("edge.kafka_producer_batch_size must be a positive integer")
+	}
+	if config.Edge.ResolvedKafkaProducerBatchMaxWait() <= 0 {
+		return fmt.Errorf("edge.kafka_producer_batch_max_wait deve essere maggiore di zero")
+	}
 	if config.Cloud.Workers <= 0 {
 		return fmt.Errorf("cloud.workers deve essere maggiore di zero")
 	}
@@ -253,6 +298,14 @@ func (config Config) Validate() error {
 }
 
 func ResolveDefaults(config Config) Config {
+	if config.Edge.KafkaProducerBatchSize == nil {
+		size := EdgeProducerBatchSize(config.Edge.ResolvedKafkaProducerBatchSize())
+		config.Edge.KafkaProducerBatchSize = &size
+	}
+	if config.Edge.KafkaProducerBatchMaxWait == nil {
+		duration := Duration(config.Edge.ResolvedKafkaProducerBatchMaxWait())
+		config.Edge.KafkaProducerBatchMaxWait = &duration
+	}
 	if config.Cloud.ConsumerCommitBatchSize == nil {
 		size := CommitBatchSize(config.Cloud.ResolvedConsumerCommitBatchSize())
 		config.Cloud.ConsumerCommitBatchSize = &size

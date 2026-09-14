@@ -1,9 +1,11 @@
 package experiment
 
 import (
-	"continuum/internal/cloudworker"
 	"strings"
 	"testing"
+	"time"
+
+	"continuum/internal/cloudworker"
 )
 
 const configFixture = `experiment:
@@ -49,5 +51,23 @@ func TestConsumerCommitBatchSizeConfig(t *testing.T) {
 		if (a == b) != (value == "1") {
 			t.Fatal("batch size not reflected in fingerprint")
 		}
+	}
+}
+
+func TestEdgeProducerBatchConfig(t *testing.T) {
+	base, err := Decode(strings.NewReader(configFixture))
+	if err != nil || base.Edge.ResolvedKafkaProducerBatchSize() != 1 || base.Edge.ResolvedKafkaProducerBatchMaxWait() != 100*time.Millisecond {
+		t.Fatalf("default: %+v %v", base.Edge, err)
+	}
+
+	configured := strings.Replace(
+		configFixture,
+		"  ingress_queue_capacity: 10\n",
+		"  ingress_queue_capacity: 10\n  kafka_producer_batch_size: 10\n  kafka_producer_batch_max_wait: 250ms\n",
+		1,
+	)
+	cfg, err := Decode(strings.NewReader(configured))
+	if err != nil || cfg.Edge.ResolvedKafkaProducerBatchSize() != 10 || cfg.Edge.ResolvedKafkaProducerBatchMaxWait() != 250*time.Millisecond {
+		t.Fatalf("configured: %+v %v", cfg.Edge, err)
 	}
 }

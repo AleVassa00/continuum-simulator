@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/segmentio/kafka-go"
@@ -21,15 +22,25 @@ type edgePipeline struct {
 	kafkaFinished     bool
 }
 
-func startEdgePipeline(ingress *EdgeIngress, aggregator *WindowAggregator, kafkaWriter *kafka.Writer, stats *EdgeStats) *edgePipeline {
+func startEdgePipeline(
+	ingress *EdgeIngress,
+	aggregator *WindowAggregator,
+	kafkaWriter *kafka.Writer,
+	stats *EdgeStats,
+	batchSize int,
+	batchMaxWait time.Duration,
+) *edgePipeline {
 	output := make(chan EdgeOutputRecord)
 	egressStopped := make(chan struct{})
 
 	kafkaEgress := &KafkaEgress{
-		edgeID: aggregator.edgeID,
-		writer: kafkaWriter,
-		input:  output,
-		stats:  stats,
+		edgeID:        aggregator.edgeID,
+		topic:         kafkaWriter.Topic,
+		writeMessages: kafkaWriter.WriteMessages,
+		input:         output,
+		stats:         stats,
+		batchSize:     batchSize,
+		batchMaxWait:  batchMaxWait,
 	}
 
 	kafkaDone := make(chan error, 1)

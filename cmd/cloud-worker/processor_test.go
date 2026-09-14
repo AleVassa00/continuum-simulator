@@ -15,7 +15,7 @@ import (
 
 func processorFixture(t *testing.T, edgeIDs ...string) (*CloudMessageProcessor, *[]kafka.Message, int) {
 	t.Helper()
-	partition := kafkautil.PartitionForEdge(edgeIDs[0], model.DefaultSourcePartitionCount)
+	partition := 0
 	a, err := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, edgeIDs, cloudworker.DefaultWindowSize, cloudworker.DefaultMaxEdgeWatermarkSkew)
 	if err != nil {
 		t.Fatal(err)
@@ -90,17 +90,11 @@ func TestEdgeEndValidationAndPartitionCompletion(t *testing.T) {
 
 func samePartitionEdgeIDs(t *testing.T, count int) []string {
 	t.Helper()
-	byPartition := make(map[int][]string)
-	for i := 0; i < 100; i++ {
-		id := fmt.Sprintf("edge-%d", i)
-		partition := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
-		byPartition[partition] = append(byPartition[partition], id)
-		if len(byPartition[partition]) == count {
-			return byPartition[partition]
-		}
+	ids := make([]string, count)
+	for index := range ids {
+		ids[index] = fmt.Sprintf("edge-%d", index)
 	}
-	t.Fatal("could not find Edge IDs sharing a partition")
-	return nil
+	return ids
 }
 
 func TestEdgeControlWireValidation(t *testing.T) {
@@ -138,11 +132,11 @@ func TestEdgeControlWireValidation(t *testing.T) {
 func TestCloudConfigurationRequiresTopology(t *testing.T) {
 	t.Setenv("KAFKA_BROKER", "unused:9092")
 	t.Setenv("SOURCE_PARTITION_COUNT", "6")
-	t.Setenv("CLOUD_EXPECTED_EDGE_IDS", "")
+	t.Setenv("CLOUD_EDGE_PARTITIONS", "")
 	if _, err := loadCloudWorkerConfig(); err == nil {
 		t.Fatal("missing Edge topology accepted")
 	}
-	t.Setenv("CLOUD_EXPECTED_EDGE_IDS", "edge-0,edge-1")
+	t.Setenv("CLOUD_EDGE_PARTITIONS", "edge-0:0,edge-1:1")
 	t.Setenv("CLOUD_WINDOW_SIZE", "30m")
 	t.Setenv("CLOUD_MAX_EDGE_WATERMARK_SKEW", "45m")
 	cfg, err := loadCloudWorkerConfig()

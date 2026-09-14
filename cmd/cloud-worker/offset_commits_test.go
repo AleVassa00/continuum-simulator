@@ -78,7 +78,7 @@ func TestOffsetCommitFailureAndProcessOrdering(t *testing.T) {
 
 func TestCommitBatchConfiguration(t *testing.T) {
 	t.Setenv("KAFKA_BROKER", "unused:9092")
-	t.Setenv("CLOUD_EXPECTED_EDGE_IDS", "edge-0")
+	t.Setenv("CLOUD_EDGE_PARTITIONS", "edge-0:0")
 	for _, tc := range []struct {
 		value string
 		want  int

@@ -33,6 +33,10 @@ services:
       EDGE_INGRESS_QUEUE_CAPACITY: "{{$.EdgeIngressQueueCapacity}}"
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
       KAFKA_TOPIC: "edge-aggregates"
+      KAFKA_PARTITION: "{{.KafkaPartition}}"
+      SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
+      KAFKA_PRODUCER_BATCH_SIZE: "{{$.EdgeKafkaProducerBatchSize}}"
+      KAFKA_PRODUCER_BATCH_MAX_WAIT: "{{$.EdgeKafkaProducerBatchMaxWait}}"
     depends_on:
       {{.MQTTService}}:
         condition: service_healthy

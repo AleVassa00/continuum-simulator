@@ -11,10 +11,11 @@ func TestDeploygenUsesCurrentTwoColumnTopology(t *testing.T) {
 	root := t.TempDir()
 	var output bytes.Buffer
 	err := runDeploygen([]string{"-mode", "local", "-experiment", "../../experiments/baseline.yaml"}, deploygenOptions{
-		TopologyPath:  "../../dataset/output/kmeans_topology.csv",
-		OutputPath:    filepath.Join(root, "continuum.yml"),
-		ArtifactsRoot: filepath.Join(root, "artifacts"),
-		Stdout:        &output,
+		TopologyPath:         "../../dataset/output/kmeans_topology.csv",
+		PartitionWeightsPath: "../../dataset/output/edge_partition_weights.csv",
+		OutputPath:           filepath.Join(root, "continuum.yml"),
+		ArtifactsRoot:        filepath.Join(root, "artifacts"),
+		Stdout:               &output,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -8,7 +8,6 @@ import (
 
 	"continuum/internal/cloudworker"
 	"continuum/internal/globalaggregator"
-	"continuum/internal/kafkautil"
 	"continuum/internal/model"
 	"github.com/segmentio/kafka-go"
 )
@@ -30,7 +29,8 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 			for e := range ids {
 				ids[e] = fmt.Sprintf("edge-%d", e)
 			}
-			membership, err := cloudworker.BuildMembership(ids, count)
+			partitionPlan := testEdgePartitionPlan(ids, count)
+			membership, err := cloudworker.BuildMembership(partitionPlan, count)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -48,14 +48,14 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 			for minute := 0; minute < 35; minute += 5 {
 				for _, id := range ids {
 					m := edgeInput(t, id, minute, 1)
-					m.Partition = kafkautil.PartitionForEdge(id, count)
+					m.Partition = partitionPlan[id]
 					if err := processors[m.Partition].Process(ctx, m); err != nil {
 						t.Fatal(err)
 					}
 				}
 			}
 			for _, id := range ids {
-				partition := kafkautil.PartitionForEdge(id, count)
+				partition := partitionPlan[id]
 				end := edgeEndInput(id)
 				end.Partition = partition
 				if err := processors[partition].Process(ctx, end); err != nil {
@@ -90,7 +90,7 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 
 func TestWorkerPartitionCountConfiguration(t *testing.T) {
 	t.Setenv("KAFKA_BROKER", "unused:9092")
-	t.Setenv("CLOUD_EXPECTED_EDGE_IDS", "edge-0")
+	t.Setenv("CLOUD_EDGE_PARTITIONS", "edge-0:0")
 	for _, tc := range []struct {
 		value string
 		want  int

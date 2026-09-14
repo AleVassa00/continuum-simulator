@@ -19,6 +19,14 @@ import (
 
 var testEpoch = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
+func testEdgePartitionPlan(edgeIDs []string, count int) map[string]int {
+	plan := make(map[string]int, len(edgeIDs))
+	for index, id := range edgeIDs {
+		plan[id] = index % count
+	}
+	return plan
+}
+
 func edgeInput(t *testing.T, id string, minute int, n uint64) kafka.Message {
 	t.Helper()
 	start := testEpoch.Add(time.Duration(minute) * time.Minute)
@@ -30,10 +38,10 @@ func edgeInput(t *testing.T, id string, minute int, n uint64) kafka.Message {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return kafka.Message{Partition: kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount), Key: []byte(id), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeAggregate)}}}
+	return kafka.Message{Partition: 0, Key: []byte(id), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeAggregate)}}}
 }
 func edgeEndInput(id string) kafka.Message {
-	return kafka.Message{Partition: kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount), Key: []byte(id), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeEndOfInput)}}}
+	return kafka.Message{Partition: 0, Key: []byte(id), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeEndOfInput)}}}
 }
 func feedGlobal(ctx context.Context, g *globalaggregator.Aggregator, m kafka.Message) error {
 	kind, err := kafkautil.ParseRecordType(m.Headers)
@@ -82,7 +90,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 			for i := 0; i < 13; i++ {
 				ids = append(ids, fmt.Sprintf("edge-%d", i))
 			}
-			membership, err := cloudworker.BuildMembership(ids, model.DefaultSourcePartitionCount)
+			membership, err := cloudworker.BuildMembership(testEdgePartitionPlan(ids, model.DefaultSourcePartitionCount), model.DefaultSourcePartitionCount)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,16 +120,19 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 				t.Fatal("missing partition ownership")
 			}
 			streams := make(map[int][]kafka.Message)
+			partitionPlan := testEdgePartitionPlan(ids, model.DefaultSourcePartitionCount)
 			for minute := 0; minute < 35; minute += 5 {
 				for i, id := range ids {
-					p := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
+					p := partitionPlan[id]
 					m := edgeInput(t, id, minute, uint64(i+1))
+					m.Partition = p
 					streams[p] = append(streams[p], m, m)
 				}
 			}
 			for _, id := range ids {
-				p := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
+				p := partitionPlan[id]
 				end := edgeEndInput(id)
+				end.Partition = p
 				streams[p] = append(streams[p], end, end)
 			}
 			// Different inter-partition scheduling per worker count, same partition logs.
@@ -159,7 +170,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 			sort.Slice(partials, func(i, j int) bool { return partials[i].AggregateID < partials[j].AggregateID })
 			occupied := map[int]bool{}
 			for _, id := range ids {
-				occupied[kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)] = true
+				occupied[partitionPlan[id]] = true
 			}
 			if len(occupied) != 6 {
 				t.Fatalf("current 13-Edge topology does not cover all six partitions: %v", occupied)
@@ -221,7 +232,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 }
 func TestPublishBeforeCommitAndNoCommitOnFailure(t *testing.T) {
 	id := "edge-0"
-	partition := kafkautil.PartitionForEdge(id, model.DefaultSourcePartitionCount)
+	partition := 0
 	for _, failAt := range []int{0, 1, 2} {
 		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
 			a, _ := cloudworker.NewPartitionAggregator(partition, model.DefaultSourcePartitionCount, []string{id}, cloudworker.DefaultWindowSize, cloudworker.DefaultMaxEdgeWatermarkSkew)
@@ -262,7 +273,7 @@ func TestWorkerConfigDefaultsAndPositivePartitions(t *testing.T) {
 	t.Setenv("KAFKA_BROKER", "unused:9092")
 	t.Setenv("SOURCE_PARTITION_COUNT", "6")
 	t.Setenv("CLOUD_WINDOW_SIZE", "")
-	t.Setenv("CLOUD_EXPECTED_EDGE_IDS", "edge-0")
+	t.Setenv("CLOUD_EDGE_PARTITIONS", "edge-0:0")
 	cfg, err := loadCloudWorkerConfig()
 	if err != nil {
 		t.Fatal(err)
