@@ -17,6 +17,7 @@ cloud:
   consumer_commit_batch_size: 100
   workers: 1
   window_size: 15m
+  watermark_delay: 75m
 
 # Source topic partitions, independent of Edge count and cloud.workers.
 kafka:

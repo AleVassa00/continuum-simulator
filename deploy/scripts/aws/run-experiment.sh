@@ -175,23 +175,6 @@ done < <(docker ps -a --format "{{.Names}}" | sort)' \
   done
 }
 
-capture_container_states() {
-  local label="$1"
-  local role
-
-  [[ "${ADDRESSES_LOADED}" == "true" && -n "${ARTIFACT_DIR}" ]] || return 0
-  for role in "${ROLES[@]}"; do
-    ssh_run "${PUBLIC_IPS["${role}"]}" 'set -u
-printf "name\timage_id\tstate\trestart_count\toom_killed\texit_code\thealth\tstarted_at\tfinished_at\n"
-while IFS= read -r container; do
-  [[ -n "${container}" ]] || continue
-  docker inspect --format "{{.Name}}\t{{.Image}}\t{{.State.Status}}\t{{.RestartCount}}\t{{.State.OOMKilled}}\t{{.State.ExitCode}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t{{.State.StartedAt}}\t{{.State.FinishedAt}}" "${container}" |
-    sed "s#^/##"
-done < <(docker ps -a --format "{{.Names}}" | sort)' \
-      >"${ARTIFACT_DIR}/container-state-${label}-${role}.tsv" 2>&1 || true
-  done
-}
-
 write_run_metadata() {
   local exit_code="$1"
   local fallback_finished_at
@@ -323,7 +306,6 @@ finalize_run() {
         >"${ARTIFACT_DIR}/kafka-consumer-groups-final.txt" 2>&1
     fi
 
-    capture_container_states final
     collect_host_logs
 
     if [[ "${exit_code}" == "0" && "${RUN_STATUS}" == "completed" ]]; then
@@ -965,7 +947,6 @@ case "${role}" in
 esac
 REMOTE
   done
-  capture_container_states "${phase}"
 }
 
 workload_role_completed() {
