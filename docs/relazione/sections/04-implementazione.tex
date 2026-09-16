@@ -1,101 +1,182 @@
-\section{Implementazione e piattaforma software}
+\section{Implementazione}
 \label{sec:implementazione}
-\subsection{Organizzazione e contratti}
-La directory \code{cmd} contiene i programmi Simulator, Edge, Cloud Worker
-e Global Aggregator. In \code{internal}, i package \code{model},
-\code{cloudworker} e \code{globalaggregator} separano i contratti e
-l'elaborazione dall'accesso ai broker. La Tab.~\ref{tab:software} riporta le dipendenze
-dirette dichiarate in \code{go.mod}; il modulo richiede Go 1.25.0.
 
-\begin{table}[t]
-\caption{Librerie Go direttamente utilizzate dal progetto.}
-\label{tab:software}
-\centering\footnotesize
-\begin{tabularx}{\columnwidth}{@{}l l Y@{}}
-\toprule
-Libreria & Versione & Responsabilità\\
-\midrule
-Paho MQTT & 1.5.1 & Client MQTT Simulator/Edge\\
-\code{kafka-go} & 0.4.51 & Producer, consumer group e offset\\
-\code{goavro/v2} & 2.15.0 & Codifica e decodifica Avro\\
-\code{pgx/v5} & 5.10.0 & Sink PostgreSQL e pool connessioni\\
-\code{yaml.v3} & 3.0.1 & Lettura configurazioni esperimenti\\
-\bottomrule
-\end{tabularx}
-\end{table}
+\subsection{Aggregazione Edge e Cloud}
 
-La telemetria MQTT e il sink di log usano JSON. Gli aggregati, gli
-\code{EdgeWatermark} e i \code{PartitionProgress} sono record Avro binari con
-schema incorporato nei binari, senza Schema Registry o prefissi aggiuntivi;
-i marker terminali hanno payload vuoto e tipo nell'header Kafka. Avro descrive
-esplicitamente campi e tipi del record~\cite{avro};
-nel progetto producer e consumer devono condividere la stessa versione degli
-schemi. Le metriche nullable distinguono l'assenza di valori validi da un
-valore numerico nullo. I timestamp sono rappresentati come nanosecondi Unix e
-i contatori sono controllati prima della conversione da \code{uint64} a
-interi Avro con segno. Il decoder rifiuta record malformati e byte residui.
+L'elaborazione utilizza finestre tumbling basate sull'event time. Ciascun
+Edge mantiene una finestra corrente e assegna ogni evento alla finestra
+determinata dal relativo timestamp. Per ogni grandezza ambientale vengono
+mantenuti il numero di valori validi e non validi, la somma, il minimo e il
+massimo. Al momento della chiusura della finestra viene inoltre calcolata la
+media sui soli valori validi.
 
-La validazione Edge ammette temperatura fra $-40$ e $85\,{}^\circ$C, umidità
-relativa fra 0 e 100\%, pressione fra 30.000 e 110.000 Pa. Una misura
-mancante, non finita o fuori intervallo incrementa il relativo conteggio di
-invalidità senza necessariamente eliminare le altre misure dell'evento.
-Un evento con struttura o identificativi non validi è invece scartato e
-registrato nelle metriche operative.
+Le statistiche sono state scelte in modo da poter essere combinate nei
+livelli successivi senza conservare le singole osservazioni. Indicando con
+$n_j$ il numero di valori validi e con $s_j$ la loro somma nel contributo
+$j$, la combinazione di più aggregati utilizza
 
-\subsection{Code, pubblicazione e deduplica}
-Simulator ed Edge impiegano code di ingresso limitate. Quando la coda è piena,
-la nuova telemetria è scartata e il contatore di drop viene incrementato.
-Nel Simulator il pacing continua indipendentemente dalla velocità di egress.
-La telemetria MQTT usa QoS 0; l'EOS usa QoS 1 ed è accodato dopo i dati già
-accettati, attendendo il completamento della pubblicazione. All'Edge uno slot
-aggiuntivo è riservato all'EOS, che non può essere perso per saturazione della
-capacità destinata alla telemetria. La readiness del gateway diventa positiva
-soltanto dopo connessione e subscription ai topic richiesti.
+\begin{equation}
+    n = \sum_j n_j,
+    \qquad
+    s = \sum_j s_j,
+    \qquad
+    \bar{x} = \frac{s}{n}.
+\end{equation}
 
-I writer Kafka sono sincroni e richiedono gli acknowledgment del broker.
-Aggregati, watermark e marker terminale di ciascun Edge usano la stessa chiave
-e lo stesso writer: l'ultimo aggregato precede quindi \code{EdgeEndOfInput}
-nello stream della partizione. I worker accumulano, per ogni partizione, il
-massimo offset successivo elaborato e lo committano in batch configurabili,
-sempre dopo il successo di elaborazione e pubblicazione. Gli offset pendenti
-sono scaricati al termine regolare della generazione; il Global effettua il
-commit dopo elaborazione e scrittura nel sink.
+Minimo e massimo globali sono ottenuti rispettivamente come minimo e massimo
+dei contributi che contengono almeno un valore valido. In questo modo la media
+globale non viene calcolata come media delle medie locali, che produrrebbe un
+risultato errato quando gli aggregati contengono numerosità differenti.
 
-Worker e Global riconoscono i duplicati nelle finestre pendenti e conservano
-anche l'ultimo record per sorgente. Un duplicato identico non modifica lo
-stato; un duplicato conflittuale o un nuovo contributo precedente al progresso
-già certificato causa errore. Non è mantenuto uno storico illimitato. Nel
-sink PostgreSQL l'identificativo dell'aggregato è univoco e l'inserimento usa
-\code{ON CONFLICT DO NOTHING}. Queste scelte non realizzano una transazione
-atomica fra stato applicativo, output e offset.
+Le finestre Cloud hanno durata configurabile, ma devono essere un multiplo
+intero della durata delle finestre Edge. Ogni \code{EdgeAggregate} appartiene
+quindi interamente a una sola finestra Cloud. I Cloud Worker combinano gli
+aggregati ricevuti per partizione Kafka e producono un
+\code{CloudPartitionAggregate}; il Global Aggregator applica infine la stessa
+operazione di riduzione ai contributi delle diverse partizioni relativi allo
+stesso intervallo temporale.
 
-\subsection{Deployment e riproducibilità}
-\code{cmd/deploygen} genera i file Compose a partire dalla topologia e dalla
-configurazione YAML, includendo numero di partizioni, repliche Cloud e
-membership Edge richiesta dai worker. L'infrastruttura Terraform prevede
-quattro host EC2:
-Simulator, Edge, Cloud Core e Workers. Cloud Core ospita Kafka e il Global;
-l'host Workers ospita le repliche da confrontare. Più siti Edge condividono
-quindi una macchina, mentre i confini Simulator--Edge e Edge--Cloud attraversano
-host distinti. Le configurazioni predefinite indicano istanze \code{t3.small}
-per tre ruoli e \code{t3.medium} per Cloud Core; una valutazione finale deve
-riportare i valori effettivi della campagna.
+\subsection{Progresso event-time e completamento}
 
-Il profilo pilota limita ogni worker a 0,25 CPU e 128 MiB, ogni gateway a
-0,08 CPU e 64 MiB, Kafka a 1 CPU e 2.048 MiB e il Global a 0,50 CPU e 256 MiB.
-Le quote sono tetti di utilizzo, non core fisici riservati. Aumentare $W$
-aumenta il budget aggregato dei worker, ma la capacità dell'host rimane un
-vincolo. I template locali utilizzano Apache Kafka 4.3.0; il manifest delle
-immagini identifica il software effettivamente distribuito.
+La chiusura delle finestre Cloud è governata dal progresso in event time
+delle sorgenti e non da timeout in processing time. Ogni
+\code{EdgeAggregate} contiene il campo \code{CompleteThrough}, che certifica
+che l'Edge non produrrà successivamente aggregati con fine della finestra
+precedente o uguale a tale istante.
 
-\code{deploy-pilot.sh} distribuisce esplicitamente configurazione e immagini;
-\code{run-full.sh} separa l'eventuale aggiornamento Terraform dall'esecuzione,
-mentre \code{run-experiment.sh} coordina readiness, stabilizzazione del gruppo,
-avvio comune, attesa degli EOS e raccolta degli artefatti. I risultati includono
-configurazione effettiva, log, statistiche dei container e offset Kafka. Un
-collector Go dedicato legge gli offset senza entrare nei consumer group;
-le sue risorse restano separate da quelle del broker. I riepiloghi sono
-prodotti da script Python. Il notebook offline usa pandas, NumPy,
-scikit-learn, pyproj e Matplotlib; Bash, Docker Compose e Terraform supportano
-preparazione e deployment. Non è richiesto un framework di stream processing
-esterno: windowing e finalizzazione sono implementati nel codice Go.
+Quando l'arrivo di un evento determina il passaggio a una nuova finestra,
+l'Edge emette l'aggregato della finestra precedente e può avanzare
+\code{CompleteThrough} fino all'inizio della nuova finestra. In questo modo
+vengono certificate anche eventuali finestre intermedie prive di eventi.
+Gli Edge non producono infatti aggregati espliciti per le finestre vuote.
+
+Il Cloud mantiene separatamente il progresso di ciascun Edge appartenente
+alla partizione Kafka elaborata. Indicando con $C_e$ il valore
+\code{CompleteThrough} dell'Edge attivo $e$ e con $S$ il massimo disallineamento
+ammesso tra le sorgenti, la frontiera della partizione è determinata da
+
+\begin{equation}
+W_P =
+\max\left(
+    \min_{e \in E_P} C_e,\;
+    \max_{e \in E_P} C_e - S
+\right).
+\end{equation}
+
+Finché almeno un Edge attivo non ha ancora comunicato il proprio progresso,
+la frontiera non può avanzare. In condizioni normali essa coincide quindi
+con il minimo progresso degli Edge della partizione; il secondo termine
+impedisce invece che una sorgente eccessivamente in ritardo blocchi
+indefinitamente la finalizzazione delle finestre. Una finestra Cloud viene
+emessa quando il proprio estremo superiore non è successivo a $W_P$.
+
+Un aggregato relativo a una finestra già superata dalla frontiera è
+considerato \emph{late}: non modifica né riapre il risultato già emesso.
+Il progresso contenuto nel record può comunque essere utilizzato per
+aggiornare lo stato dell'Edge e consentirgli di riallinearsi alle altre
+sorgenti.
+
+Poiché il workload è ottenuto dal replay di un dataset finito, è inoltre
+necessario determinare esplicitamente la conclusione del flusso. Al termine
+del proprio replay ciascun Simulator invia un marker di fine input al
+rispettivo Edge. L'Edge pubblica l'ultima finestra ancora aperta e,
+successivamente, un \code{EdgeEndOfInput}. Quando tutti gli Edge appartenenti
+a una partizione sono terminati, il Cloud Worker emette gli eventuali
+aggregati ancora pendenti e infine un \code{PartitionEndOfReplay}.
+
+Il Global Aggregator utilizza i risultati delle partizioni insieme ai relativi
+progressi e marker terminali per distinguere un contributo non ancora arrivato
+da un contributo effettivamente assente. Una finestra globale può quindi
+essere prodotta quando, per ogni partizione sorgente, è disponibile il
+relativo aggregato oppure è stato certificato che non ne verranno prodotti
+altri per quell'intervallo. Il replay termina quando tutte le partizioni hanno
+raggiunto lo stato terminale e non rimangono finestre pendenti.
+
+\subsection{Comunicazione e affidabilità}
+
+La comunicazione tra Simulator ed Edge utilizza MQTT. Gli eventi dei sensori
+sono serializzati in JSON e pubblicati con QoS~0. JSON è stato scelto in
+questo tratto della pipeline per la semplicità della rappresentazione e per
+la facilità con cui i messaggi possono essere ispezionati durante lo sviluppo
+e il debugging. La telemetria viene inoltre prodotta con frequenza elevata:
+l'utilizzo di QoS~0 evita di attendere una conferma per ogni singola
+osservazione e permette al replay di procedere secondo il rate configurato.
+Il marker di fine replay utilizza invece QoS~1 e viene considerato completato
+soltanto dopo la ricezione del relativo PUBACK, poiché la sua perdita
+impedirebbe di determinare correttamente la terminazione della sorgente.
+
+La comunicazione tra Edge e Cloud e tra Cloud Worker e Global Aggregator è
+invece affidata ad Apache Kafka. In questo tratto i messaggi sono serializzati
+in formato Apache Avro. Rispetto al JSON, Avro fornisce una rappresentazione
+binaria più compatta e definisce esplicitamente la struttura e i tipi dei
+record scambiati, caratteristica utile per aggregati composti da numerosi
+campi numerici e temporali. Gli schemi Avro sono inclusi direttamente
+nell'applicazione e devono quindi essere condivisi in modo coerente da
+producer e consumer; non viene utilizzato uno Schema Registry.
+
+Il tipo logico di ciascun record Kafka è indicato mediante l'header
+\code{record\_type}. In questo modo lo stesso meccanismo di trasporto può
+veicolare aggregati, informazioni di progresso e marker terminali. Questi
+ultimi non richiedono dati applicativi e vengono pertanto inviati con payload
+vuoto.
+
+Gli Edge utilizzano writer Kafka sincroni con acknowledgment del broker. Gli
+aggregati appartenenti allo stesso Edge e il relativo
+\code{EdgeEndOfInput} sono scritti sulla medesima partizione; prima di
+pubblicare il marker terminale vengono completate le scritture degli aggregati
+precedenti. Analogamente, il Cloud pubblica per ciascuna partizione prima gli
+eventuali \code{CloudPartitionAggregate}, quindi il relativo
+\code{PartitionProgress} e infine, quando necessario,
+\code{PartitionEndOfReplay}. L'ordinamento permette ai consumer downstream di
+interpretare un'informazione di progresso solo dopo aver ricevuto tutti i dati
+che essa certifica.
+
+I Cloud Worker effettuano il commit degli offset Kafka solamente dopo che il
+record di input è stato elaborato e gli eventuali output sono stati pubblicati
+con successo. I commit possono essere raggruppati in batch configurabili per
+ridurne il costo; la ricezione di un marker terminale forza invece il commit
+degli offset ancora pendenti. Il Global Aggregator applica lo stesso principio,
+effettuando il commit dopo l'elaborazione e la scrittura del risultato nel
+sink.
+
+Questa strategia evita di confermare un record prima che i suoi effetti siano
+stati propagati, ma non realizza una transazione atomica end-to-end tra stato,
+output Kafka e offset di consumo. Un arresto dopo la pubblicazione dell'output
+ma prima del commit può quindi causare la rilettura di un record. Per questo
+motivo gli aggregati utilizzano identificativi deterministici e i componenti
+riconoscono i duplicati identici, mentre nel sink PostgreSQL l'identificativo
+dell'aggregato è una chiave univoca.
+
+\subsection{Deployment e piattaforma software}
+
+L'applicazione è sviluppata in Go e ciascun componente principale viene
+distribuito come container Docker. La configurazione del sistema è descritta
+tramite file YAML, dai quali il programma \code{deploygen} genera
+automaticamente i file Docker Compose necessari all'esecuzione. In questo modo
+parametri quali numero di Cloud Worker, numero di partizioni Kafka, dimensione
+delle finestre e parametri di batching possono essere modificati senza
+intervenire sul codice applicativo.
+
+Per il deployment distribuito l'infrastruttura AWS è definita mediante
+Terraform. Sono previsti quattro host EC2 con ruoli distinti: Simulator, Edge,
+Cloud Core e Workers. L'host Simulator esegue i processi di replay, l'host Edge
+ospita i broker Mosquitto e gli Edge Gateway, l'host Workers esegue le repliche
+dei Cloud Worker, mentre Cloud Core ospita Kafka e il Global Aggregator.
+La separazione consente di far attraversare realmente la rete ai flussi
+Simulator--Edge ed Edge--Cloud e di modificare indipendentemente il numero di
+worker utilizzato negli esperimenti.
+
+La persistenza dei risultati globali può essere affidata a un'istanza
+PostgreSQL gestita tramite Amazon RDS. Il database non è esposto pubblicamente
+ed è raggiungibile dal solo Cloud Core. L'infrastruttura, la configurazione
+applicativa e l'avvio degli esperimenti sono gestiti tramite script dedicati,
+in modo da rendere ripetibile la preparazione dell'ambiente e la raccolta degli
+artefatti prodotti da ogni esecuzione.
+
+Le principali librerie utilizzate dall'applicazione sono Eclipse Paho per MQTT,
+\code{kafka-go} per la comunicazione con Kafka, \code{goavro} per la
+serializzazione Avro e \code{pgx} per l'accesso a PostgreSQL. Il preprocessing
+offline del dataset è invece realizzato in Python mediante pandas,
+scikit-learn e pyproj. Non viene utilizzato un framework esterno di stream
+processing: la gestione delle finestre, dello stato e del progresso event-time
+è implementata direttamente nei componenti Go.

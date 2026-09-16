@@ -1,64 +1,94 @@
 \documentclass[conference,a4paper]{IEEEtran}
+
 \IEEEoverridecommandlockouts
+
+% ---- Lingua e codifica ----
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[italian]{babel}
+
+% ---- Matematica e riferimenti ----
 \usepackage{cite}
 \usepackage{amsmath,amssymb}
-\usepackage{placeins}
+\usepackage[hidelinks]{hyperref}
+\usepackage{url}
+
+% ---- Figure e tabelle ----
 \usepackage{graphicx}
+\usepackage{placeins}
 \usepackage{booktabs,array,tabularx}
 \usepackage{xcolor}
-\usepackage{url}
+
+% ---- Diagrammi ----
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,fit,backgrounds}
-\usepackage[hidelinks]{hyperref}
-\hypersetup{pdftitle={Continuum Simulator: monitoraggio ambientale e aggregazione distribuita Edge-Cloud},
-pdfauthor={Alessandro Vassallo},pdfsubject={Relazione progetto A2 - Bozza},
-pdfkeywords={compute continuum, Go, Kafka, Edge-Cloud, scalabilità}}
+
+% ---- Configurazione ----
 \graphicspath{{figures/}}
+
 \newcommand{\code}[1]{\texttt{#1}}
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
 \setlength{\emergencystretch}{1em}
 
-\title{Continuum Simulator: monitoraggio ambientale\\
-e aggregazione distribuita Edge--Cloud}
-\author{\IEEEauthorblockN{Alessandro Vassallo -- Matricola 0366572}
-\IEEEauthorblockA{Università degli Studi di Roma Tor Vergata\\
-Sistemi Distribuiti e Cloud Computing -- A.A. 2025/26}
-\thanks{Bozza di lavoro dell'11 settembre 2026. La campagna sperimentale di scalabilità e la valutazione delle condizioni di rete sono da completare.}}
+\hypersetup{
+    pdftitle={
+        Continuum Simulator:
+        monitoraggio ambientale e aggregazione distribuita Edge-Cloud
+    },
+    pdfauthor={Alessandro Vassallo},
+    pdfsubject={Relazione progetto A2},
+    pdfkeywords={
+        compute continuum,
+        Go,
+        Kafka,
+        Edge-Cloud,
+        scalabilità
+    }
+}
+
+% ---- Titolo ----
+\title{
+    Continuum Simulator: monitoraggio ambientale\\
+    e aggregazione distribuita Edge--Cloud
+}
+
+\author{
+    \IEEEauthorblockN{
+        Alessandro Vassallo -- Matricola 0366572
+    }
+    \IEEEauthorblockA{
+        Università degli Studi di Roma Tor Vergata\\
+        Sistemi Distribuiti e Cloud Computing -- A.A. 2025/26
+    }
+}
 
 \begin{document}
+
 \pagestyle{plain}
+
 \maketitle
 \thispagestyle{plain}
+
 \begin{abstract}
-Il monitoraggio di sensori distribuiti richiede di combinare l'elaborazione
-locale delle osservazioni con una vista complessiva delle zone monitorate.
-Questo lavoro presenta un'applicazione in Go che riproduce misure ambientali
-Sensor.Community e distribuisce la computazione tra Edge e Cloud. Tredici
-gateway validano temperatura, umidità e pressione e producono statistiche su
-finestre di cinque minuti. Nel Cloud, worker appartenenti allo stesso consumer
-group Kafka aggregano i dati su finestre di quindici minuti; un componente
-finale combina i contributi delle partizioni. L'identità degli aggregati è
-indipendente dal numero di worker, mentre watermark espliciti prodotti dagli
-Edge e marker terminali consentono di distinguere contributi assenti da
-contributi ancora attesi.
-La relazione descrive la costruzione del workload, le scelte di comunicazione,
-il deployment automatizzato e le verifiche disponibili. Le prove AWS
-preliminari conservano i conteggi degli eventi, ma non superano i controlli di
-orchestrazione; non vengono quindi utilizzate per affermare la scalabilità.
-Sono definiti il metodo per la successiva valutazione e i limiti relativi a
-perdite MQTT, stato volatile e ripristino dopo un guasto.
+Questa relazione presenta un'applicazione distribuita sviluppata in Go
+per il monitoraggio ambientale nel compute continuum. Il sistema riproduce
+misure reali derivate da Sensor.Community e distribuisce l'elaborazione
+tra livelli Edge e Cloud mediante MQTT e Apache Kafka. La soluzione adotta
+un'aggregazione gerarchica basata su finestre temporali e un livello Cloud
+scalabile orizzontalmente tramite partizionamento Kafka e consumer group.
+La valutazione sperimentale analizza il comportamento del sistema al variare
+del numero di Cloud Worker e delle condizioni di comunicazione.
 \end{abstract}
-\begin{IEEEkeywords}
-compute continuum, Edge--Cloud, Go, Kafka, aggregazione, scalabilità
-\end{IEEEkeywords}
+
+
 \input{sections/01-introduzione}
 \input{sections/02-dataset}
 \input{sections/03-architettura}
 \input{sections/04-implementazione}
 \input{sections/05-valutazione}
-\input{sections/06-limiti}
+\input{sections/06-conclusioni}
+
 \input{references}
+
 \end{document}

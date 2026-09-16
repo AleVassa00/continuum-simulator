@@ -1,6 +1,7 @@
-\subsection{Dataset e costruzione dello scenario sperimentale}
+\section{Dataset e costruzione del workload}
+\label{sec:dataset}
 
-Lo scenario sperimentale è stato costruito a partire dal dataset pubblico
+Lo scenario è stato costruito a partire dal dataset pubblico
 Sensor.Community relativo ai sensori ambientali BME280. È stata considerata
 la finestra temporale di gennaio 2025 e il dataset, di dimensione pari a circa
 6.36 GB, è stato analizzato in modo incrementale per evitare il caricamento
@@ -11,8 +12,8 @@ filtrare le osservazioni esterne alla finestra temporale e individuare i
 sensori dotati di coordinate geografiche valide. Delle variabili disponibili,
 le coordinate geografiche sono state utilizzate per la costruzione della
 topologia, mentre temperatura, umidità e pressione sono state mantenute come
-misure da riprodurre durante l'esecuzione. Le variabili \texttt{altitude} e
-\texttt{pressure\_sealevel}, completamente prive di valori, sono state
+misure da riprodurre durante l'esecuzione. Le variabili relative all'altitudine
+e alla pressione al livello del mare, completamente prive di valori, sono state
 escluse.
 
 Lo studio è stato limitato all'area europea. Per ogni sensore è stata
@@ -28,26 +29,25 @@ dall'inertia e dal raggio massimo dei cluster come indicatori diagnostici.
 La configurazione selezionata è risultata $k=13$, con Silhouette Score pari
 a circa 0.521; l'elbow method individua invece $k=9$, utilizzato solamente
 come riferimento diagnostico.
-\FloatBarrier
+
 \begin{figure}[t]
     \centering
-    \includegraphics[
-        width=\columnwidth
-    ]{figures/topologia_edge.jpg}
-    \caption{Topologia geografica della popolazione europea e centroidi dei 13 Edge Site.}
+    \includegraphics[width=\columnwidth]{figures/topologia_edge.jpg}
+    \caption{Topologia geografica della popolazione europea e centroidi dei
+    13 Edge Site.}
     \label{fig:edge-topology}
 \end{figure}
-\FloatBarrier
 
 Una volta determinata la topologia sull'intera popolazione europea, è stato
 costruito il workload sperimentale selezionando 150 sensori. I sensori sono
 stati distribuiti nel modo più uniforme possibile tra i 13 Edge Site
-(11--12 sensori per Edge). In questo modo ogni Edge partecipa in
-maniera comparabile agli esperimenti, pur mantenendo le differenze naturali
-nel rate di generazione degli eventi.
+(11--12 sensori per Edge). La selezione all'interno di ciascun Edge è stata
+effettuata senza sostituzione utilizzando un seed pseudo-casuale fissato.
+In questo modo ogni Edge partecipa in maniera comparabile agli esperimenti,
+pur mantenendo le differenze naturali nel tasso di generazione degli eventi.
 
 Infine, la fase di preprocessing produce due tipi di artefatti utilizzati
-durante l'esecuzione: il file \texttt{kmeans\_topology.csv}, che associa i
+durante l'esecuzione: il file rappresentante la topologia, che associa i
 sensori selezionati agli Edge Site, e 13 shard di replay, uno per ciascun Edge,
 contenenti identificativo del sensore, timestamp, pressione, temperatura e
 umidità.

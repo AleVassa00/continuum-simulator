@@ -20,14 +20,37 @@ def check(config, capacity):
         if int(service.get("memswap_limit", -1)) != memory:
             raise ValueError(f"{name}: memswap_limit must equal mem_limit (no swap)")
         rows.append({"container": name, "cpus": cpu, "memory_bytes": memory})
-    cpus = sum(row["cpus"] for row in rows)
-    memory = sum(row["memory_bytes"] for row in rows)
-    # Include startup-only services too: this is deliberately conservative.
-    if cpus > host_cpus - 0.25 + 1e-9:
-        raise ValueError(f"CPU ceilings {cpus:.2f} exceed host budget (reserve 0.25 CPU)")
-    if memory > host_memory - 512 * 1024**2:
-        raise ValueError("Memory ceilings exceed host budget (reserve 512 MiB)")
-    return {"host": capacity, "total_cpus": cpus, "total_memory_bytes": memory, "services": rows}
+    phases = {"runtime": [row for row in rows if row["container"] != "kafka-init"]}
+    kafka_init = next((row for row in rows if row["container"] == "kafka-init"), None)
+    if kafka_init is not None:
+        kafka = next((row for row in rows if row["container"] == "kafka"), None)
+        if kafka is None:
+            raise ValueError("kafka-init requires kafka in the same Compose file")
+        # run-experiment starts only kafka and kafka-init during bootstrap. The
+        # Global Aggregator starts after kafka-init has completed successfully.
+        phases["bootstrap"] = [kafka, kafka_init]
+
+    phase_totals = {}
+    for phase, phase_rows in phases.items():
+        cpus = sum(row["cpus"] for row in phase_rows)
+        memory = sum(row["memory_bytes"] for row in phase_rows)
+        if cpus > host_cpus - 0.25 + 1e-9:
+            raise ValueError(
+                f"{phase} CPU ceilings {cpus:.2f} exceed host budget (reserve 0.25 CPU)"
+            )
+        if memory > host_memory - 512 * 1024**2:
+            raise ValueError(
+                f"{phase} memory ceilings exceed host budget (reserve 512 MiB)"
+            )
+        phase_totals[phase] = {"cpus": cpus, "memory_bytes": memory}
+
+    return {
+        "host": capacity,
+        "total_cpus": max(total["cpus"] for total in phase_totals.values()),
+        "total_memory_bytes": max(total["memory_bytes"] for total in phase_totals.values()),
+        "phases": phase_totals,
+        "services": rows,
+    }
 
 
 def main():
