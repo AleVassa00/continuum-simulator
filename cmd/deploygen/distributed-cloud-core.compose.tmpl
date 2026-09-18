@@ -101,6 +101,7 @@ services:
       GLOBAL_POSTGRES_USER: "${GLOBAL_POSTGRES_USER:-}"
       GLOBAL_POSTGRES_PASSWORD: "${GLOBAL_POSTGRES_PASSWORD:-}"
       GLOBAL_POSTGRES_SSLMODE: "${GLOBAL_POSTGRES_SSLMODE:-verify-full}"
+      GLOBAL_MAX_PARTITION_WATERMARK_SKEW: "{{$.MaxPartitionWatermarkSkew}}"
       SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
 
     depends_on:

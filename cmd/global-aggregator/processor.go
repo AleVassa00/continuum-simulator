@@ -8,6 +8,7 @@ import (
 	"continuum/internal/model"
 	"fmt"
 	"github.com/segmentio/kafka-go"
+	"time"
 )
 
 type GlobalMessageProcessor struct{ aggregator *globalaggregator.Aggregator }
@@ -30,16 +31,20 @@ func (p *GlobalMessageProcessor) Process(ctx context.Context, message kafka.Mess
 		if a.SourcePartition != partition {
 			return false, fmt.Errorf("partial source partition differs from Kafka key")
 		}
-		return false, p.aggregator.Add(ctx, a)
-	case model.RecordTypePartitionProgress:
-		progress, err := avrocodec.DecodePartitionProgress(message.Value)
+		late, err := p.aggregator.AddWithResult(ctx, a)
 		if err != nil {
 			return false, err
 		}
-		if progress.SourcePartition != partition {
-			return false, fmt.Errorf("progress source partition differs from Kafka key")
+		if late != nil {
+			fmt.Printf("GLOBAL_LATE_PARTIAL_DROPPED source_partition=%d aggregate_id=%s events=%d window_end=%s watermark=%s\n",
+				late.Aggregate.SourcePartition,
+				late.Aggregate.AggregateID,
+				late.Aggregate.Events,
+				late.Aggregate.WindowEnd.Format(time.RFC3339Nano),
+				late.GlobalWatermark.Format(time.RFC3339Nano),
+			)
 		}
-		return false, p.aggregator.Progress(ctx, progress)
+		return false, nil
 	case model.RecordTypePartitionEndOfReplay:
 		if len(message.Value) != 0 {
 			return false, fmt.Errorf("partition EOS must have empty payload")

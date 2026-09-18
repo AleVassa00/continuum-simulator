@@ -66,10 +66,11 @@ type composeTemplateData struct {
 	KafkaPartitions         int
 	ExperimentName          string
 
-	CloudWorkers             []composeCloudWorker
-	CloudWindowSize          string
-	MaxEdgeWatermarkSkew     string
-	EdgePartitionAssignments string
+	CloudWorkers              []composeCloudWorker
+	CloudWindowSize           string
+	MaxEdgeWatermarkSkew      string
+	EdgePartitionAssignments  string
+	MaxPartitionWatermarkSkew string
 
 	Edges                         []composeEdge
 	EdgeWindowSize                string
@@ -369,6 +370,7 @@ func printExperimentSummary(output io.Writer, config experiment.EffectiveConfig,
 	fmt.Fprintf(output, "  window: %s\n\n", config.Cloud.WindowSize)
 	fmt.Fprintln(output, "Global:")
 	fmt.Fprintf(output, "  exact-window merge of %d source partitions\n", config.Kafka.ResolvedPartitions())
+	fmt.Fprintf(output, "  maximum partition watermark skew: %s\n", config.Global.ResolvedMaxPartitionWatermarkSkew())
 	fmt.Fprintf(output, "Effective config: %s\n\n", effectivePath)
 }
 
@@ -494,10 +496,11 @@ func buildCompose(edges []EdgeDeployment, config experiment.EffectiveConfig) str
 		KafkaPartitions:         config.Kafka.ResolvedPartitions(),
 		ExperimentName:          config.Experiment.Name,
 
-		CloudWorkers:             cloudWorkers,
-		CloudWindowSize:          config.Cloud.WindowSize.String(),
-		MaxEdgeWatermarkSkew:     config.Cloud.ResolvedMaxEdgeWatermarkSkew().String(),
-		EdgePartitionAssignments: edgePartitionAssignments,
+		CloudWorkers:              cloudWorkers,
+		CloudWindowSize:           config.Cloud.WindowSize.String(),
+		MaxEdgeWatermarkSkew:      config.Cloud.ResolvedMaxEdgeWatermarkSkew().String(),
+		EdgePartitionAssignments:  edgePartitionAssignments,
+		MaxPartitionWatermarkSkew: config.Global.ResolvedMaxPartitionWatermarkSkew().String(),
 
 		Edges:                         composeEdges,
 		EdgeWindowSize:                config.Edge.WindowSize.String(),
@@ -524,10 +527,11 @@ func buildDistributedComposes(edges []EdgeDeployment, config experiment.Config) 
 		KafkaPartitions:         config.Kafka.ResolvedPartitions(),
 		ExperimentName:          config.Experiment.Name,
 
-		CloudWorkers:             cloudWorkers,
-		CloudWindowSize:          config.Cloud.WindowSize.String(),
-		MaxEdgeWatermarkSkew:     config.Cloud.ResolvedMaxEdgeWatermarkSkew().String(),
-		EdgePartitionAssignments: edgePartitionAssignments,
+		CloudWorkers:              cloudWorkers,
+		CloudWindowSize:           config.Cloud.WindowSize.String(),
+		MaxEdgeWatermarkSkew:      config.Cloud.ResolvedMaxEdgeWatermarkSkew().String(),
+		EdgePartitionAssignments:  edgePartitionAssignments,
+		MaxPartitionWatermarkSkew: config.Global.ResolvedMaxPartitionWatermarkSkew().String(),
 
 		Edges:                         composeEdges,
 		EdgeWindowSize:                config.Edge.WindowSize.String(),

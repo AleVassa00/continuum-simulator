@@ -41,17 +41,16 @@ func TestEmbeddedEdgeProgressFinalizesBeforePublishingProgress(t *testing.T) {
 	if err := p.Process(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
-	if len(*wire) != 2 {
+	if len(*wire) != 1 {
 		t.Fatalf("published %d records", len(*wire))
 	}
 	first, _ := kafkautil.ParseRecordType((*wire)[0].Headers)
-	second, _ := kafkautil.ParseRecordType((*wire)[1].Headers)
-	if first != model.RecordTypeCloudPartitionAggregate || second != model.RecordTypePartitionProgress {
-		t.Fatalf("publication order: %s, %s", first, second)
+	if first != model.RecordTypeCloudPartitionAggregate {
+		t.Fatalf("publication kind: %s", first)
 	}
-	progress, err := avrocodec.DecodePartitionProgress((*wire)[1].Value)
-	if err != nil || progress.SourcePartition != partition || !progress.CompleteThrough.Equal(testEpoch.Add(15*time.Minute)) {
-		t.Fatalf("wrong progress: %+v %v", progress, err)
+	cloudAgg, err := avrocodec.DecodeCloudPartitionAggregate((*wire)[0].Value)
+	if err != nil || cloudAgg.SourcePartition != partition || !cloudAgg.CompleteThrough.Equal(testEpoch.Add(15*time.Minute)) {
+		t.Fatalf("wrong cloud partition aggregate: %+v %v", cloudAgg, err)
 	}
 }
 

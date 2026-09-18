@@ -23,5 +23,8 @@ cloud:
   workers: 1
   window_size: 15m
 
+global:
+  max_partition_watermark_skew: 720h
+
 kafka:
   partitions: 6

@@ -59,6 +59,9 @@ func TestConfiguredPartitionsReachEveryDeployment(t *testing.T) {
 						t.Fatalf("%s: wrong count", name)
 					}
 				}
+				if name == "global-aggregator" && service.Environment["GLOBAL_MAX_PARTITION_WATERMARK_SKEW"] != "720h0m0s" {
+					t.Fatal("maximum partition watermark skew lost in deployment")
+				}
 				if name == "kafka-init" {
 					initializers++
 					command := strings.Join(service.Command, "\n")

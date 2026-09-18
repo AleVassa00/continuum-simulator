@@ -39,7 +39,11 @@ func main() {
 	}
 	defer cleanup()
 
-	aggregator, err := globalaggregator.New(config.SourcePartitionCount, sink)
+	aggregator, err := globalaggregator.NewWithMaxPartitionWatermarkSkew(
+		config.SourcePartitionCount,
+		config.MaxPartitionWatermarkSkew,
+		sink,
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -57,6 +61,7 @@ func main() {
 	fmt.Printf("Input topic: %s\n", config.InputTopic)
 	fmt.Printf("Consumer group: %s\n", config.GroupID)
 	fmt.Printf("Expected source partitions: %d\n", config.SourcePartitionCount)
+	fmt.Printf("Maximum partition watermark skew: %s\n", config.MaxPartitionWatermarkSkew)
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(),

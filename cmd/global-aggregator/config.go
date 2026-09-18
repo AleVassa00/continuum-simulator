@@ -7,19 +7,22 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"continuum/internal/envutil"
+	"continuum/internal/globalaggregator"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type GlobalAggregatorConfig struct {
-	SourcePartitionCount int
-	KafkaBroker          string
-	InputTopic           string
-	GroupID              string
-	SinkType             string
-	Postgres             *pgxpool.Config
+	SourcePartitionCount      int
+	MaxPartitionWatermarkSkew time.Duration
+	KafkaBroker               string
+	InputTopic                string
+	GroupID                   string
+	SinkType                  string
+	Postgres                  *pgxpool.Config
 }
 
 func loadGlobalAggregatorConfig() (GlobalAggregatorConfig, error) {
@@ -37,6 +40,13 @@ func loadGlobalAggregatorConfig() (GlobalAggregatorConfig, error) {
 	if err != nil {
 		return GlobalAggregatorConfig{}, err
 	}
+	maxPartitionWatermarkSkew, err := time.ParseDuration(envutil.OrDefault(
+		"GLOBAL_MAX_PARTITION_WATERMARK_SKEW",
+		globalaggregator.DefaultMaxPartitionWatermarkSkew.String(),
+	))
+	if err != nil || maxPartitionWatermarkSkew <= 0 {
+		return GlobalAggregatorConfig{}, fmt.Errorf("GLOBAL_MAX_PARTITION_WATERMARK_SKEW deve essere una durata maggiore di zero")
+	}
 	sinkType := envutil.OrDefault("GLOBAL_SINK_TYPE", "log")
 	var postgres *pgxpool.Config
 	switch sinkType {
@@ -51,12 +61,13 @@ func loadGlobalAggregatorConfig() (GlobalAggregatorConfig, error) {
 	}
 
 	return GlobalAggregatorConfig{
-		SourcePartitionCount: count,
-		KafkaBroker:          kafkaBroker,
-		InputTopic:           inputTopic,
-		GroupID:              groupID,
-		SinkType:             sinkType,
-		Postgres:             postgres,
+		SourcePartitionCount:      count,
+		MaxPartitionWatermarkSkew: maxPartitionWatermarkSkew,
+		KafkaBroker:               kafkaBroker,
+		InputTopic:                inputTopic,
+		GroupID:                   groupID,
+		SinkType:                  sinkType,
+		Postgres:                  postgres,
 	}, nil
 }
 

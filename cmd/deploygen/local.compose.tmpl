@@ -109,6 +109,7 @@ services:
       KAFKA_BROKER: "kafka:29092"
       KAFKA_INPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "global-aggregator"
+      GLOBAL_MAX_PARTITION_WATERMARK_SKEW: "{{$.MaxPartitionWatermarkSkew}}"
       SOURCE_PARTITION_COUNT: "{{$.KafkaPartitions}}"
 
     depends_on:

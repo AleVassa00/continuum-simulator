@@ -2,26 +2,21 @@ package main
 
 import (
 	"context"
-	"continuum/internal/avrocodec"
 	"continuum/internal/globalaggregator"
 	"continuum/internal/model"
 	"errors"
-	"github.com/segmentio/kafka-go"
 	"testing"
 	"time"
+
+	"github.com/segmentio/kafka-go"
 )
 
 func TestGlobalAcceptsOnlyPartitionContracts(t *testing.T) {
 	a, _ := globalaggregator.New(model.DefaultSourcePartitionCount, func(context.Context, model.GlobalAggregate) error { return nil })
 	p := &GlobalMessageProcessor{aggregator: a}
-	progress := model.PartitionProgress{SourcePartition: 0, CompleteThrough: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}
-	payload, err := avrocodec.EncodePartitionProgress(progress)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, msg := range []kafka.Message{
 		{Key: []byte("edge-0"), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypeEdgeEndOfInput)}}},
-		{Key: []byte("1"), Value: payload, Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypePartitionProgress)}}},
+		{Key: []byte("1"), Value: []byte("unknown"), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte("unknown_kind")}}},
 		{Key: []byte("6"), Headers: []kafka.Header{{Key: model.RecordTypeHeader, Value: []byte(model.RecordTypePartitionEndOfReplay)}}},
 	} {
 		committed := false
@@ -51,6 +46,13 @@ func TestGlobalConfigWithoutEdgesOrTimeSettings(t *testing.T) {
 	cfg, err := loadGlobalAggregatorConfig()
 	if err != nil || cfg.InputTopic != "cloud-partition-aggregates" {
 		t.Fatalf("%+v %v", cfg, err)
+	}
+	if cfg.MaxPartitionWatermarkSkew != globalaggregator.DefaultMaxPartitionWatermarkSkew {
+		t.Fatalf("wrong default maximum partition watermark skew: %s", cfg.MaxPartitionWatermarkSkew)
+	}
+	t.Setenv("GLOBAL_MAX_PARTITION_WATERMARK_SKEW", "720h")
+	if cfg, err := loadGlobalAggregatorConfig(); err != nil || cfg.MaxPartitionWatermarkSkew != 720*time.Hour {
+		t.Fatalf("configured maximum partition watermark skew lost: %+v %v", cfg, err)
 	}
 	t.Setenv("SOURCE_PARTITION_COUNT", "0")
 	if _, err := loadGlobalAggregatorConfig(); err == nil {

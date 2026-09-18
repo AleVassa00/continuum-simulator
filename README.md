@@ -57,9 +57,10 @@ finalizzazione, contributi vuoti, EOS, deduplica e limiti di recovery.
 
 ## Contratti Kafka
 
-I payload di `EdgeAggregate`/`EdgeWatermark` su `edge-aggregates` e di
-`CloudPartitionAggregate`/`PartitionProgress` su `cloud-partition-aggregates`
-sono singoli record Apache Avro binari, senza prefissi aggiuntivi. Gli schema statici sono in
+I payload di `EdgeAggregate` su `edge-aggregates` e di
+`CloudPartitionAggregate` su `cloud-partition-aggregates`
+sono singoli record Apache Avro binari, senza prefissi aggiuntivi. Entrambi includono
+il watermark `complete_through` incorporato nel record. Gli schema statici sono in
 [`internal/avrocodec/schemas`](internal/avrocodec/schemas) e vengono incorporati
 nei binari; producer e consumer utilizzano lo stesso contratto durante ogni run.
 Le nuove esecuzioni richiedono topic e offset nuovi: i precedenti record JSON

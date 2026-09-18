@@ -29,7 +29,6 @@ type PartitionAggregator struct {
 type Output struct {
 	SourcePartition int
 	Aggregates      []model.CloudPartitionAggregate
-	Progress        *model.PartitionProgress
 	Late            *LateAggregate
 	End             bool
 }
@@ -213,7 +212,6 @@ func (a *PartitionAggregator) advance() Output {
 	}
 	if frontier.After(a.completeThrough) {
 		a.completeThrough = frontier
-		out.Progress = &model.PartitionProgress{SourcePartition: a.partition, CompleteThrough: frontier}
 	}
 	return out
 }
@@ -227,8 +225,17 @@ func (a *PartitionAggregator) flush(all bool, frontier time.Time) []model.CloudP
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].Before(keys[j]) })
 	var aggregates []model.CloudPartitionAggregate
-	for _, key := range keys {
-		aggregates = append(aggregates, a.windows[key].buildAggregate(a.partition))
+	for index, key := range keys {
+		state := a.windows[key]
+		// Publish the same ordered data/progress contract used by an Edge:
+		// each aggregate certifies at least its own window, while only the
+		// final aggregate in this flush may certify a later frontier. Earlier
+		// records must not certify windows whose aggregates are still pending.
+		through := state.end
+		if index == len(keys)-1 && frontier.After(through) {
+			through = frontier
+		}
+		aggregates = append(aggregates, state.buildAggregate(a.partition, through))
 		delete(a.windows, key)
 	}
 	return aggregates

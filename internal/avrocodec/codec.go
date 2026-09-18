@@ -17,13 +17,9 @@ var edgeSchema string
 //go:embed schemas/cloud_partition_aggregate.avsc
 var cloudSchema string
 
-//go:embed schemas/partition_progress.avsc
-var progressSchema string
-
 var (
-	progressCodec = mustCompileSchema(progressSchema)
-	edgeCodec     = mustCompileSchema(edgeSchema)
-	cloudCodec    = mustCompileSchema(cloudSchema)
+	edgeCodec  = mustCompileSchema(edgeSchema)
+	cloudCodec = mustCompileSchema(cloudSchema)
 )
 
 func mustCompileSchema(schema string) *goavro.Codec {
@@ -74,6 +70,7 @@ func EncodeCloudPartitionAggregate(aggregate model.CloudPartitionAggregate) ([]b
 		"source_partition": int64(aggregate.SourcePartition),
 		"window_start":     aggregate.WindowStart,
 		"window_end":       aggregate.WindowEnd,
+		"complete_through": aggregate.CompleteThrough,
 		"input_aggregates": aggregate.InputAggregates,
 		"events":           aggregate.Events,
 		"temperature":      aggregate.Temperature,
@@ -93,6 +90,7 @@ func DecodeCloudPartitionAggregate(payload []byte) (model.CloudPartitionAggregat
 		SourcePartition: int(record["source_partition"].(int64)),
 		WindowStart:     record["window_start"].(time.Time),
 		WindowEnd:       record["window_end"].(time.Time),
+		CompleteThrough: record["complete_through"].(time.Time),
 		InputAggregates: record["input_aggregates"].(uint64),
 		Events:          record["events"].(uint64),
 		Temperature:     record["temperature"].(model.MetricAggregate),
@@ -100,25 +98,4 @@ func DecodeCloudPartitionAggregate(payload []byte) (model.CloudPartitionAggregat
 		Pressure:        record["pressure"].(model.MetricAggregate),
 		EmittedAt:       record["emitted_at"].(time.Time),
 	}, nil
-}
-
-func EncodePartitionProgress(progress model.PartitionProgress) ([]byte, error) {
-	if err := model.ValidatePartitionProgress(progress); err != nil {
-		return nil, err
-	}
-	return encodeRecord(progressCodec, map[string]any{
-		"source_partition": int64(progress.SourcePartition),
-		"complete_through": progress.CompleteThrough,
-	})
-}
-func DecodePartitionProgress(payload []byte) (model.PartitionProgress, error) {
-	record, err := decodeRecord(progressCodec, payload)
-	if err != nil {
-		return model.PartitionProgress{}, err
-	}
-	progress := model.PartitionProgress{
-		SourcePartition: int(record["source_partition"].(int64)),
-		CompleteThrough: record["complete_through"].(time.Time),
-	}
-	return progress, model.ValidatePartitionProgress(progress)
 }

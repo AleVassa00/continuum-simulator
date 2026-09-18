@@ -28,15 +28,6 @@ func (p *CloudMessageProcessor) publishOutput(ctx context.Context, out cloudwork
 		}
 		fmt.Printf("CLOUD_WINDOW_PUBLISHED worker=%s source_partition=%d aggregate_id=%s inputs=%d events=%d topic=%s\n", p.workerID, a.SourcePartition, a.AggregateID, a.InputAggregates, a.Events, p.outputTopic)
 	}
-	if out.Progress != nil {
-		payload, err := avrocodec.EncodePartitionProgress(*out.Progress)
-		if err != nil {
-			return err
-		}
-		if err = p.publishRecord(ctx, out.SourcePartition, model.RecordTypePartitionProgress, payload); err != nil {
-			return err
-		}
-	}
 	if out.End {
 		return p.publishRecord(ctx, out.SourcePartition, model.RecordTypePartitionEndOfReplay, nil)
 	}

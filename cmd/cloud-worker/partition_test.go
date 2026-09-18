@@ -62,15 +62,6 @@ func feedGlobal(ctx context.Context, g *globalaggregator.Aggregator, m kafka.Mes
 			return fmt.Errorf("wrong source key")
 		}
 		return g.Add(ctx, a)
-	case model.RecordTypePartitionProgress:
-		progress, err := avrocodec.DecodePartitionProgress(m.Value)
-		if err != nil {
-			return err
-		}
-		if p != progress.SourcePartition {
-			return fmt.Errorf("wrong progress key")
-		}
-		return g.Progress(ctx, progress)
 	case model.RecordTypePartitionEndOfReplay:
 		_, err := g.EndPartition(ctx, p)
 		return err

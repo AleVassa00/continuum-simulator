@@ -2,6 +2,7 @@ package experiment
 
 import (
 	"continuum/internal/cloudworker"
+	"continuum/internal/globalaggregator"
 	"continuum/internal/model"
 	"crypto/sha256"
 	"encoding/hex"
@@ -63,6 +64,7 @@ type Config struct {
 	Simulator  SimulatorConfig  `yaml:"simulator"`
 	Edge       EdgeConfig       `yaml:"edge"`
 	Cloud      CloudConfig      `yaml:"cloud"`
+	Global     GlobalConfig     `yaml:"global,omitempty"`
 	Network    *NetworkConfig   `yaml:"network,omitempty"`
 }
 
@@ -129,6 +131,17 @@ type CloudConfig struct {
 	MaxEdgeWatermarkSkew    *Duration        `yaml:"max_edge_watermark_skew,omitempty"`
 	Workers                 int              `yaml:"workers"`
 	WindowSize              Duration         `yaml:"window_size"`
+}
+
+type GlobalConfig struct {
+	MaxPartitionWatermarkSkew *Duration `yaml:"max_partition_watermark_skew,omitempty"`
+}
+
+func (config GlobalConfig) ResolvedMaxPartitionWatermarkSkew() time.Duration {
+	if config.MaxPartitionWatermarkSkew != nil {
+		return config.MaxPartitionWatermarkSkew.Duration()
+	}
+	return globalaggregator.DefaultMaxPartitionWatermarkSkew
 }
 
 const NetworkRateUnlimited = NetworkRate("unlimited")
@@ -227,6 +240,7 @@ type EffectiveConfig struct {
 	Simulator  SimulatorConfig         `yaml:"simulator"`
 	Edge       EdgeConfig              `yaml:"edge"`
 	Cloud      CloudConfig             `yaml:"cloud"`
+	Global     GlobalConfig            `yaml:"global,omitempty"`
 	Network    *NetworkConfig          `yaml:"network,omitempty"`
 }
 
@@ -307,6 +321,9 @@ func (config Config) Validate() error {
 	}
 	if config.Cloud.ResolvedMaxEdgeWatermarkSkew() <= 0 {
 		return fmt.Errorf("cloud.max_edge_watermark_skew deve essere maggiore di zero")
+	}
+	if config.Global.ResolvedMaxPartitionWatermarkSkew() <= 0 {
+		return fmt.Errorf("global.max_partition_watermark_skew deve essere maggiore di zero")
 	}
 	if config.Kafka.ResolvedPartitions() <= 0 {
 		return fmt.Errorf("kafka.partitions deve essere maggiore di zero")
@@ -410,6 +427,10 @@ func ResolveDefaults(config Config) Config {
 		duration := Duration(config.Cloud.ResolvedMaxEdgeWatermarkSkew())
 		config.Cloud.MaxEdgeWatermarkSkew = &duration
 	}
+	if config.Global.MaxPartitionWatermarkSkew == nil {
+		duration := Duration(config.Global.ResolvedMaxPartitionWatermarkSkew())
+		config.Global.MaxPartitionWatermarkSkew = &duration
+	}
 	if config.Kafka.Partitions == nil {
 		count := config.Kafka.ResolvedPartitions()
 		config.Kafka.Partitions = &count
@@ -460,6 +481,7 @@ func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
 		Simulator: config.Simulator,
 		Edge:      config.Edge,
 		Cloud:     config.Cloud,
+		Global:    config.Global,
 		Network:   config.Network,
 	}
 }

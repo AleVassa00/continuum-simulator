@@ -9,6 +9,9 @@ import (
 )
 
 type GlobalAggregateSink func(context.Context, model.GlobalAggregate) error
+
+const DefaultMaxPartitionWatermarkSkew = 30 * time.Minute
+
 type partitionState struct {
 	through time.Time
 	ended   bool
@@ -17,56 +20,104 @@ type partitionState struct {
 
 // Exact-window reducer: no Edge membership, timers, or event-time window policy.
 type Aggregator struct {
-	partitions []partitionState
-	windows    map[windowKey]*windowState
-	sink       GlobalAggregateSink
-	complete   bool
+	partitions                []partitionState
+	windows                   map[windowKey]*windowState
+	sink                      GlobalAggregateSink
+	maxPartitionWatermarkSkew time.Duration
+	completeThrough           time.Time
+	complete                  bool
 }
 
 func New(count int, sink GlobalAggregateSink) (*Aggregator, error) {
+	return NewWithMaxPartitionWatermarkSkew(count, DefaultMaxPartitionWatermarkSkew, sink)
+}
+
+func NewWithMaxPartitionWatermarkSkew(count int, maxPartitionWatermarkSkew time.Duration, sink GlobalAggregateSink) (*Aggregator, error) {
 	if count <= 0 {
 		return nil, fmt.Errorf("source partition count must be positive")
+	}
+	if maxPartitionWatermarkSkew <= 0 {
+		return nil, fmt.Errorf("maximum partition watermark skew must be positive")
 	}
 	if sink == nil {
 		return nil, fmt.Errorf("Global sink is required")
 	}
-	return &Aggregator{partitions: make([]partitionState, count), windows: make(map[windowKey]*windowState), sink: sink}, nil
+	return &Aggregator{
+		partitions:                make([]partitionState, count),
+		windows:                   make(map[windowKey]*windowState),
+		sink:                      sink,
+		maxPartitionWatermarkSkew: maxPartitionWatermarkSkew,
+	}, nil
 }
+
+type LatePartitionAggregate struct {
+	Aggregate       model.CloudPartitionAggregate
+	GlobalWatermark time.Time
+}
+
 func (a *Aggregator) Add(ctx context.Context, input model.CloudPartitionAggregate) error {
+	_, err := a.AddWithResult(ctx, input)
+	return err
+}
+
+func (a *Aggregator) AddWithResult(ctx context.Context, input model.CloudPartitionAggregate) (*LatePartitionAggregate, error) {
 	if err := model.ValidateCloudPartitionAggregate(input); err != nil {
-		return err
+		return nil, err
 	}
 	if err := model.ValidateSourcePartition(input.SourcePartition, len(a.partitions)); err != nil {
-		return err
+		return nil, err
 	}
 	p := &a.partitions[input.SourcePartition]
 	key := makeWindowKey(input.WindowStart, input.WindowEnd)
 	if s := a.windows[key]; s != nil {
 		if old, ok := s.contributors[input.SourcePartition]; ok {
 			if !samePartial(old, input) {
-				return fmt.Errorf("conflicting partial %q", input.AggregateID)
+				return nil, fmt.Errorf("conflicting partial %q", input.AggregateID)
 			}
-			return a.emitReady(ctx)
+			return nil, a.emitReady(ctx)
 		}
 	}
 	if p.last != nil && p.last.AggregateID == input.AggregateID {
 		if !samePartial(*p.last, input) {
-			return fmt.Errorf("conflicting partial %q", input.AggregateID)
+			return nil, fmt.Errorf("conflicting partial %q", input.AggregateID)
 		}
-		return a.emitReady(ctx)
+		return nil, a.emitReady(ctx)
 	}
 	if p.ended || a.complete {
-		return fmt.Errorf("partition partial after EOS")
+		return nil, fmt.Errorf("partition partial after EOS")
+	}
+	// The global watermark has already finalized this window. Preserve the
+	// Cloud-level semantics: do not reopen the result, but retain monotonic
+	// progress from the late source partition.
+	if !a.completeThrough.IsZero() && !input.WindowEnd.After(a.completeThrough) {
+		if input.CompleteThrough.Before(p.through) {
+			return nil, fmt.Errorf("partition progress regressed")
+		}
+		if input.CompleteThrough.After(p.through) {
+			p.through = input.CompleteThrough.UTC()
+		}
+		if p.last == nil || !input.WindowStart.Before(p.last.WindowEnd) {
+			copy := input
+			p.last = &copy
+		}
+		a.advanceWatermark()
+		if err := a.emitReady(ctx); err != nil {
+			return nil, err
+		}
+		return &LatePartitionAggregate{Aggregate: input, GlobalWatermark: a.completeThrough}, nil
 	}
 	if !p.through.IsZero() && !input.WindowEnd.After(p.through) {
-		return fmt.Errorf("partial behind certified partition progress")
+		return nil, fmt.Errorf("partial behind certified partition progress")
+	}
+	if input.CompleteThrough.Before(p.through) {
+		return nil, fmt.Errorf("partition progress regressed")
 	}
 	if p.last != nil && input.WindowStart.Before(p.last.WindowEnd) {
-		return fmt.Errorf("out-of-order/overlapping partition partial")
+		return nil, fmt.Errorf("out-of-order/overlapping partition partial")
 	}
 	for k := range a.windows {
 		if k != key && key.start < k.end && k.start < key.end {
-			return fmt.Errorf("overlapping nonidentical Cloud windows")
+			return nil, fmt.Errorf("overlapping nonidentical Cloud windows")
 		}
 	}
 	s := a.windows[key]
@@ -77,30 +128,18 @@ func (a *Aggregator) Add(ctx context.Context, input model.CloudPartitionAggregat
 	s.add(input)
 	copy := input
 	p.last = &copy
-	return a.emitReady(ctx)
-}
-func (a *Aggregator) Progress(ctx context.Context, progress model.PartitionProgress) error {
-	if err := model.ValidatePartitionProgress(progress); err != nil {
-		return err
+	if input.CompleteThrough.After(p.through) {
+		p.through = input.CompleteThrough.UTC()
 	}
-	if err := model.ValidateSourcePartition(progress.SourcePartition, len(a.partitions)); err != nil {
-		return err
-	}
-	p := &a.partitions[progress.SourcePartition]
-	if p.ended {
-		return fmt.Errorf("partition progress after EOS")
-	}
-	if progress.CompleteThrough.Before(p.through) {
-		return fmt.Errorf("partition progress regressed")
-	}
-	p.through = progress.CompleteThrough.UTC()
-	return a.emitReady(ctx)
+	a.advanceWatermark()
+	return nil, a.emitReady(ctx)
 }
 func (a *Aggregator) EndPartition(ctx context.Context, partition int) (bool, error) {
 	if err := model.ValidateSourcePartition(partition, len(a.partitions)); err != nil {
 		return false, err
 	}
 	a.partitions[partition].ended = true
+	a.advanceWatermark()
 	if err := a.emitReady(ctx); err != nil {
 		return false, err
 	}
@@ -116,13 +155,46 @@ func (a *Aggregator) EndPartition(ctx context.Context, partition int) (bool, err
 	return true, nil
 }
 func (a *Aggregator) IsComplete() bool { return a.complete }
+
+func (a *Aggregator) advanceWatermark() {
+	var minimum, maximum time.Time
+	active := false
+	for _, partition := range a.partitions {
+		if partition.ended {
+			continue
+		}
+		active = true
+		if partition.through.IsZero() {
+			return
+		}
+		if minimum.IsZero() || partition.through.Before(minimum) {
+			minimum = partition.through
+		}
+		if maximum.IsZero() || partition.through.After(maximum) {
+			maximum = partition.through
+		}
+	}
+	if !active {
+		return
+	}
+	frontier := minimum
+	boundedFrontier := maximum.Add(-a.maxPartitionWatermarkSkew)
+	if boundedFrontier.After(frontier) {
+		frontier = boundedFrontier
+	}
+	if frontier.After(a.completeThrough) {
+		a.completeThrough = frontier
+	}
+}
+
 func (a *Aggregator) emitReady(ctx context.Context) error {
 	for _, key := range a.sortedOpenWindowKeys() {
 		s := a.windows[key]
 		ready := true
 		for id, p := range a.partitions {
 			_, contributed := s.contributors[id]
-			if !contributed && !p.ended && (p.through.IsZero() || p.through.Before(s.end)) {
+			globallyComplete := !a.completeThrough.IsZero() && !a.completeThrough.Before(s.end)
+			if !contributed && !p.ended && !globallyComplete && (p.through.IsZero() || p.through.Before(s.end)) {
 				ready = false
 				break
 			}
@@ -149,5 +221,7 @@ func samePartial(a, b model.CloudPartitionAggregate) bool {
 	b.WindowStart = b.WindowStart.UTC()
 	a.WindowEnd = a.WindowEnd.UTC()
 	b.WindowEnd = b.WindowEnd.UTC()
+	a.CompleteThrough = a.CompleteThrough.UTC()
+	b.CompleteThrough = b.CompleteThrough.UTC()
 	return reflect.DeepEqual(a, b)
 }

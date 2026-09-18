@@ -76,8 +76,11 @@ func TestGeneratedCloudGlobalContractsAllWorkerCounts(t *testing.T) {
 						if env["SOURCE_PARTITION_COUNT"] != "6" || env["KAFKA_INPUT_TOPIC"] != "cloud-partition-aggregates" {
 							t.Fatalf("Global config: %v", env)
 						}
+						if env["GLOBAL_MAX_PARTITION_WATERMARK_SKEW"] != "720h0m0s" {
+							t.Fatalf("Global watermark config: %v", env)
+						}
 						for key := range env {
-							if strings.Contains(key, "EDGE") || strings.Contains(key, "WATERMARK") || strings.Contains(key, "WINDOW_SIZE") {
+							if strings.Contains(key, "EDGE") || strings.Contains(key, "WINDOW_SIZE") {
 								t.Fatalf("Global knows Edge or window policy: %s", key)
 							}
 						}

@@ -49,28 +49,25 @@ func ValidateCloudPartitionAggregate(a CloudPartitionAggregate) error {
 		return fmt.Errorf("invalid partition partial timestamps")
 	}
 
+	if a.CompleteThrough.IsZero() || a.CompleteThrough.Before(a.WindowEnd) {
+		return fmt.Errorf("complete_through %s precede la fine della finestra %s",
+			a.CompleteThrough.Format(time.RFC3339),
+			a.WindowEnd.Format(time.RFC3339),
+		)
+	}
+
 	if a.AggregateID != PartitionAggregateID(a.SourcePartition, a.WindowStart, a.WindowEnd) {
 		return fmt.Errorf("partial ID does not match source partition and window")
 	}
 
 	if a.InputAggregates == 0 || a.Events == 0 {
-		return fmt.Errorf("empty partial: use partition progress instead")
+		return fmt.Errorf("empty partial")
 	}
 
 	for name, metric := range map[string]MetricAggregate{"temperature": a.Temperature, "humidity": a.Humidity, "pressure": a.Pressure} {
 		if err := ValidateMetricAggregate(name, a.Events, metric); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func ValidatePartitionProgress(p PartitionProgress) error {
-	if p.SourcePartition < 0 {
-		return fmt.Errorf("negative source partition %d", p.SourcePartition)
-	}
-	if p.CompleteThrough.IsZero() {
-		return fmt.Errorf("partition progress without complete_through")
 	}
 	return nil
 }

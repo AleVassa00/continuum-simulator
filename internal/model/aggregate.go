@@ -39,6 +39,9 @@ type CloudPartitionAggregate struct {
 
 	WindowStart time.Time
 	WindowEnd   time.Time
+	// CompleteThrough certifies that this partition will not subsequently publish
+	// an aggregate whose WindowEnd is at or before this event-time frontier.
+	CompleteThrough time.Time
 
 	InputAggregates uint64
 
@@ -67,12 +70,4 @@ type GlobalAggregate struct {
 	Pressure    MetricAggregate
 
 	EmittedAt time.Time
-}
-
-// PartitionProgress certifies that all accepted nonempty partials ending at or
-// before CompleteThrough have already been published on the same ordered output
-// stream. The frontier is monotonic and may apply the configured maximum skew.
-type PartitionProgress struct {
-	SourcePartition int
-	CompleteThrough time.Time
 }

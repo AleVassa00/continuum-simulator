@@ -15,7 +15,7 @@ func partial(p int, start time.Time) model.CloudPartitionAggregate {
 	v := float64(p + 1)
 	n := uint64(p + 1)
 	m := model.MetricAggregate{Valid: n, Sum: v * float64(n), Average: &v, Min: &v, Max: &v}
-	return model.CloudPartitionAggregate{SourcePartition: p, AggregateID: model.PartitionAggregateID(p, start, end), WindowStart: start, WindowEnd: end, InputAggregates: 1, Events: n, Temperature: m, Humidity: m, Pressure: m, EmittedAt: testStart}
+	return model.CloudPartitionAggregate{SourcePartition: p, AggregateID: model.PartitionAggregateID(p, start, end), WindowStart: start, WindowEnd: end, CompleteThrough: end, InputAggregates: 1, Events: n, Temperature: m, Humidity: m, Pressure: m, EmittedAt: testStart}
 }
 func TestOnlyCertifiedPartitionCompleteness(t *testing.T) {
 	ctx := context.Background()
@@ -29,14 +29,9 @@ func TestOnlyCertifiedPartitionCompleteness(t *testing.T) {
 	if len(outputs) != 0 {
 		t.Fatal("five partials cannot complete six partitions")
 	}
-	// No clock call exists. An insufficient certificate also cannot finalize.
-	if err := a.Progress(ctx, model.PartitionProgress{SourcePartition: 5, CompleteThrough: testStart}); err != nil {
-		t.Fatal(err)
-	}
-	if len(outputs) != 0 {
-		t.Fatal("insufficient progress finalized window")
-	}
-	if err := a.Progress(ctx, model.PartitionProgress{SourcePartition: 5, CompleteThrough: testStart.Add(15 * time.Minute)}); err != nil {
+	// Partition 5 sends a partial for a later window, advancing its CompleteThrough
+	p5Next := partial(5, testStart.Add(15*time.Minute))
+	if err := a.Add(ctx, p5Next); err != nil {
 		t.Fatal(err)
 	}
 	if len(outputs) != 1 || outputs[0].Events != 15 || outputs[0].ContributingPartitions != 6 {
@@ -44,6 +39,36 @@ func TestOnlyCertifiedPartitionCompleteness(t *testing.T) {
 	}
 	if err := a.Add(ctx, partial(5, testStart)); err == nil {
 		t.Fatal("data after progress accepted")
+	}
+}
+
+func TestMaximumPartitionSkewAdvancesGlobalWatermarkAndDropsLatePartial(t *testing.T) {
+	ctx := context.Background()
+	var outputs []model.GlobalAggregate
+	a, err := NewWithMaxPartitionWatermarkSkew(2, 15*time.Minute, func(_ context.Context, out model.GlobalAggregate) error {
+		outputs = append(outputs, out)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Add(ctx, partial(0, testStart)); err != nil {
+		t.Fatal(err)
+	}
+	second := partial(0, testStart.Add(15*time.Minute))
+	second.CompleteThrough = testStart.Add(45 * time.Minute)
+	if err := a.Add(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Add(ctx, partial(1, testStart)); err != nil {
+		t.Fatal(err)
+	}
+	if len(outputs) != 2 || !a.completeThrough.Equal(testStart.Add(30*time.Minute)) {
+		t.Fatalf("bounded global watermark did not advance: outputs=%d watermark=%s", len(outputs), a.completeThrough)
+	}
+	late, err := a.AddWithResult(ctx, partial(1, testStart.Add(15*time.Minute)))
+	if err != nil || late == nil || late.Aggregate.SourcePartition != 1 {
+		t.Fatalf("late partial not dropped explicitly: %+v %v", late, err)
 	}
 }
 func TestNoWindowPolicyAndNoTimeout(t *testing.T) {

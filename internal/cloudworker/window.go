@@ -23,10 +23,10 @@ func (s *cloudWindowState) add(a model.EdgeAggregate) {
 	s.humidity.add(a.Humidity)
 	s.pressure.add(a.Pressure)
 }
-func (s *cloudWindowState) buildAggregate(partition int) model.CloudPartitionAggregate {
+func (s *cloudWindowState) buildAggregate(partition int, completeThrough time.Time) model.CloudPartitionAggregate {
 	return model.CloudPartitionAggregate{
 		AggregateID: model.PartitionAggregateID(partition, s.start, s.end), SourcePartition: partition,
-		WindowStart: s.start, WindowEnd: s.end, InputAggregates: uint64(len(s.inputs)), Events: s.events,
+		WindowStart: s.start, WindowEnd: s.end, CompleteThrough: completeThrough, InputAggregates: uint64(len(s.inputs)), Events: s.events,
 		Temperature: s.temperature.buildAggregate(), Humidity: s.humidity.buildAggregate(), Pressure: s.pressure.buildAggregate(), EmittedAt: time.Now().UTC(),
 	}
 }

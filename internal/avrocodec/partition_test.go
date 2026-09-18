@@ -11,7 +11,7 @@ import (
 func TestPartitionAvroRoundTripAndMalformedPayloads(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 123, time.UTC)
 	end := start.Add(15 * time.Minute)
-	a := model.CloudPartitionAggregate{SourcePartition: 5, WindowStart: start, WindowEnd: end, AggregateID: model.PartitionAggregateID(5, start, end), InputAggregates: 3, Events: 2, Temperature: model.MetricAggregate{Invalid: 2}, Humidity: model.MetricAggregate{Invalid: 2}, Pressure: model.MetricAggregate{Invalid: 2}, EmittedAt: end}
+	a := model.CloudPartitionAggregate{SourcePartition: 5, WindowStart: start, WindowEnd: end, CompleteThrough: end, AggregateID: model.PartitionAggregateID(5, start, end), InputAggregates: 3, Events: 2, Temperature: model.MetricAggregate{Invalid: 2}, Humidity: model.MetricAggregate{Invalid: 2}, Pressure: model.MetricAggregate{Invalid: 2}, EmittedAt: end}
 	payload, err := EncodeCloudPartitionAggregate(a)
 	if err != nil {
 		t.Fatal(err)
@@ -31,17 +31,5 @@ func TestPartitionAvroRoundTripAndMalformedPayloads(t *testing.T) {
 	a.Events = math.MaxUint64
 	if _, err := EncodeCloudPartitionAggregate(a); err == nil {
 		t.Fatal("overflow accepted")
-	}
-	progress := model.PartitionProgress{SourcePartition: 3, CompleteThrough: end}
-	payload, err = EncodePartitionProgress(progress)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := DecodePartitionProgress(payload)
-	if err != nil || !reflect.DeepEqual(decoded, progress) {
-		t.Fatal("progress roundtrip")
-	}
-	if _, err := DecodePartitionProgress(append(payload, 0)); err == nil {
-		t.Fatal("progress suffix accepted")
 	}
 }

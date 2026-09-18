@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"continuum/internal/cloudworker"
+	"continuum/internal/globalaggregator"
 )
 
 const configFixture = `experiment:
@@ -25,7 +26,7 @@ cloud:
 
 func TestConsumerCommitBatchSizeConfig(t *testing.T) {
 	base, err := Decode(strings.NewReader(configFixture))
-	if err != nil || base.Cloud.ResolvedConsumerCommitBatchSize() != 1 || base.Cloud.ResolvedMaxEdgeWatermarkSkew() != cloudworker.DefaultMaxEdgeWatermarkSkew {
+	if err != nil || base.Cloud.ResolvedConsumerCommitBatchSize() != 1 || base.Cloud.ResolvedMaxEdgeWatermarkSkew() != cloudworker.DefaultMaxEdgeWatermarkSkew || base.Global.ResolvedMaxPartitionWatermarkSkew() != globalaggregator.DefaultMaxPartitionWatermarkSkew {
 		t.Fatalf("default: %+v %v", base, err)
 	}
 	for _, value := range []string{"0", "-1", "1.5", "bad"} {
@@ -50,6 +51,19 @@ func TestConsumerCommitBatchSizeConfig(t *testing.T) {
 		b, _ := Fingerprint(cfg)
 		if (a == b) != (value == "1") {
 			t.Fatal("batch size not reflected in fingerprint")
+		}
+	}
+}
+
+func TestGlobalWatermarkSkewConfig(t *testing.T) {
+	configured := configFixture + "global:\n  max_partition_watermark_skew: 720h\n"
+	cfg, err := Decode(strings.NewReader(configured))
+	if err != nil || cfg.Global.ResolvedMaxPartitionWatermarkSkew() != 720*time.Hour {
+		t.Fatalf("configured: %+v %v", cfg.Global, err)
+	}
+	for _, value := range []string{"0s", "-1s", "bad"} {
+		if _, err := Decode(strings.NewReader(configFixture + "global:\n  max_partition_watermark_skew: " + value + "\n")); err == nil {
+			t.Fatalf("accepted %q", value)
 		}
 	}
 }

@@ -38,18 +38,18 @@ func add(t *testing.T, a *PartitionAggregator, input model.EdgeAggregate) Output
 func TestPartitionWatermarkUsesMinimumEdgeProgress(t *testing.T) {
 	a := newAggregator(t, "fast", "slow")
 	for minute := 0; minute < 15; minute += 5 {
-		if out := add(t, a, fixtureEdge("fast", minute)); out.Progress != nil || len(out.Aggregates) != 0 {
+		if out := add(t, a, fixtureEdge("fast", minute)); len(out.Aggregates) != 0 {
 			t.Fatalf("one Edge certified the partition: %+v", out)
 		}
 	}
-	if out := add(t, a, fixtureEdge("slow", 0)); out.Progress == nil || !out.Progress.CompleteThrough.Equal(epoch.Add(5*time.Minute)) || len(out.Aggregates) != 0 {
-		t.Fatalf("wrong minimum watermark: %+v", out)
+	if out := add(t, a, fixtureEdge("slow", 0)); len(out.Aggregates) != 0 {
+		t.Fatalf("early window finalized: %+v", out)
 	}
-	if out := add(t, a, fixtureEdge("slow", 5)); out.Progress == nil || !out.Progress.CompleteThrough.Equal(epoch.Add(10*time.Minute)) || len(out.Aggregates) != 0 {
-		t.Fatalf("wrong minimum watermark: %+v", out)
+	if out := add(t, a, fixtureEdge("slow", 5)); len(out.Aggregates) != 0 {
+		t.Fatalf("early window finalized: %+v", out)
 	}
 	out := add(t, a, fixtureEdge("slow", 10))
-	if out.Progress == nil || !out.Progress.CompleteThrough.Equal(epoch.Add(15*time.Minute)) || len(out.Aggregates) != 1 || out.Aggregates[0].InputAggregates != 6 {
+	if len(out.Aggregates) != 1 || out.Aggregates[0].InputAggregates != 6 || !out.Aggregates[0].CompleteThrough.Equal(epoch.Add(15*time.Minute)) {
 		t.Fatalf("window not finalized by minimum watermark: %+v", out)
 	}
 	if len(a.windows) != 0 {
@@ -64,15 +64,33 @@ func TestEndedEdgeStopsHoldingBackPartition(t *testing.T) {
 	add(t, a, fast)
 	add(t, a, fixtureEdge("slow", 0))
 	out, err := a.EndEdge(0, "slow")
-	if err != nil || out.Progress == nil || !out.Progress.CompleteThrough.Equal(epoch.Add(30*time.Minute)) || len(out.Aggregates) != 1 || out.End {
+	if err != nil || len(out.Aggregates) != 1 || !out.Aggregates[0].CompleteThrough.Equal(epoch.Add(30*time.Minute)) || out.End {
 		t.Fatalf("completed Edge still held frontier: %+v %v", out, err)
 	}
 	out, err = a.EndEdge(0, "fast")
-	if err != nil || !out.End || out.Progress != nil || len(out.Aggregates) != 0 || !a.ended {
+	if err != nil || !out.End || len(out.Aggregates) != 0 || !a.ended {
 		t.Fatalf("partition did not terminate: %+v %v", out, err)
 	}
 	if duplicate, err := a.EndEdge(0, "fast"); err != nil || duplicate.End {
 		t.Fatalf("duplicate Edge end changed output: %+v %v", duplicate, err)
+	}
+}
+
+func TestFrontierJumpCertifiesFlushedWindowsInPublicationOrder(t *testing.T) {
+	a := newAggregator(t, "fast", "slow")
+	for minute := 0; minute < 30; minute += 5 {
+		add(t, a, fixtureEdge("fast", minute))
+	}
+	add(t, a, fixtureEdge("slow", 0))
+	out, err := a.EndEdge(0, "slow")
+	if err != nil || out.End || len(out.Aggregates) != 2 {
+		t.Fatalf("frontier jump: %+v %v", out, err)
+	}
+	for index, aggregate := range out.Aggregates {
+		expected := epoch.Add(time.Duration(index+1) * 15 * time.Minute)
+		if !aggregate.WindowEnd.Equal(expected) || !aggregate.CompleteThrough.Equal(expected) {
+			t.Fatalf("aggregate %d certified unpublished data: %+v", index, aggregate)
+		}
 	}
 }
 
@@ -132,7 +150,7 @@ func TestMaximumSkewAdvancesWatermarkAndDropsLateAggregate(t *testing.T) {
 	fast.CompleteThrough = epoch.Add(30 * time.Minute)
 	add(t, a, fast)
 	out := add(t, a, fixtureEdge("slow", 0))
-	if out.Progress == nil || !out.Progress.CompleteThrough.Equal(epoch.Add(20*time.Minute)) || len(out.Aggregates) != 1 {
+	if len(out.Aggregates) != 1 || !out.Aggregates[0].CompleteThrough.Equal(epoch.Add(20*time.Minute)) {
 		t.Fatalf("bounded watermark did not advance: %+v", out)
 	}
 	late := add(t, a, fixtureEdge("slow", 5))
@@ -147,7 +165,7 @@ func TestPendingDuplicateIsIdempotent(t *testing.T) {
 	add(t, a, input)
 	retry := input
 	retry.EmittedAt = epoch.Add(time.Hour)
-	if out := add(t, a, retry); out.Progress != nil || len(out.Aggregates) != 0 {
+	if out := add(t, a, retry); len(out.Aggregates) != 0 {
 		t.Fatalf("duplicate changed output: %+v", out)
 	}
 	conflict := input

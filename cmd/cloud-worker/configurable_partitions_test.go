@@ -9,6 +9,7 @@ import (
 	"continuum/internal/cloudworker"
 	"continuum/internal/globalaggregator"
 	"continuum/internal/model"
+	"time"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -78,8 +79,23 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 			if _, err := g.EndPartition(ctx, count); err == nil {
 				t.Fatal("out-of-range EOS accepted")
 			}
-			if err := g.Progress(ctx, model.PartitionProgress{SourcePartition: count, CompleteThrough: testEpoch}); err == nil {
-				t.Fatal("out-of-range progress accepted")
+			start := testEpoch
+			end := start.Add(15 * time.Minute)
+			badPartial := model.CloudPartitionAggregate{
+				SourcePartition: count,
+				AggregateID:     model.PartitionAggregateID(count, start, end),
+				WindowStart:     start,
+				WindowEnd:       end,
+				CompleteThrough: end,
+				InputAggregates: 1,
+				Events:          1,
+				Temperature:     model.MetricAggregate{Valid: 1},
+				Humidity:        model.MetricAggregate{Valid: 1},
+				Pressure:        model.MetricAggregate{Valid: 1},
+				EmittedAt:       end,
+			}
+			if err := g.Add(ctx, badPartial); err == nil {
+				t.Fatal("out-of-range partial accepted")
 			}
 			if _, err := cloudworker.NewPartitionAggregator(count, count, nil, cloudworker.DefaultWindowSize, cloudworker.DefaultMaxEdgeWatermarkSkew); err == nil {
 				t.Fatal("out-of-range owner accepted")
