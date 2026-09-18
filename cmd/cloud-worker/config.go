@@ -16,6 +16,7 @@ type CloudWorkerConfig struct {
 	SourcePartitionCount    int
 	Membership              map[int][]string
 	KafkaBroker             string
+	KafkaOutputBroker       string
 	InputTopic              string
 	OutputTopic             string
 	GroupID                 string
@@ -26,6 +27,7 @@ type CloudWorkerConfig struct {
 
 func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 	kafkaBroker := envutil.Required("KAFKA_BROKER")
+	kafkaOutputBroker := envutil.OrDefault("KAFKA_OUTPUT_BROKER", kafkaBroker)
 
 	inputTopic := loadInputTopic()
 	outputTopic := envutil.OrDefault("KAFKA_OUTPUT_TOPIC", "cloud-partition-aggregates")
@@ -65,6 +67,7 @@ func loadCloudWorkerConfig() (CloudWorkerConfig, error) {
 		SourcePartitionCount:    count,
 		Membership:              membership,
 		KafkaBroker:             kafkaBroker,
+		KafkaOutputBroker:       kafkaOutputBroker,
 		InputTopic:              inputTopic,
 		OutputTopic:             outputTopic,
 		GroupID:                 groupID,

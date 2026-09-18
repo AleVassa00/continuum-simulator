@@ -40,7 +40,9 @@ ADDRESSES_LOADED="false"
 METRICS_STARTED="false"
 KAFKA_METRICS_STARTED="false"
 NETWORK_ENABLED="false"
-NETWORK_CONFIG_JSON='{"enabled":false,"simulator_to_edge":{"enabled":false,"delay":"0s","rate":"unlimited"},"edge_to_kafka":{"enabled":false,"delay":"0s","rate":"unlimited"}}'
+NETWORK_CONFIG_JSON='{"enabled":false,"simulator_to_edge":{"enabled":false,"delay":"0s","rate":"unlimited"},"edge_to_kafka":{"enabled":false,"delay":"0s","rate":"unlimited"},"cloud_to_global":{"enabled":false,"delay":"0s","rate":"unlimited"}}'
+EDGE_TO_KAFKA_CONTAINERS=""
+CLOUD_TO_GLOBAL_CONTAINERS=""
 
 validate_positive_integer() {
   local name="$1"
@@ -415,20 +417,84 @@ clear_netem() {
   local phase="$1"
   local status=0
   local output="${ARTIFACT_DIR}/netem/${phase}-cleanup.log"
+  local role containers
 
   : >"${output}"
-  if ! run_netem_helper simulator clear simulator-edge- 13 >>"${output}" 2>&1; then
-    status=1
-  fi
-  if ! run_netem_helper edge clear edge- 13 >>"${output}" 2>&1; then
-    status=1
-  fi
+  for role in simulator edge workers; do
+    containers="$(ssh_run "${PUBLIC_IPS[${role}]}" 'docker ps -a --format "{{.Names}}"' 2>/dev/null |
+      awk '/^(simulator-edge|edge|cloud-worker)-[0-9]+$/' | sort -V | paste -sd, - || true)"
+    [[ -n "${containers}" ]] || continue
+    if ! run_netem_helper "${role}" clear "${containers}" >>"${output}" 2>&1; then
+      status=1
+    fi
+  done
   return "${status}"
+}
+
+all_simulator_containers() {
+  local result=""
+  local edge_number
+  for edge_number in $(seq 0 12); do
+    result+="${result:+,}simulator-edge-${edge_number}"
+  done
+  printf '%s\n' "${result}"
+}
+
+resolve_netem_targets() {
+  local mapping
+
+  [[ "${NETWORK_ENABLED}" == "true" ]] || return 0
+  EDGE_TO_KAFKA_CONTAINERS="$(jq -er '.edge_to_kafka.edge_ids // [] | join(",")' <<<"${NETWORK_CONFIG_JSON}")"
+
+  if [[ "$(jq -r '.cloud_to_global.enabled' <<<"${NETWORK_CONFIG_JSON}")" == "true" ]]; then
+    local partitions
+    partitions="$(jq -er '.cloud_to_global.source_partitions | join(",")' <<<"${NETWORK_CONFIG_JSON}")"
+    mapping="$(ssh_run "${PUBLIC_IPS[workers]}" bash -s -- "${WORKER_COUNT}" "${partitions}" <<'REMOTE'
+set -euo pipefail
+worker_count="$1"
+IFS=',' read -r -a partitions <<<"$2"
+assignment_lines=""
+for ((worker_number = 0; worker_number < worker_count; worker_number++)); do
+  container="cloud-worker-${worker_number}"
+  lines="$(docker logs "${container}" 2>&1 | grep '^CLOUD_ASSIGNMENT ' || true)"
+  assignment_lines+="${assignment_lines:+$'\n'}${lines}"
+done
+max_generation="$(awk '{for (i=1;i<=NF;i++) if ($i ~ /^generation=/) {split($i,a,"="); print a[2]}}' <<<"${assignment_lines}" |
+  sort -n | tail -n 1)"
+[[ "${max_generation}" =~ ^[0-9]+$ ]] || {
+  echo "nessuna generation Cloud assegnata" >&2
+  exit 1
+}
+for partition in "${partitions[@]}"; do
+  mapfile -t owners < <(awk -v generation="${max_generation}" -v partition="${partition}" '
+    $0 ~ ("generation=" generation " ") && $0 ~ ("source_partition=" partition "([[:space:]]|$)") {
+      for (i=1;i<=NF;i++) if ($i ~ /^worker=/) {split($i,a,"="); print a[2]}
+    }' <<<"${assignment_lines}" | sort -u)
+  if ((${#owners[@]} != 1)); then
+    echo "source partition ${partition}: owner nella generation ${max_generation} trovati=${#owners[@]}, atteso=1" >&2
+    exit 1
+  fi
+  printf '%s\t%s\n' "${partition}" "${owners[0]}"
+done
+REMOTE
+)" || die "impossibile risolvere i Cloud Worker proprietari delle source partition selezionate"
+    CLOUD_TO_GLOBAL_CONTAINERS="$(awk -F $'\t' '!seen[$2]++ {values[++count]=$2} END {for (i=1;i<=count;i++) printf "%s%s", (i>1 ? "," : ""), values[i]}' <<<"${mapping}")"
+  fi
+
+  {
+    printf 'link\tlogical_source\tcontainer\n'
+    if [[ -n "${EDGE_TO_KAFKA_CONTAINERS}" ]]; then
+      tr ',' '\n' <<<"${EDGE_TO_KAFKA_CONTAINERS}" | awk '{printf "edge_to_kafka\t%s\t%s\n", $0, $0}'
+    fi
+    if [[ -n "${mapping:-}" ]]; then
+      awk -F $'\t' '{printf "cloud_to_global\tsource_partition=%s\t%s\n", $1, $2}' <<<"${mapping}"
+    fi
+  } >"${ARTIFACT_DIR}/netem/resolved-targets.tsv"
 }
 
 apply_netem_link() {
   local link="$1"
-  local role prefix target_environment delay rate
+  local role containers target_environment delay rate
 
   [[ "$(jq -r --arg link "${link}" '.[$link].enabled' <<<"${NETWORK_CONFIG_JSON}")" == "true" ]] || return 0
   delay="$(jq -er --arg link "${link}" '.[$link].delay' <<<"${NETWORK_CONFIG_JSON}")"
@@ -437,21 +503,27 @@ apply_netem_link() {
   case "${link}" in
     simulator_to_edge)
       role="simulator"
-      prefix="simulator-edge-"
+      containers="$(all_simulator_containers)"
       target_environment="MQTT_ENDPOINT"
       ;;
     edge_to_kafka)
       role="edge"
-      prefix="edge-"
+      containers="${EDGE_TO_KAFKA_CONTAINERS}"
       target_environment="KAFKA_BROKER"
+      ;;
+    cloud_to_global)
+      role="workers"
+      containers="${CLOUD_TO_GLOBAL_CONTAINERS}"
+      target_environment="KAFKA_OUTPUT_BROKER"
       ;;
     *) die "collegamento netem non supportato: ${link}" ;;
   esac
+  [[ -n "${containers}" ]] || die "nessun container risolto per ${link}"
 
-  run_netem_helper "${role}" apply "${prefix}" 13 "${delay}" "${rate}" "${target_environment}" \
+  run_netem_helper "${role}" apply "${containers}" "${delay}" "${rate}" "${target_environment}" \
     >"${ARTIFACT_DIR}/netem/${link}-applied.tsv" ||
     die "applicazione netem fallita per ${link}"
-  run_netem_helper "${role}" show "${prefix}" 13 \
+  run_netem_helper "${role}" show "${containers}" \
     >"${ARTIFACT_DIR}/netem/${link}-verified.txt" ||
     die "verifica netem fallita per ${link}"
 }
@@ -461,40 +533,43 @@ apply_netem() {
   log "applicazione dei profili tc-netem nelle namespace dei container"
   apply_netem_link simulator_to_edge
   apply_netem_link edge_to_kafka
+  apply_netem_link cloud_to_global
 }
 
 capture_netem_snapshot() {
   local phase="$1"
-  local link role prefix
+  local link role containers
 
-  for link in simulator_to_edge edge_to_kafka; do
+  for link in simulator_to_edge edge_to_kafka cloud_to_global; do
     [[ "$(jq -r --arg link "${link}" '.[$link].enabled' <<<"${NETWORK_CONFIG_JSON}")" == "true" ]] || continue
     case "${link}" in
-      simulator_to_edge) role="simulator"; prefix="simulator-edge-" ;;
-      edge_to_kafka) role="edge"; prefix="edge-" ;;
+      simulator_to_edge) role="simulator"; containers="$(all_simulator_containers)" ;;
+      edge_to_kafka) role="edge"; containers="${EDGE_TO_KAFKA_CONTAINERS}" ;;
+      cloud_to_global) role="workers"; containers="${CLOUD_TO_GLOBAL_CONTAINERS}" ;;
     esac
-    run_netem_helper "${role}" snapshot "${prefix}" 13 \
+    run_netem_helper "${role}" snapshot "${containers}" \
       >"${ARTIFACT_DIR}/netem/${link}-${phase}.txt"
   done
 }
 
 start_netem_metric_collectors() {
-  local link role prefix output pid
+  local link role containers output pid
 
   [[ "${NETWORK_ENABLED}" == "true" ]] || return 0
-  for link in simulator_to_edge edge_to_kafka; do
+  for link in simulator_to_edge edge_to_kafka cloud_to_global; do
     [[ "$(jq -r --arg link "${link}" '.[$link].enabled' <<<"${NETWORK_CONFIG_JSON}")" == "true" ]] || continue
     case "${link}" in
-      simulator_to_edge) role="simulator"; prefix="simulator-edge-" ;;
-      edge_to_kafka) role="edge"; prefix="edge-" ;;
+      simulator_to_edge) role="simulator"; containers="$(all_simulator_containers)" ;;
+      edge_to_kafka) role="edge"; containers="${EDGE_TO_KAFKA_CONTAINERS}" ;;
+      cloud_to_global) role="workers"; containers="${CLOUD_TO_GLOBAL_CONTAINERS}" ;;
     esac
     output="${ARTIFACT_DIR}/metrics/netem-${link}.log"
-    run_netem_helper "${role}" monitor "${prefix}" 13 "${METRICS_INTERVAL_SECONDS}" \
+    run_netem_helper "${role}" monitor "${containers}" "${METRICS_INTERVAL_SECONDS}" \
       >"${output}" 2>&1 &
     METRICS_PIDS["netem-${link}"]=$!
   done
 
-  for link in simulator_to_edge edge_to_kafka; do
+  for link in simulator_to_edge edge_to_kafka cloud_to_global; do
     output="${ARTIFACT_DIR}/metrics/netem-${link}.log"
     [[ -e "${output}" ]] || continue
     for _ in $(seq 1 10); do
@@ -722,11 +797,13 @@ docker compose --env-file .env -f deploy/compose/distributed/cloud-core.generate
 
 verify_kafka_tcp_from_role() {
   local role="$1"
+  local port="${2:-9092}"
 
-  ssh_run "${PUBLIC_IPS["${role}"]}" bash -s -- "${PRIVATE_IPS[cloud-core]}" <<'REMOTE'
+  ssh_run "${PUBLIC_IPS["${role}"]}" bash -s -- "${PRIVATE_IPS[cloud-core]}" "${port}" <<'REMOTE'
 set -euo pipefail
 host="$1"
-timeout 5 bash -c 'exec 3<>/dev/tcp/$1/9092' _ "${host}"
+port="$2"
+timeout 5 bash -c 'exec 3<>/dev/tcp/$1/$2' _ "${host}" "${port}"
 REMOTE
 }
 
@@ -869,6 +946,7 @@ REMOTE
 
   verify_kafka_tcp_from_role edge
   verify_kafka_tcp_from_role workers
+  verify_kafka_tcp_from_role workers 9094
   wait_for_worker_group "${KAFKA_READY_TIMEOUT_SECONDS}"
   wait_for_edges
 
@@ -1146,6 +1224,7 @@ main_run() {
   wait_for_kafka
   verify_kafka_tcp_from_role edge
   verify_kafka_tcp_from_role workers
+  verify_kafka_tcp_from_role workers 9094
   start_workers
   wait_for_worker_group "${KAFKA_READY_TIMEOUT_SECONDS}"
   start_kafka_metrics
@@ -1153,10 +1232,11 @@ main_run() {
   wait_for_edges
   verify_all_clocks
   quick_preflight
-  materialize_replay_start
-  start_simulators
+  resolve_netem_targets
   apply_netem
   start_netem_metric_collectors
+  materialize_replay_start
+  start_simulators
   validate_container_lifecycle before
   wait_for_run_completion
   validate_container_lifecycle after

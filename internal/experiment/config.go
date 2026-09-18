@@ -127,14 +127,16 @@ func (config EdgeConfig) ResolvedKafkaProducerBatchMaxWait() time.Duration {
 }
 
 type CloudConfig struct {
-	ConsumerCommitBatchSize *CommitBatchSize `yaml:"consumer_commit_batch_size,omitempty"`
-	MaxEdgeWatermarkSkew    *Duration        `yaml:"max_edge_watermark_skew,omitempty"`
-	Workers                 int              `yaml:"workers"`
-	WindowSize              Duration         `yaml:"window_size"`
+	ConsumerCommitBatchSize      *CommitBatchSize `yaml:"consumer_commit_batch_size,omitempty"`
+	MaxEdgeWatermarkSkew         *Duration        `yaml:"max_edge_watermark_skew,omitempty"`
+	MaxEdgeWatermarkSkewRealTime *Duration        `yaml:"max_edge_watermark_skew_real_time,omitempty"`
+	Workers                      int              `yaml:"workers"`
+	WindowSize                   Duration         `yaml:"window_size"`
 }
 
 type GlobalConfig struct {
-	MaxPartitionWatermarkSkew *Duration `yaml:"max_partition_watermark_skew,omitempty"`
+	MaxPartitionWatermarkSkew         *Duration `yaml:"max_partition_watermark_skew,omitempty"`
+	MaxPartitionWatermarkSkewRealTime *Duration `yaml:"max_partition_watermark_skew_real_time,omitempty"`
 }
 
 func (config GlobalConfig) ResolvedMaxPartitionWatermarkSkew() time.Duration {
@@ -175,12 +177,15 @@ type NetworkConfig struct {
 	Enabled         bool              `yaml:"enabled"`
 	SimulatorToEdge NetworkLinkConfig `yaml:"simulator_to_edge,omitempty"`
 	EdgeToKafka     NetworkLinkConfig `yaml:"edge_to_kafka,omitempty"`
+	CloudToGlobal   NetworkLinkConfig `yaml:"cloud_to_global,omitempty"`
 }
 
 type NetworkLinkConfig struct {
-	Enabled bool        `yaml:"enabled"`
-	Delay   Duration    `yaml:"delay,omitempty"`
-	Rate    NetworkRate `yaml:"rate,omitempty"`
+	Enabled          bool        `yaml:"enabled"`
+	Delay            Duration    `yaml:"delay,omitempty"`
+	Rate             NetworkRate `yaml:"rate,omitempty"`
+	EdgeIDs          []string    `yaml:"edge_ids,omitempty"`
+	SourcePartitions []int       `yaml:"source_partitions,omitempty"`
 }
 
 func (config NetworkLinkConfig) ResolvedRate() NetworkRate {
@@ -192,12 +197,14 @@ func (config Config) ResolvedNetwork() NetworkConfig {
 		return NetworkConfig{
 			SimulatorToEdge: NetworkLinkConfig{Rate: NetworkRateUnlimited},
 			EdgeToKafka:     NetworkLinkConfig{Rate: NetworkRateUnlimited},
+			CloudToGlobal:   NetworkLinkConfig{Rate: NetworkRateUnlimited},
 		}
 	}
 
 	resolved := *config.Network
 	resolved.SimulatorToEdge.Rate = resolved.SimulatorToEdge.ResolvedRate()
 	resolved.EdgeToKafka.Rate = resolved.EdgeToKafka.ResolvedRate()
+	resolved.CloudToGlobal.Rate = resolved.CloudToGlobal.ResolvedRate()
 	return resolved
 }
 
@@ -316,13 +323,29 @@ func Decode(reader io.Reader) (Config, error) {
 }
 
 func (config Config) Validate() error {
+	factor := config.Workload.AccelerationFactor
+	if factor <= 0 || math.IsNaN(factor) || math.IsInf(factor, 0) {
+		return fmt.Errorf("workload.acceleration_factor deve essere finito e maggiore di zero")
+	}
 	if config.Cloud.ResolvedConsumerCommitBatchSize() <= 0 {
 		return fmt.Errorf("cloud.consumer_commit_batch_size must be a positive integer")
 	}
-	if config.Cloud.ResolvedMaxEdgeWatermarkSkew() <= 0 {
+	if config.Cloud.MaxEdgeWatermarkSkew != nil && config.Cloud.MaxEdgeWatermarkSkewRealTime != nil {
+		return fmt.Errorf("cloud.max_edge_watermark_skew e cloud.max_edge_watermark_skew_real_time sono mutuamente esclusivi")
+	}
+	if _, err := resolveScaledDuration(config.Cloud.MaxEdgeWatermarkSkewRealTime, factor); err != nil {
+		return fmt.Errorf("cloud.max_edge_watermark_skew_real_time non valida: %w", err)
+	}
+	if config.Cloud.MaxEdgeWatermarkSkewRealTime == nil && config.Cloud.ResolvedMaxEdgeWatermarkSkew() <= 0 {
 		return fmt.Errorf("cloud.max_edge_watermark_skew deve essere maggiore di zero")
 	}
-	if config.Global.ResolvedMaxPartitionWatermarkSkew() <= 0 {
+	if config.Global.MaxPartitionWatermarkSkew != nil && config.Global.MaxPartitionWatermarkSkewRealTime != nil {
+		return fmt.Errorf("global.max_partition_watermark_skew e global.max_partition_watermark_skew_real_time sono mutuamente esclusivi")
+	}
+	if _, err := resolveScaledDuration(config.Global.MaxPartitionWatermarkSkewRealTime, factor); err != nil {
+		return fmt.Errorf("global.max_partition_watermark_skew_real_time non valida: %w", err)
+	}
+	if config.Global.MaxPartitionWatermarkSkewRealTime == nil && config.Global.ResolvedMaxPartitionWatermarkSkew() <= 0 {
 		return fmt.Errorf("global.max_partition_watermark_skew deve essere maggiore di zero")
 	}
 	if config.Kafka.ResolvedPartitions() <= 0 {
@@ -332,10 +355,6 @@ func (config Config) Validate() error {
 		return fmt.Errorf("experiment.name non puo essere vuoto")
 	}
 
-	factor := config.Workload.AccelerationFactor
-	if factor <= 0 || math.IsNaN(factor) || math.IsInf(factor, 0) {
-		return fmt.Errorf("workload.acceleration_factor deve essere finito e maggiore di zero")
-	}
 	if config.Workload.StartLeadTime.Duration() <= 0 {
 		return fmt.Errorf("workload.start_lead_time deve essere maggiore di zero")
 	}
@@ -370,20 +389,21 @@ func (config Config) Validate() error {
 			config.Edge.WindowSize,
 		)
 	}
-	if err := validateNetwork(config.ResolvedNetwork()); err != nil {
+	if err := validateNetwork(config.ResolvedNetwork(), config.Kafka.ResolvedPartitions()); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func validateNetwork(config NetworkConfig) error {
+func validateNetwork(config NetworkConfig, sourcePartitionCount int) error {
 	links := []struct {
 		name   string
 		config NetworkLinkConfig
 	}{
 		{name: "network.simulator_to_edge", config: config.SimulatorToEdge},
 		{name: "network.edge_to_kafka", config: config.EdgeToKafka},
+		{name: "network.cloud_to_global", config: config.CloudToGlobal},
 	}
 
 	enabledLinks := 0
@@ -402,6 +422,42 @@ func validateNetwork(config NetworkConfig) error {
 		if link.config.Delay.Duration() == 0 && rate == NetworkRateUnlimited {
 			return fmt.Errorf("%s abilitato senza delay o limite di banda", link.name)
 		}
+		if link.name == "network.edge_to_kafka" {
+			if len(link.config.EdgeIDs) == 0 {
+				return fmt.Errorf("%s richiede almeno un edge_id", link.name)
+			}
+			if len(link.config.SourcePartitions) != 0 {
+				return fmt.Errorf("%s non accetta source_partitions", link.name)
+			}
+			seen := make(map[string]struct{}, len(link.config.EdgeIDs))
+			for _, edgeID := range link.config.EdgeIDs {
+				if !regexp.MustCompile(`^edge-(0|[1-9][0-9]*)$`).MatchString(edgeID) {
+					return fmt.Errorf("%s.edge_ids contiene valore non valido %q", link.name, edgeID)
+				}
+				if _, duplicate := seen[edgeID]; duplicate {
+					return fmt.Errorf("%s.edge_ids contiene duplicato %q", link.name, edgeID)
+				}
+				seen[edgeID] = struct{}{}
+			}
+		}
+		if link.name == "network.cloud_to_global" {
+			if len(link.config.SourcePartitions) == 0 {
+				return fmt.Errorf("%s richiede almeno una source_partition", link.name)
+			}
+			if len(link.config.EdgeIDs) != 0 {
+				return fmt.Errorf("%s non accetta edge_ids", link.name)
+			}
+			seen := make(map[int]struct{}, len(link.config.SourcePartitions))
+			for _, partition := range link.config.SourcePartitions {
+				if partition < 0 || partition >= sourcePartitionCount {
+					return fmt.Errorf("%s.source_partitions contiene partition fuori range %d", link.name, partition)
+				}
+				if _, duplicate := seen[partition]; duplicate {
+					return fmt.Errorf("%s.source_partitions contiene duplicato %d", link.name, partition)
+				}
+				seen[partition] = struct{}{}
+			}
+		}
 	}
 
 	if config.Enabled && enabledLinks == 0 {
@@ -410,7 +466,42 @@ func validateNetwork(config NetworkConfig) error {
 	return nil
 }
 
+func resolveScaledDuration(realTime *Duration, factor float64) (time.Duration, error) {
+	if realTime == nil {
+		return 0, nil
+	}
+	if realTime.Duration() <= 0 {
+		return 0, fmt.Errorf("deve essere maggiore di zero")
+	}
+	scaled := float64(realTime.Duration()) * factor
+	if math.IsNaN(scaled) || math.IsInf(scaled, 0) || scaled > float64(math.MaxInt64) {
+		return 0, fmt.Errorf("overflow dopo la conversione in event-time")
+	}
+	if scaled < 1 {
+		return 0, fmt.Errorf("risultato inferiore a 1ns dopo la conversione in event-time")
+	}
+	return time.Duration(math.Round(scaled)), nil
+}
+
 func ResolveDefaults(config Config) Config {
+	if config.Cloud.MaxEdgeWatermarkSkewRealTime != nil {
+		duration, err := resolveScaledDuration(config.Cloud.MaxEdgeWatermarkSkewRealTime, config.Workload.AccelerationFactor)
+		if err != nil {
+			panic(fmt.Sprintf("configurazione gia validata non risolvibile: %v", err))
+		}
+		resolved := Duration(duration)
+		config.Cloud.MaxEdgeWatermarkSkew = &resolved
+		config.Cloud.MaxEdgeWatermarkSkewRealTime = nil
+	}
+	if config.Global.MaxPartitionWatermarkSkewRealTime != nil {
+		duration, err := resolveScaledDuration(config.Global.MaxPartitionWatermarkSkewRealTime, config.Workload.AccelerationFactor)
+		if err != nil {
+			panic(fmt.Sprintf("configurazione gia validata non risolvibile: %v", err))
+		}
+		resolved := Duration(duration)
+		config.Global.MaxPartitionWatermarkSkew = &resolved
+		config.Global.MaxPartitionWatermarkSkewRealTime = nil
+	}
 	if config.Edge.KafkaProducerBatchSize == nil {
 		size := EdgeProducerBatchSize(config.Edge.ResolvedKafkaProducerBatchSize())
 		config.Edge.KafkaProducerBatchSize = &size

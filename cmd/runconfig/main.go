@@ -27,12 +27,15 @@ type networkDescription struct {
 	Enabled         bool                   `json:"enabled"`
 	SimulatorToEdge networkLinkDescription `json:"simulator_to_edge"`
 	EdgeToKafka     networkLinkDescription `json:"edge_to_kafka"`
+	CloudToGlobal   networkLinkDescription `json:"cloud_to_global"`
 }
 
 type networkLinkDescription struct {
-	Enabled bool   `json:"enabled"`
-	Delay   string `json:"delay"`
-	Rate    string `json:"rate"`
+	Enabled          bool     `json:"enabled"`
+	Delay            string   `json:"delay"`
+	Rate             string   `json:"rate"`
+	EdgeIDs          []string `json:"edge_ids,omitempty"`
+	SourcePartitions []int    `json:"source_partitions,omitempty"`
 }
 
 type materializedRun struct {
@@ -102,14 +105,25 @@ func run(args []string, output io.Writer) error {
 			Network: networkDescription{
 				Enabled: network.Enabled,
 				SimulatorToEdge: networkLinkDescription{
-					Enabled: network.SimulatorToEdge.Enabled,
-					Delay:   network.SimulatorToEdge.Delay.String(),
-					Rate:    string(network.SimulatorToEdge.ResolvedRate()),
+					Enabled:          network.SimulatorToEdge.Enabled,
+					Delay:            network.SimulatorToEdge.Delay.String(),
+					Rate:             string(network.SimulatorToEdge.ResolvedRate()),
+					EdgeIDs:          network.SimulatorToEdge.EdgeIDs,
+					SourcePartitions: network.SimulatorToEdge.SourcePartitions,
 				},
 				EdgeToKafka: networkLinkDescription{
-					Enabled: network.EdgeToKafka.Enabled,
-					Delay:   network.EdgeToKafka.Delay.String(),
-					Rate:    string(network.EdgeToKafka.ResolvedRate()),
+					Enabled:          network.EdgeToKafka.Enabled,
+					Delay:            network.EdgeToKafka.Delay.String(),
+					Rate:             string(network.EdgeToKafka.ResolvedRate()),
+					EdgeIDs:          network.EdgeToKafka.EdgeIDs,
+					SourcePartitions: network.EdgeToKafka.SourcePartitions,
+				},
+				CloudToGlobal: networkLinkDescription{
+					Enabled:          network.CloudToGlobal.Enabled,
+					Delay:            network.CloudToGlobal.Delay.String(),
+					Rate:             string(network.CloudToGlobal.ResolvedRate()),
+					EdgeIDs:          network.CloudToGlobal.EdgeIDs,
+					SourcePartitions: network.CloudToGlobal.SourcePartitions,
 				},
 			},
 			ConfigSHA256: configSHA256,

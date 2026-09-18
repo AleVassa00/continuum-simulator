@@ -85,3 +85,34 @@ func TestEdgeProducerBatchConfig(t *testing.T) {
 		t.Fatalf("configured: %+v %v", cfg.Edge, err)
 	}
 }
+
+func TestTargetedNetworkAndRealTimeWatermarkSkew(t *testing.T) {
+	configured := strings.Replace(configFixture, "  acceleration_factor: 1\n", "  acceleration_factor: 20000\n", 1) + `global:
+  max_partition_watermark_skew_real_time: 90ms
+network:
+  enabled: true
+  edge_to_kafka:
+    enabled: true
+    edge_ids: [edge-8]
+    delay: 50ms
+  cloud_to_global:
+    enabled: true
+    source_partitions: [0]
+    rate: 100kbit
+`
+	configured = strings.Replace(configured, "  workers: 1\n", "  workers: 1\n  max_edge_watermark_skew_real_time: 30ms\n", 1)
+	cfg, err := Decode(strings.NewReader(configured))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := ResolveDefaults(cfg)
+	if got := resolved.Cloud.ResolvedMaxEdgeWatermarkSkew(); got != 10*time.Minute {
+		t.Fatalf("cloud event-time skew=%s, want 10m", got)
+	}
+	if got := resolved.Global.ResolvedMaxPartitionWatermarkSkew(); got != 30*time.Minute {
+		t.Fatalf("global event-time skew=%s, want 30m", got)
+	}
+	if resolved.Network.EdgeToKafka.EdgeIDs[0] != "edge-8" || resolved.Network.CloudToGlobal.SourcePartitions[0] != 0 {
+		t.Fatalf("target non preservati: %+v", resolved.Network)
+	}
+}

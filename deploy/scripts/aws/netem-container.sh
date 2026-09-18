@@ -4,7 +4,7 @@ set -Eeuo pipefail
 readonly NETEM_QUEUE_LIMIT_PACKETS=10000
 
 usage() {
-  echo "usage: netem-container.sh <apply|show|snapshot|clear|monitor> <container-prefix> <expected-count> [delay|interval-seconds] [rate] [target-env]" >&2
+  echo "usage: netem-container.sh <apply|show|snapshot|clear|monitor> <container-name[,container-name...]> [delay|interval-seconds] [rate] [target-env]" >&2
   exit 2
 }
 
@@ -13,14 +13,6 @@ require_command() {
     echo "comando richiesto non disponibile: $1" >&2
     exit 1
   }
-}
-
-discover_containers() {
-  mapfile -t containers < <(
-    docker ps -a --format '{{.Names}}' |
-      awk -v prefix="${container_prefix}" 'index($0, prefix) == 1 && substr($0, length(prefix) + 1) ~ /^[0-9]+$/ { print }' |
-      sort -V
-  )
 }
 
 network_namespace() {
@@ -136,23 +128,15 @@ clear_qdisc() {
   printf 'container=%s pid=%s interface=%s cleanup=removed\n' "${container}" "${pid}" "${interface}"
 }
 
-(( $# >= 3 )) || usage
+(( $# >= 2 )) || usage
 action="$1"
-container_prefix="$2"
-expected_count="$3"
-delay="${4:-0s}"
-rate="${5:-unlimited}"
-target_environment="${6:-}"
+container_csv="$2"
+delay="${3:-0s}"
+rate="${4:-unlimited}"
+target_environment="${5:-}"
 
 [[ "${action}" =~ ^(apply|show|snapshot|clear|monitor)$ ]] || usage
-[[ "${container_prefix}" =~ ^[A-Za-z0-9_.-]+-$ ]] || {
-  echo "prefisso container non valido: ${container_prefix}" >&2
-  exit 2
-}
-[[ "${expected_count}" =~ ^[1-9][0-9]*$ ]] || {
-  echo "numero atteso di container non valido: ${expected_count}" >&2
-  exit 2
-}
+[[ -n "${container_csv}" ]] || usage
 
 require_command docker
 require_command sudo
@@ -162,12 +146,13 @@ require_command tc
 sudo -n true
 
 declare -a containers=()
-discover_containers
-
-if [[ "${action}" != "clear" && "${action}" != "snapshot" && "${action}" != "monitor" && ${#containers[@]} -ne ${expected_count} ]]; then
-  echo "container ${container_prefix} trovati=${#containers[@]}, attesi=${expected_count}" >&2
-  exit 1
-fi
+IFS=',' read -r -a containers <<<"${container_csv}"
+for container in "${containers[@]}"; do
+  [[ "${container}" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+    echo "nome container non valido: ${container}" >&2
+    exit 2
+  }
+done
 
 case "${action}" in
   apply)
@@ -204,7 +189,6 @@ case "${action}" in
     trap 'exit 0' HUP INT TERM
     while true; do
       printf '===== sample %s =====\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
-      discover_containers
       for container in "${containers[@]}"; do
         show_qdisc "${container}" false
       done

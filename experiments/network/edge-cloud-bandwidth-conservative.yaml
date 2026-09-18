@@ -1,0 +1,40 @@
+# PILOT: 150kbit is the initial constrained-link value. Confirm from
+# netem-stats.csv that it is below the baseline edge-8 bitrate but does not
+# create tc packet drops before using the run in the final analysis.
+experiment:
+  name: edge-cloud-bandwidth-conservative
+
+workload:
+  acceleration_factor: 20000
+  start_lead_time: 30s
+
+simulator:
+  telemetry_queue_capacity: 5000
+  start_late_tolerance: 10s
+
+edge:
+  window_size: 5m
+  ingress_queue_capacity: 15000
+  kafka_producer_batch_size: 10
+  kafka_producer_batch_max_wait: 100ms
+
+cloud:
+  consumer_commit_batch_size: 100
+  max_edge_watermark_skew_real_time: 129600ms
+  workers: 6
+  window_size: 15m
+
+global:
+  max_partition_watermark_skew_real_time: 129600ms
+
+kafka:
+  partitions: 6
+
+network:
+  enabled: true
+  edge_to_kafka:
+    enabled: true
+    edge_ids: [edge-8]
+    delay: 0s
+    rate: 150kbit
+

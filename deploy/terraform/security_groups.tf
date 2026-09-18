@@ -138,3 +138,17 @@ resource "aws_vpc_security_group_ingress_rule" "workers_to_cloud_core_kafka" {
     Role = "cloud-core"
   }
 }
+
+resource "aws_vpc_security_group_ingress_rule" "workers_to_cloud_core_kafka_output" {
+  security_group_id            = aws_security_group.cloud_core.id
+  referenced_security_group_id = aws_security_group.workers.id
+  description                  = "Kafka Cloud Worker output traffic to Cloud Core"
+  from_port                    = 9094
+  ip_protocol                  = "tcp"
+  to_port                      = 9094
+
+  tags = {
+    Name = "workers-to-cloud-core-kafka-output"
+    Role = "cloud-core"
+  }
+}

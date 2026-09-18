@@ -1,10 +1,9 @@
-# The rate applies independently to every Edge container, not to their aggregate traffic.
 experiment:
-  name: edge-kafka-rate-300kbit
+  name: edge-cloud-delay-conservative
 
 workload:
   acceleration_factor: 20000
-  start_lead_time: 60s
+  start_lead_time: 30s
 
 simulator:
   telemetry_queue_capacity: 5000
@@ -12,27 +11,27 @@ simulator:
 
 edge:
   window_size: 5m
-  ingress_queue_capacity: 10000
+  ingress_queue_capacity: 15000
   kafka_producer_batch_size: 10
   kafka_producer_batch_max_wait: 100ms
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew: 720h
-  workers: 3
+  max_edge_watermark_skew_real_time: 129600ms # 720h event-time: no intentional late discard
+  workers: 6
   window_size: 15m
 
 global:
-  max_partition_watermark_skew: 720h
+  max_partition_watermark_skew_real_time: 129600ms
 
 kafka:
   partitions: 6
 
 network:
   enabled: true
-  simulator_to_edge:
-    enabled: false
   edge_to_kafka:
     enabled: true
-    delay: 0s
-    rate: 300kbit
+    edge_ids: [edge-8]
+    delay: 50ms
+    rate: unlimited
+

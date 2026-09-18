@@ -1,9 +1,10 @@
+# PILOT: keep this rate aligned with cloud-global-bandwidth-conservative.yaml.
 experiment:
-  name: simulator-edge-delay-100ms
+  name: cloud-global-bandwidth-bounded
 
 workload:
   acceleration_factor: 20000
-  start_lead_time: 60s
+  start_lead_time: 30s
 
 simulator:
   telemetry_queue_capacity: 5000
@@ -11,27 +12,26 @@ simulator:
 
 edge:
   window_size: 5m
-  ingress_queue_capacity: 10000
+  ingress_queue_capacity: 15000
   kafka_producer_batch_size: 10
   kafka_producer_batch_max_wait: 100ms
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew: 720h
-  workers: 3
+  max_edge_watermark_skew_real_time: 129600ms
+  workers: 6
   window_size: 15m
 
 global:
-  max_partition_watermark_skew: 720h
+  max_partition_watermark_skew_real_time: 30ms
 
 kafka:
   partitions: 6
 
 network:
   enabled: true
-  simulator_to_edge:
+  cloud_to_global:
     enabled: true
-    delay: 100ms
-    rate: unlimited
-  edge_to_kafka:
-    enabled: false
+    source_partitions: [0]
+    delay: 0s
+    rate: 100kbit

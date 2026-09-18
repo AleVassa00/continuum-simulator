@@ -9,6 +9,7 @@ services:
 
     environment:
       KAFKA_BROKER: "${CLOUD_KAFKA_HOST}:9092"
+      KAFKA_OUTPUT_BROKER: "${CLOUD_KAFKA_HOST}:9094"
       KAFKA_INPUT_TOPIC: "edge-aggregates"
       KAFKA_OUTPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "cloud-workers"

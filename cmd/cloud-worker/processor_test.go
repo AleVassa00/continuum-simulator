@@ -139,7 +139,12 @@ func TestCloudConfigurationRequiresTopology(t *testing.T) {
 	t.Setenv("CLOUD_WINDOW_SIZE", "30m")
 	t.Setenv("CLOUD_MAX_EDGE_WATERMARK_SKEW", "45m")
 	cfg, err := loadCloudWorkerConfig()
-	if err != nil || cfg.WindowSize != 30*time.Minute || cfg.MaxEdgeWatermarkSkew != 45*time.Minute || len(cfg.Membership) != 6 {
+	if err != nil || cfg.KafkaOutputBroker != "unused:9092" || cfg.WindowSize != 30*time.Minute || cfg.MaxEdgeWatermarkSkew != 45*time.Minute || len(cfg.Membership) != 6 {
 		t.Fatalf("config: %+v %v", cfg, err)
+	}
+	t.Setenv("KAFKA_OUTPUT_BROKER", "output:9094")
+	cfg, err = loadCloudWorkerConfig()
+	if err != nil || cfg.KafkaOutputBroker != "output:9094" {
+		t.Fatalf("output broker config: %+v %v", cfg, err)
 	}
 }

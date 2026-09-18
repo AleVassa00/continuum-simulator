@@ -3,7 +3,7 @@ experiment:
 
 workload:
   acceleration_factor: 20000
-  start_lead_time: 60s
+  start_lead_time: 30s
 
 simulator:
   telemetry_queue_capacity: 5000
@@ -11,21 +11,19 @@ simulator:
 
 edge:
   window_size: 5m
-  ingress_queue_capacity: 10000
+  ingress_queue_capacity: 15000
   kafka_producer_batch_size: 10
   kafka_producer_batch_max_wait: 100ms
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew: 720h
-  workers: 3
+  max_edge_watermark_skew_real_time: 129600ms # 720h event-time at 20000x
+  workers: 6
   window_size: 15m
 
 global:
-  max_partition_watermark_skew: 720h
+  max_partition_watermark_skew_real_time: 129600ms # 720h event-time at 20000x
 
 kafka:
   partitions: 6
 
-network:
-  enabled: false

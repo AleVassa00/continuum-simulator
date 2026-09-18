@@ -82,6 +82,7 @@ services:
 
     environment:
       KAFKA_BROKER: "kafka:29092"
+      KAFKA_OUTPUT_BROKER: "kafka:29092"
       KAFKA_INPUT_TOPIC: "edge-aggregates"
       KAFKA_OUTPUT_TOPIC: "cloud-partition-aggregates"
       KAFKA_GROUP_ID: "cloud-workers"

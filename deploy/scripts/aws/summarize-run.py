@@ -111,6 +111,82 @@ def late_records(text, expected, partitions):
     return list(unique.values()), attempts, events
 
 
+def global_late_partials(text, partitions):
+    marker = "GLOBAL_LATE_PARTIAL_DROPPED"
+    unique = {}
+    attempts = 0
+    for line in text.splitlines():
+        if marker not in line:
+            continue
+        fields = dict(token.split("=", 1) for token in shlex.split(line.split(marker, 1)[1]) if "=" in token)
+        required = ("source_partition", "aggregate_id", "events", "window_end", "watermark")
+        if any(not fields.get(key) for key in required):
+            raise ValueError("Global late partial missing required fields")
+        row = {key: fields[key] for key in required}
+        row["source_partition"] = int(row["source_partition"])
+        row["events"] = int(row["events"])
+        if row["events"] <= 0 or not 0 <= row["source_partition"] < partitions:
+            raise ValueError(f"Invalid Global late partial: {row}")
+        timestamp(row["window_end"])
+        timestamp(row["watermark"])
+        previous = unique.get(row["aggregate_id"])
+        if previous and previous != row:
+            raise ValueError(f"Conflicting Global late aggregate ID: {row['aggregate_id']}")
+        unique.setdefault(row["aggregate_id"], row)
+        attempts += 1
+    return list(unique.values()), attempts
+
+
+def netem_stats(directory, elapsed_seconds):
+    rows = []
+    sent_pattern = re.compile(
+        r"^\s*Sent (\d+) bytes (\d+) pkt \(dropped (\d+), overlimits (\d+) requeues \d+\)"
+    )
+    backlog_pattern = re.compile(r"^\s*backlog (\d+)b (\d+)p")
+    for link in ("simulator_to_edge", "edge_to_kafka", "cloud_to_global"):
+        path = directory / "metrics" / f"netem-{link}.log"
+        if not path.exists():
+            continue
+        current_container = None
+        in_netem = False
+        maxima = {}
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            container_match = re.match(r"container=([^ ]+)", line)
+            if container_match:
+                current_container = container_match.group(1)
+                in_netem = False
+                maxima.setdefault(current_container, {
+                    "sent_bytes": 0, "sent_packets": 0, "dropped_packets": 0,
+                    "overlimits": 0, "max_backlog_bytes": 0, "max_backlog_packets": 0,
+                })
+                continue
+            if line.startswith("qdisc "):
+                in_netem = line.startswith("qdisc netem 20:")
+                continue
+            if not current_container or not in_netem:
+                continue
+            sent = sent_pattern.match(line)
+            if sent:
+                values = [int(value) for value in sent.groups()]
+                state = maxima[current_container]
+                for key, value in zip(("sent_bytes", "sent_packets", "dropped_packets", "overlimits"), values):
+                    state[key] = max(state[key], value)
+                continue
+            backlog = backlog_pattern.match(line)
+            if backlog:
+                state = maxima[current_container]
+                state["max_backlog_bytes"] = max(state["max_backlog_bytes"], int(backlog[1]))
+                state["max_backlog_packets"] = max(state["max_backlog_packets"], int(backlog[2]))
+        for container, values in sorted(maxima.items()):
+            rows.append({
+                "link": link,
+                "container": container,
+                **values,
+                "effective_kbit_per_second": values["sent_bytes"] * 8 / elapsed_seconds / 1000,
+            })
+    return rows
+
+
 def number_unit(value):
     match = re.fullmatch(r"([0-9.]+)\s*([A-Za-z]+)", value.strip())
     if not match or match[2] not in UNITS:
@@ -245,6 +321,7 @@ def summarize(directory):
     edges = records(logs["edge"], "EDGE_STATS")
     globals_ = global_records(directory, logs["cloud-core"])
     late, late_attempts, late_event_attempts = late_records(logs["workers"], expected, partitions)
+    global_late, global_late_attempts = global_late_partials(logs["cloud-core"], partitions)
     unique_sites(simulators, expected, "SIMULATOR_STATS")
     unique_sites(edges, expected, "EDGE_STATS")
     if not globals_:
@@ -287,16 +364,21 @@ def summarize(directory):
     summary["cloud_late_record_attempts_total"] = late_attempts
     summary["cloud_late_event_attempts_total"] = late_event_attempts
     summary["cloud_late_duplicate_logs_total"] = late_attempts - len(late)
-    summary["offered_minus_global_and_late_events"] = summary["offered_minus_global_events"] - summary["cloud_late_events_total"]
-    summary["processed_minus_global_and_late_events"] = summary["processed_minus_global_events"] - summary["cloud_late_events_total"]
+    summary["global_late_partials_total"] = len(global_late)
+    summary["global_late_events_total"] = sum(row["events"] for row in global_late)
+    summary["global_late_partial_attempts_total"] = global_late_attempts
+    summary["global_late_duplicate_logs_total"] = global_late_attempts - len(global_late)
+    accounted_late_events = summary["cloud_late_events_total"] + summary["global_late_events_total"]
+    summary["offered_minus_global_and_late_events"] = summary["offered_minus_global_events"] - accounted_late_events
+    summary["processed_minus_global_and_late_events"] = summary["processed_minus_global_events"] - accounted_late_events
     summary["conservation_status"] = (
         "mismatch" if summary["processed_minus_global_and_late_events"] != 0 else
-        "unverified_duplicate_late" if summary["cloud_late_duplicate_logs_total"] else
-        "balanced_assuming_no_accepted_replays" if late else "balanced")
+        "unverified_duplicate_late" if summary["cloud_late_duplicate_logs_total"] or summary["global_late_duplicate_logs_total"] else
+        "balanced_assuming_no_accepted_replays" if late or global_late else "balanced")
     summary["conservation_assumption"] = (
         "Unique late IDs were not already accepted before window closure; current logs cannot verify this. "
         "Quality pass permits reported late discards and does not imply all original events reached Global."
-        if late else "")
+        if late or global_late else "")
     summary["global_windows_total"] = len(globals_)
     summary["global_duplicate_ids_total"] = len(globals_) - len({row["aggregate_id"] for row in globals_})
     summary["global_incomplete_windows_total"] = sum(row["contributing_partitions"] != partitions or
@@ -305,9 +387,11 @@ def summarize(directory):
     for key in ("simulator_locally_dropped_total", "simulator_mqtt_errors_total", "simulator_eos_failures_total",
                 "edge_ingress_queue_dropped_total", "edge_invalid_total", "edge_out_of_order_dropped_total",
                 "edge_post_eos_dropped_total", "offered_minus_global_and_late_events", "processed_minus_global_and_late_events",
-                "global_duplicate_ids_total", "global_incomplete_windows_total", "global_protocol_errors_total"):
+                "global_duplicate_ids_total", "global_protocol_errors_total"):
         if summary[key] != 0:
             failures.append(key)
+    if summary["global_incomplete_windows_total"] != 0 and not (late or global_late):
+        failures.append("global_incomplete_windows_total")
     if summary["edge_max_queue_utilization_pct"] >= 100:
         failures.append("edge_queue_reached_capacity")
     for sim, edge in ((sim, next(row for row in edges if row["edge_id"] == sim["edge_id"])) for sim in simulators):
@@ -381,12 +465,23 @@ def summarize(directory):
         if not complete:
             failures.append(f"missing_complete_resource_samples:{label}")
 
+    netem = netem_stats(directory, summary["replay_elapsed_seconds"])
+    for link in ("edge_to_kafka", "cloud_to_global"):
+        link_rows = [row for row in netem if row["link"] == link]
+        prefix = link
+        summary[f"{prefix}_netem_sent_bytes"] = sum(row["sent_bytes"] for row in link_rows) if link_rows else None
+        summary[f"{prefix}_netem_dropped_packets"] = sum(row["dropped_packets"] for row in link_rows) if link_rows else None
+        summary[f"{prefix}_netem_max_backlog_bytes"] = max((row["max_backlog_bytes"] for row in link_rows), default=None)
+        summary[f"{prefix}_netem_effective_kbit_per_second"] = sum(row["effective_kbit_per_second"] for row in link_rows) if link_rows else None
+
     summary["quality_status"] = "pass" if not failures else "fail"
     summary["quality_failures"] = ";".join(failures)
     write_csv(directory / "simulator-stats.csv", simulators)
     write_csv(directory / "edge-stats.csv", edges)
     write_csv(directory / "cloud-late-aggregates.csv", late,
               ["worker", "source_partition", "offset", "aggregate_id", "edge_id", "events", "cloud_window_end", "watermark"])
+    write_csv(directory / "global-late-partials.csv", global_late,
+              ["source_partition", "aggregate_id", "events", "window_end", "watermark"])
     write_csv(directory / "global-windows.csv", window_rows)
     write_csv(directory / "container-stats.csv", container_summary,
               ["role", "container", "samples", "cpu_avg_pct", "cpu_max_pct", "memory_avg_mib", "memory_max_mib"])
@@ -394,6 +489,9 @@ def summarize(directory):
               ["timestamp", "role", "container", "cpu_pct", "memory_bytes", "memory_limit_bytes"])
     write_csv(directory / "kafka-lag.csv", lag,
               ["timestamp", "group", "topic", "partition", "current_offset", "log_end_offset", "lag"])
+    write_csv(directory / "netem-stats.csv", netem,
+              ["link", "container", "sent_bytes", "sent_packets", "dropped_packets", "overlimits",
+               "max_backlog_bytes", "max_backlog_packets", "effective_kbit_per_second"])
     write_csv(directory / "run-summary.csv", [summary])
     return summary
 

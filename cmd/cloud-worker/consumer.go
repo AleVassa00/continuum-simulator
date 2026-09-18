@@ -73,7 +73,9 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 				return fmt.Errorf("partition %d already has committed offset %d: fresh run required", assignment.ID, assignment.Offset)
 			}
 		}
-		fmt.Printf("CLOUD_ASSIGNMENT worker=%s generation=%d partitions=%v\n", config.WorkerID, gen.ID, gen.Assignments[config.InputTopic])
+		for _, assignment := range gen.Assignments[config.InputTopic] {
+			fmt.Printf("CLOUD_ASSIGNMENT worker=%s generation=%d source_partition=%d\n", config.WorkerID, gen.ID, assignment.ID)
+		}
 		gen.Start(func(genCtx context.Context) {
 			err := consumeGeneration(genCtx, gen, config, publish, &processed)
 			if err != nil && (genCtx.Err() == nil || errors.Is(err, errOffsetCommit)) {
