@@ -344,7 +344,7 @@ ensure_netem_dependencies() {
   local role host
 
   [[ "${NETWORK_ENABLED}" == "true" ]] || return 0
-  for role in simulator edge; do
+  for role in simulator edge workers; do
     host="${PUBLIC_IPS[${role}]}"
     log "verifica dipendenze tc-netem su ${role}"
     ssh_run "${host}" 'set -euo pipefail

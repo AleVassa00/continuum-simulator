@@ -23,7 +23,7 @@ cloud:
   window_size: 15m
 
 global:
-  max_partition_watermark_skew_real_time: 30ms
+  max_partition_watermark_skew_real_time: 90ms
 
 kafka:
   partitions: 6
