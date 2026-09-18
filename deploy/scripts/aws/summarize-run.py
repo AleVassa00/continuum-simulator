@@ -359,6 +359,20 @@ def summarize(directory):
     summary["global_events_total"] = sum(row["events"] for row in globals_)
     summary["offered_minus_global_events"] = summary["simulator_offered_total"] - summary["global_events_total"]
     summary["processed_minus_global_events"] = summary["edge_processed_total"] - summary["global_events_total"]
+    offered = summary["simulator_offered_total"]
+    if offered <= 0:
+        raise ValueError("simulator_offered_total must be positive")
+
+    summary["global_event_completeness_pct"] = (
+            summary["global_events_total"] / offered * 100.0
+    )
+    summary["global_event_loss_total"] = (
+            offered - summary["global_events_total"]
+    )
+    summary["global_event_loss_pct"] = (
+            summary["global_event_loss_total"] / offered * 100.0
+    )
+    )
     summary["cloud_late_aggregates_total"] = len(late)
     summary["cloud_late_events_total"] = sum(row["events"] for row in late)
     summary["cloud_late_record_attempts_total"] = late_attempts
@@ -366,6 +380,22 @@ def summarize(directory):
     summary["cloud_late_duplicate_logs_total"] = late_attempts - len(late)
     summary["global_late_partials_total"] = len(global_late)
     summary["global_late_events_total"] = sum(row["events"] for row in global_late)
+    cloud_late_windows = {
+        row["cloud_window_end"]
+        for row in late
+    }
+
+    global_late_windows = {
+    row["window_end"]
+    for row in global_late
+    }
+
+    summary["cloud_late_windows_total"] = len(cloud_late_windows)
+    summary["global_late_windows_total"] = len(global_late_windows)
+
+    summary["data_incomplete_windows_total"] = len(
+    cloud_late_windows | global_late_windows
+    )
     summary["global_late_partial_attempts_total"] = global_late_attempts
     summary["global_late_duplicate_logs_total"] = global_late_attempts - len(global_late)
     accounted_late_events = summary["cloud_late_events_total"] + summary["global_late_events_total"]
@@ -381,7 +411,7 @@ def summarize(directory):
         if late or global_late else "")
     summary["global_windows_total"] = len(globals_)
     summary["global_duplicate_ids_total"] = len(globals_) - len({row["aggregate_id"] for row in globals_})
-    summary["global_incomplete_windows_total"] = sum(row["contributing_partitions"] != partitions or
+    summary["global_protocol_incomplete_windows_total"] = sum(row["contributing_partitions"] != partitions or
                                                     row["expected_partitions"] != partitions for row in globals_)
     summary["global_protocol_errors_total"] = logs["cloud-core"].count("global protocol error")
     for key in ("simulator_locally_dropped_total", "simulator_mqtt_errors_total", "simulator_eos_failures_total",
@@ -390,8 +420,8 @@ def summarize(directory):
                 "global_duplicate_ids_total", "global_protocol_errors_total"):
         if summary[key] != 0:
             failures.append(key)
-    if summary["global_incomplete_windows_total"] != 0 and not (late or global_late):
-        failures.append("global_incomplete_windows_total")
+    if summary["global_protocol_incomplete_windows_total"] != 0 and not (late or global_late):
+        failures.append("global_protocol_incomplete_windows_total")
     if summary["edge_max_queue_utilization_pct"] >= 100:
         failures.append("edge_queue_reached_capacity")
     for sim, edge in ((sim, next(row for row in edges if row["edge_id"] == sim["edge_id"])) for sim in simulators):

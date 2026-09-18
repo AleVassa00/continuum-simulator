@@ -14,7 +14,7 @@ simulator:
 
 edge:
   window_size: 5m
-  ingress_queue_capacity: 10000
+  ingress_queue_capacity: 15000
   kafka_producer_batch_size: 10
   kafka_producer_batch_max_wait: 100ms
 

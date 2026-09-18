@@ -350,15 +350,15 @@ ensure_netem_dependencies() {
     ssh_run "${host}" 'set -euo pipefail
 if ! command -v tc >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1 || ! command -v nsenter >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
-    sudo -n apt-get update -y
-    sudo -n apt-get install -y iproute2 util-linux
+      sudo -n apt-get update -y
+      sudo -n apt-get install -y iproute2 util-linux
   elif command -v dnf >/dev/null 2>&1; then
-    sudo -n dnf install -y iproute util-linux
+      sudo -n dnf install -y iproute iproute-tc util-linux
   elif command -v yum >/dev/null 2>&1; then
-    sudo -n yum install -y iproute util-linux
+      sudo -n yum install -y iproute iproute-tc util-linux
   else
-    echo "package manager non supportato per installare tc/ip/nsenter" >&2
-    exit 1
+      echo "package manager non supportato per installare tc/ip/nsenter" >&2
+      exit 1
   fi
 fi
 command -v tc >/dev/null
