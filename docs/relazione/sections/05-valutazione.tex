@@ -3,8 +3,120 @@
 
 \subsection{Ambiente e metodologia sperimentale}
 
+La valutazione risponde a due domande. La prima riguarda la capacità del
+livello Cloud di assorbire lo stesso workload riducendo ritardo e backlog
+all'aumentare delle repliche. La seconda riguarda l'effetto di latenza e banda
+disponibile sui due confini di rete Simulator--Edge ed Edge--Cloud. Le prove
+sono eseguite sul deployment AWS di Fig.~\ref{fig:architecture}; ogni
+configurazione viene ripetuta tre volte e viene considerata valida soltanto se
+i controlli di qualità confermano la completezza della pipeline.
+
+Il workload definitivo comprende 2\,106\,784 osservazioni distribuite tra 13
+replay shard. Il replay usa un fattore di accelerazione pari a 20\,000; tale
+valore è stato scelto mediante una calibrazione preliminare per esercitare il
+livello Cloud senza introdurre intenzionalmente perdite nei componenti a
+monte. La configurazione comune alle campagne è riassunta in
+Tab.~\ref{tab:experiment-configuration}.
+
+\begin{table}[t]
+    \caption{Configurazione comune delle campagne sperimentali.}
+    \label{tab:experiment-configuration}
+    \centering
+    \begin{tabular}{@{}lr@{}}
+        \toprule
+        Parametro & Valore \\
+        \midrule
+        Edge Site / Simulator & 13 \\
+        Partizioni \code{edge-aggregates} & 6 \\
+        Finestra Edge & 5 min \\
+        Finestra Cloud & 15 min \\
+        Fattore di accelerazione & 20\,000 \\
+        Batch producer Edge & 10 \\
+        Batch commit Cloud & 100 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Per ogni run vengono conservati configurazione effettiva, log, metriche dei
+container, serie temporali del consumer lag e aggregati finali PostgreSQL. La
+riconciliazione verifica che gli eventi offerti dai Simulator coincidano con
+quelli accettati dagli Edge, che non vi siano errori di pubblicazione o record
+late, che tutte le finestre globali siano complete e che il lag finale sia
+nullo. Le esecuzioni che non rispettano tali condizioni vengono documentate
+ma escluse dal confronto prestazionale.
+
+La metrica principale è la \emph{global emission latency}, cioè il ritardo con
+cui una finestra globale viene emessa rispetto all'istante nominale previsto
+dalla timeline accelerata. Indicando con $t_0$ l'avvio sincronizzato del
+replay, con $e_0$ l'origine della timeline del dataset, con $f$ il fattore di
+accelerazione e con $w_e$ la fine della finestra, la deadline nominale è
+
+\begin{equation}
+    d(w_e) = t_0 + \frac{w_e-e_0}{f}.
+\end{equation}
+
+La latenza è la differenza tra l'istante di emissione del Global Aggregator e
+$d(w_e)$. Vengono riportati media, mediana, 95-esimo e 99-esimo percentile,
+insieme al massimo consumer lag, all'utilizzo di CPU e memoria e al tempo
+complessivo della run. Poiché il replay impone il ritmo di ingresso, il
+makespan e il goodput sono usati soprattutto come controlli di capacità e
+completezza; latenza e backlog evidenziano più direttamente il beneficio del
+parallelismo Cloud.
+
 \subsection{Scalabilità del livello Cloud}
+
+La campagna usa un fixed workload e varia il numero di Cloud Worker tra
+$W\in\{1,2,3,4,6\}$. Il topic mantiene sei partizioni in tutte le prove:
+in questo modo cambia soltanto il numero di partizioni elaborate in parallelo,
+mentre restano invariati dati, assegnamento degli Edge e risultati attesi. Sei
+worker costituiscono il limite di parallelismo utile della configurazione;
+repliche ulteriori rimarrebbero senza partizioni assegnate.
+
+Il confronto utilizza le distribuzioni della global emission latency, il picco
+e l'evoluzione del lag per partizione e l'utilizzo delle risorse. I valori
+riportati nei grafici saranno la media delle tre repliche valide; la
+variabilità tra run verrà mostrata esplicitamente, senza interpretare come
+speedup la sola durata del replay, che è principalmente determinata dal rate
+di ingresso.
+
+% Risultati da inserire al termine della campagna:
+% - tabella con run valide/scartate e motivazione;
+% - grafico p50/p95/p99 della global emission latency per W;
+% - grafico del massimo lag Cloud per W e, se utile, serie temporali W1/W6;
+% - CPU dei worker e del Cloud Core;
+% - discussione dello sbilanciamento fra le sei partizioni e del punto di
+%   saturazione oltre il quale aggiungere worker non porta benefici.
 
 \subsection{Impatto delle condizioni di rete}
 
+Le condizioni di rete vengono emulate tramite Linux \code{tc-netem} nel
+network namespace dei container interessati. Le regole sono selettive: sul
+confine Simulator--Edge agiscono soltanto sul traffico MQTT verso il broker
+associato; sul confine Edge--Cloud agiscono soltanto sulle connessioni Kafka.
+Il traffico di orchestrazione e raccolta delle metriche non viene quindi
+alterato.
+
+La campagna usa tre Cloud Worker e confronta una baseline senza emulazione con
+ritardi aggiuntivi di 50 e 100 ms e con limiti di banda applicati separatamente
+ai due confini. Ogni profilo modifica una sola variabile alla volta. Oltre alla
+latenza di emissione e al lag vengono controllati code, errori e perdite: una
+riduzione apparente del carico ottenuta scartando telemetria non viene
+interpretata come miglioramento prestazionale.
+
+% Risultati da inserire al termine della campagna:
+% - tabella con profilo, run valide, latenza e banda effettivamente applicate;
+% - grafici latency/lag rispetto al ritardo e al rate sui due confini;
+% - confronto delle code Simulator/Edge e dei tempi di pubblicazione Kafka;
+% - distinzione fra degradazione controllata e perdita di completezza.
+
 \subsection{Discussione dei risultati}
+
+La discussione finale confronterà i benefici dell'aumento dei worker con i
+limiti osservati: parallelismo massimo pari al numero di partizioni,
+sbilanciamento residuo del carico, costo del coordinamento tramite Kafka e
+possibile contesa del Cloud Core, che ospita broker e Global Aggregator. Le
+conclusioni distingueranno inoltre la capacità di mantenere risultati completi
+dalla sola velocità di elaborazione.
+
+% Completare dopo le campagne con conclusioni quantitative, evitando di
+% generalizzare oltre il deployment e il dataset effettivamente misurati.

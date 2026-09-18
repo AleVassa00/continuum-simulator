@@ -400,7 +400,13 @@ main() {
   NETWORK_ENABLED="$(
     cd "${REPO_ROOT}"
     go run ./cmd/runconfig --experiment "${EXPERIMENT_CONFIG}" --describe |
-      jq -er '.network.enabled | select(type == "boolean")'
+      jq -r '
+        if (.network.enabled | type) == "boolean" then
+          .network.enabled
+        else
+          error("network.enabled must be boolean")
+        end
+      '
   )"
 
   load_terraform_addresses

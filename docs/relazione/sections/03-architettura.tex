@@ -7,6 +7,16 @@ Fig.~\ref{fig:architecture}. Il sistema riproduce le osservazioni dei sensori
 selezionati dal dataset storico, le elabora localmente negli Edge Site e
 propaga verso il Cloud risultati progressivamente aggregati.
 
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{architettura.png}
+    \caption{Deployment distribuito su AWS e flusso dei dati tra Simulator,
+    Edge, Kafka, Cloud Worker, Global Aggregator e PostgreSQL. Amazon RDS
+    appartiene alla stessa VPC ed è rappresentato separatamente nella parte
+    inferiore esclusivamente per leggibilità.}
+    \label{fig:architecture}
+\end{figure*}
+
 La pipeline è composta dai seguenti stadi logici.
 
 \begin{enumerate}
@@ -19,7 +29,7 @@ La pipeline è composta dai seguenti stadi logici.
     \item \textbf{Elaborazione Edge:}
     Ogni Edge Site comprende un broker MQTT e un Edge Gateway. Il gateway
     riceve e valida le misure di temperatura, umidità e pressione e le
-    aggrega localmente su finestre temporali di configurabili. Questa prima
+    aggrega localmente su finestre temporali di durata configurabile. Questa
     elaborazione consente di ridurre il volume di dati inoltrato verso il
     Cloud, trasferendo statistiche aggregate anziché le singole osservazioni.
 
@@ -28,17 +38,20 @@ La pipeline è composta dai seguenti stadi logici.
     \code{edge-aggregates}. Kafka è utilizzato per disaccoppiare produttori
     e consumatori e per fornire persistenza e ordinamento dei record
     all'interno delle partizioni~\cite{kafka}. Gli Edge sono distribuiti
-    staticamente tra un numero configurabile di partizioni, bilanciando il
-    carico atteso sulla base del numero di eventi presenti nei rispettivi
-    replay shard.
+    staticamente tra un numero configurabile di partizioni. L'assegnamento è
+    calcolato prima del deployment sulla base del numero di eventi dei replay
+    shard, così da ridurre lo sbilanciamento atteso senza introdurre decisioni
+    dinamiche nel data path.
+
     \item \textbf{Elaborazione Cloud.}
     I Cloud Worker appartengono allo stesso consumer group Kafka. Ciascuna
-    partizione è assegnata a un solo worker e costituisce un'unità
-    indipendente di aggregazione. I contributi provenienti dagli Edge vengono
+    partizione è assegnata a un solo worker e conserva uno stato di
+    aggregazione indipendente. Lo stato appartiene quindi alla partizione
+    logica, non alla replica che la elabora. I contributi degli Edge vengono
     combinati su finestre temporali di durata configurabile, definita come
-    multiplo della finestra Edge. Aumentando il numero di worker è quindi
-    possibile elaborare più partizioni in parallelo, fino al limite imposto
-    dal numero di partizioni del topic.
+    multiplo della finestra Edge. Aumentando il numero di worker è possibile
+    elaborare più partizioni in parallelo, fino al limite imposto dal numero
+    di partizioni del topic.
 
     \item \textbf{Aggregazione globale e persistenza:}
     I risultati dei Cloud Worker vengono pubblicati sul topic
@@ -51,5 +64,8 @@ La pipeline è composta dai seguenti stadi logici.
 
 Il numero di Cloud Worker può essere modificato tra esecuzioni senza cambiare
 la suddivisione logica del carico né il significato dei risultati prodotti.
-Questo permette di utilizzare il parallelismo del livello Cloud come
-principale parametro nella valutazione della scalabilità orizzontale.
+Il numero di partizioni e quello dei worker rimangono configurazioni
+indipendenti: il primo definisce il parallelismo massimo e la granularità del
+carico, il secondo quanta parte di tale parallelismo viene effettivamente
+utilizzata. Questa separazione consente di valutare la scalabilità orizzontale
+del livello Cloud mantenendo invariati workload e risultati attesi.

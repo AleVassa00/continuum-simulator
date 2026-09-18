@@ -69,7 +69,13 @@ load_experiment_description() {
   CONFIGURED_WORKERS="$(jq -er '.workers' <<<"${description}")"
   CONFIGURED_PARTITIONS="$(jq -er '.kafka_partitions | select(type == "number" and . > 0 and . == floor)' <<<"${description}")"
   NETWORK_CONFIG_JSON="$(jq -cer '.network' <<<"${description}")"
-  NETWORK_ENABLED="$(jq -er '.network.enabled | select(type == "boolean")' <<<"${description}")"
+  NETWORK_ENABLED="$(jq -r '
+    if (.network.enabled | type) == "boolean" then
+      .network.enabled
+    else
+      error("network.enabled must be boolean")
+    end
+  ' <<<"${description}")"
 }
 
 initialize_artifacts() {

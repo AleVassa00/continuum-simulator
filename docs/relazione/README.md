@@ -1,10 +1,10 @@
 # Relazione A2
 
-Prima bozza in italiano, in formato IEEE a due colonne, basata sul codice e sugli artefatti presenti l'11 settembre 2026. Il documento principale è `main.tex`; la versione compilata e verificata è `main.pdf`, di **6 pagine**. Il limite della traccia è **8 pagine complessive**: mantenere spazio per i grafici della campagna definitiva.
+Relazione in italiano, in formato IEEE a due colonne. Il documento principale è `main.tex`; `main.pdf` è la versione compilata. Il limite della traccia è **8 pagine complessive**: la sezione di valutazione è predisposta per accogliere soltanto i grafici e le tabelle essenziali delle campagne definitive.
 
 ## Modifica e compilazione
 
-I capitoli sono in `sections/`; `references.tex` contiene la bibliografia. Il diagramma dell'architettura è TikZ e si modifica in `sections/03-architettura.tex`. La figura sul dataset è vettoriale e già inclusa in `figures/workload.pdf`. In `sections/06-limiti.tex` è presente un cambio colonna manuale commentato per l'ultima pagina della bozza: rimuoverlo o riposizionarlo se cambia il testo.
+I capitoli sono in `sections/`; `references.tex` contiene la bibliografia. Il diagramma del deployment è `figures/architettura.png` ed è incluso in `sections/03-architettura.tex`; Amazon RDS appartiene logicamente alla VPC anche se nel PNG è separato graficamente per leggibilità. La figura sul dataset è vettoriale e già inclusa in `figures/workload.pdf`.
 
 Da questa cartella, con TeX Live o MiKTeX e i pacchetti IEEEtran, babel-italian, AMS, graphicx, booktabs, array, tabularx, xcolor, cite, PGF/TikZ e hyperref:
 
@@ -30,9 +30,9 @@ La fonte vincolante è `progettoA2_SDCC2025-26.pdf`, nella radice del workspace.
 | Architettura e scelte motivate | Introduzione, requisiti, architettura |
 | Implementazione realizzata | Contratti, code, validazione, commit, sink |
 | Piattaforma e librerie | Tabella delle dipendenze Go, deployment, notebook |
-| Risultati analizzati | Verifiche funzionali e prove AWS preliminari con esito fallito |
-| Valutazione di scalabilità | Metodo proposto; campagna definitiva da eseguire |
-| Condizioni di rete emulate | Metodo proposto; tc-netem ancora da implementare |
+| Risultati analizzati | Sezione predisposta; inserire gli esiti delle campagne definitive |
+| Valutazione di scalabilità | Protocollo fixed-workload con 1, 2, 3, 4 e 6 Cloud Worker |
+| Condizioni di rete emulate | Campagna `tc-netem` sui confini Simulator--Edge ed Edge--Cloud |
 | Limitazioni | Stato volatile, perdite, rebalance, singolo broker, rappresentatività |
 
 Gli appunti `../discussione-professoressa-architettura.md` sono stati usati come contesto per computazione locale/globale, assenza del Fog e nodi logici containerizzati. Essendo una ricostruzione, non vengono presentati come una trascrizione né come prova di approvazione formale.
@@ -69,13 +69,12 @@ I dati grezzi AWS sono ignorati da Git: quando si prepara la consegna occorre es
 
 ## Lavoro necessario prima della consegna
 
-1. Ottenere una nuova run pilota con controlli di qualità superati e strumentazione definitiva.
-2. Fissare il carico dopo la calibrazione; eseguire serie W1/W2/W4 e, se utile, W6, con più carichi e ripetizioni. Le cinque ripetizioni suggerite sono una scelta metodologica della bozza, non un numero imposto dalla traccia.
-3. Implementare e misurare i profili di latenza e banda sui due confini di rete. Il testo attuale li presenta come attività futura.
-4. Calcolare i ritardi sulla timeline accelerata, dichiarando origine e fine dell'intervallo di misura; tenere separata la finestra chiusa anticipatamente da EOS. Il collector corrente non produce già questi percentili.
-5. Documentare istanze, immagini, quote, crediti CPU T3, frequenza delle metriche, numero di run valide e scartate, equivalenza numerica degli output.
-6. Sostituire il piano di valutazione con risultati e discussione: almeno andamento di throughput/ritardo al variare di carico e repliche, risorse e lag, effetto della rete. Non è necessario conservare tutto il testo metodologico attuale quando servono pagine per i grafici.
-7. Aggiornare abstract e conclusioni, rimuovere la nota di bozza soltanto quando il testo rappresenta gli esiti effettivi e ricontrollare il limite delle 8 pagine.
+1. Completare tre repliche valide per ciascuna configurazione della campagna di scalabilità.
+2. Aggregare media e variabilità fra repliche e produrre i grafici indicati nei commenti di `sections/05-valutazione.tex`.
+3. Eseguire la campagna di rete e distinguere le prove complete da quelle con perdite o errori.
+4. Documentare tipi di istanza, quote container, frequenza delle metriche, run valide/scartate ed equivalenza degli output.
+5. Sostituire i commenti promemoria della valutazione con risultati e discussione quantitativa.
+6. Aggiornare abstract e conclusioni, quindi ricontrollare il limite delle 8 pagine.
 
 ## Verifica eseguita durante la redazione
 

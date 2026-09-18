@@ -56,3 +56,4 @@ dataset/output/*
 !dataset/output/replay_shards_summary.csv
 docs/discussione-professoressa-architettura.md
 deploy/pilot.env
+tmp

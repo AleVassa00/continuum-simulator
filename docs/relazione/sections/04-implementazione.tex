@@ -41,8 +41,10 @@ stesso intervallo temporale.
 La chiusura delle finestre Cloud è governata dal progresso in event time
 delle sorgenti e non da timeout in processing time. Ogni
 \code{EdgeAggregate} contiene il campo \code{CompleteThrough}, che certifica
-che l'Edge non produrrà successivamente aggregati con fine della finestra
-precedente o uguale a tale istante.
+che l'Edge non produrrà successivamente aggregati con estremo superiore
+precedente o uguale a tale istante. Aggregato e progresso viaggiano nello
+stesso record, evitando che la certificazione possa precedere i dati cui si
+riferisce.
 
 Quando l'arrivo di un evento determina il passaggio a una nuova finestra,
 l'Edge emette l'aggregato della finestra precedente e può avanzare
@@ -68,7 +70,10 @@ la frontiera non può avanzare. In condizioni normali essa coincide quindi
 con il minimo progresso degli Edge della partizione; il secondo termine
 impedisce invece che una sorgente eccessivamente in ritardo blocchi
 indefinitamente la finalizzazione delle finestre. Una finestra Cloud viene
-emessa quando il proprio estremo superiore non è successivo a $W_P$.
+emessa quando il proprio estremo superiore non è successivo a $W_P$. Negli
+esperimenti principali $S$ viene mantenuto sufficientemente ampio da non
+forzare l'avanzamento della frontiera: la completezza dipende quindi dal
+progresso naturale di tutti gli Edge della partizione.
 
 Un aggregato relativo a una finestra già superata dalla frontiera è
 considerato \emph{late}: non modifica né riapre il risultato già emesso.
@@ -135,7 +140,9 @@ I Cloud Worker effettuano il commit degli offset Kafka solamente dopo che il
 record di input è stato elaborato e gli eventuali output sono stati pubblicati
 con successo. I commit possono essere raggruppati in batch configurabili per
 ridurne il costo; la ricezione di un marker terminale forza invece il commit
-degli offset ancora pendenti. Il Global Aggregator applica lo stesso principio,
+degli offset ancora pendenti. Se un worker gestisce più partizioni, conserva
+per ciascuna il massimo next offset elaborato e include tutti gli avanzamenti
+pendenti nel commit. Il Global Aggregator applica lo stesso principio,
 effettuando il commit dopo l'elaborazione e la scrittura del risultato nel
 sink.
 

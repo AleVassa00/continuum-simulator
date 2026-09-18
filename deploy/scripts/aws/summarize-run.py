@@ -25,8 +25,13 @@ UNITS = {"B": 1, "kB": 1000, "MB": 1000**2, "GB": 1000**3,
 
 
 def timestamp(value):
-    # Docker/date emit nanoseconds; Python 3.9 accepts microseconds.
-    value = re.sub(r"(\.\d{6})\d+", r"\1", value)
+    # Docker/date and PostgreSQL emit variable fractional precision; normalize it
+    # to the six microsecond digits accepted by every supported Python version.
+    value = re.sub(
+        r"\.(\d+)(?=Z$|[+-]\d{2}:\d{2}$)",
+        lambda match: "." + (match.group(1) + "000000")[:6],
+        value,
+    )
     result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if result.tzinfo is None:
         raise ValueError(f"Timestamp has no timezone: {value}")
@@ -44,6 +49,17 @@ def write_csv(path, rows, fields=None):
         writer = csv.DictWriter(stream, fieldnames=fields or list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
+
+def percentile(values, probability):
+    """Return a linearly interpolated percentile over a non-empty sample."""
+    ordered = sorted(values)
+    rank = (len(ordered) - 1) * probability
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return ordered[lower]
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (rank - lower)
 
 
 def records(text, marker):
@@ -218,7 +234,7 @@ def summarize(directory):
     factors = {float(env["ACCELERATION_FACTOR"]) for env in environments}
     if len(expected) != len(set(expected)) or len(epochs) != 1 or len(factors) != 1:
         raise ValueError("Simulator sites or replay configuration are inconsistent")
-    timestamp(epochs.pop())  # Keep validating the common replay epoch.
+    epoch = timestamp(epochs.pop())
     factor = factors.pop()
     if not math.isfinite(factor) or factor <= 0:
         raise ValueError("Acceleration must be finite and positive")
@@ -301,11 +317,26 @@ def summarize(directory):
             failures.append(f"mqtt_delivery_count:{sim['edge_id']}")
 
     window_rows = []
+    global_emission_latencies = []
     for row in sorted(globals_, key=lambda row: row["window_start"]):
+        window_end = timestamp(row["window_end"])
+        emitted_at = timestamp(row["emitted_at"])
+        nominal_deadline = start + (window_end - epoch) / factor
+        emission_latency = (emitted_at - nominal_deadline).total_seconds()
         flat = {key: value for key, value in row.items() if not isinstance(value, dict)}
+        flat["nominal_deadline"] = nominal_deadline.isoformat()
+        flat["global_emission_latency_seconds"] = emission_latency
         for metric in ("temperature", "humidity", "pressure"):
             flat.update({f"{metric}_{key}": value for key, value in row[metric].items()})
         window_rows.append(flat)
+        global_emission_latencies.append(emission_latency)
+
+    summary["global_emission_latency_samples"] = len(global_emission_latencies)
+    summary["global_emission_latency_avg_seconds"] = statistics.mean(global_emission_latencies)
+    summary["global_emission_latency_p50_seconds"] = percentile(global_emission_latencies, 0.50)
+    summary["global_emission_latency_p95_seconds"] = percentile(global_emission_latencies, 0.95)
+    summary["global_emission_latency_p99_seconds"] = percentile(global_emission_latencies, 0.99)
+    summary["global_emission_latency_max_seconds"] = max(global_emission_latencies)
 
     lag = [row for row in parse_lag((directory / "metrics" / "kafka-lag.log").read_text(encoding="utf-8-sig"), partitions)
            if start <= timestamp(row["timestamp"]) <= end]
