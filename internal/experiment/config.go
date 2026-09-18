@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -62,6 +63,7 @@ type Config struct {
 	Simulator  SimulatorConfig  `yaml:"simulator"`
 	Edge       EdgeConfig       `yaml:"edge"`
 	Cloud      CloudConfig      `yaml:"cloud"`
+	Network    *NetworkConfig   `yaml:"network,omitempty"`
 }
 
 type ExperimentConfig struct {
@@ -129,6 +131,63 @@ type CloudConfig struct {
 	WindowSize              Duration         `yaml:"window_size"`
 }
 
+const NetworkRateUnlimited = NetworkRate("unlimited")
+
+var networkRatePattern = regexp.MustCompile(`^[1-9][0-9]*(kbit|mbit|gbit)$`)
+
+type NetworkRate string
+
+func (rate *NetworkRate) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+		return fmt.Errorf("network rate deve essere una stringa come 500kbit, 10mbit oppure unlimited")
+	}
+
+	value := NetworkRate(strings.ToLower(strings.TrimSpace(node.Value)))
+	if value != NetworkRateUnlimited && !networkRatePattern.MatchString(string(value)) {
+		return fmt.Errorf("network rate %q non valido: usare un intero positivo seguito da kbit, mbit o gbit, oppure unlimited", node.Value)
+	}
+
+	*rate = value
+	return nil
+}
+
+func (rate NetworkRate) Resolved() NetworkRate {
+	if strings.TrimSpace(string(rate)) == "" {
+		return NetworkRateUnlimited
+	}
+	return rate
+}
+
+type NetworkConfig struct {
+	Enabled         bool              `yaml:"enabled"`
+	SimulatorToEdge NetworkLinkConfig `yaml:"simulator_to_edge,omitempty"`
+	EdgeToKafka     NetworkLinkConfig `yaml:"edge_to_kafka,omitempty"`
+}
+
+type NetworkLinkConfig struct {
+	Enabled bool        `yaml:"enabled"`
+	Delay   Duration    `yaml:"delay,omitempty"`
+	Rate    NetworkRate `yaml:"rate,omitempty"`
+}
+
+func (config NetworkLinkConfig) ResolvedRate() NetworkRate {
+	return config.Rate.Resolved()
+}
+
+func (config Config) ResolvedNetwork() NetworkConfig {
+	if config.Network == nil {
+		return NetworkConfig{
+			SimulatorToEdge: NetworkLinkConfig{Rate: NetworkRateUnlimited},
+			EdgeToKafka:     NetworkLinkConfig{Rate: NetworkRateUnlimited},
+		}
+	}
+
+	resolved := *config.Network
+	resolved.SimulatorToEdge.Rate = resolved.SimulatorToEdge.ResolvedRate()
+	resolved.EdgeToKafka.Rate = resolved.EdgeToKafka.ResolvedRate()
+	return resolved
+}
+
 // CommitBatchSize rejects fractional YAML values instead of truncating them.
 type CommitBatchSize int
 
@@ -168,6 +227,7 @@ type EffectiveConfig struct {
 	Simulator  SimulatorConfig         `yaml:"simulator"`
 	Edge       EdgeConfig              `yaml:"edge"`
 	Cloud      CloudConfig             `yaml:"cloud"`
+	Network    *NetworkConfig          `yaml:"network,omitempty"`
 }
 
 type EffectiveWorkloadConfig struct {
@@ -293,7 +353,43 @@ func (config Config) Validate() error {
 			config.Edge.WindowSize,
 		)
 	}
+	if err := validateNetwork(config.ResolvedNetwork()); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func validateNetwork(config NetworkConfig) error {
+	links := []struct {
+		name   string
+		config NetworkLinkConfig
+	}{
+		{name: "network.simulator_to_edge", config: config.SimulatorToEdge},
+		{name: "network.edge_to_kafka", config: config.EdgeToKafka},
+	}
+
+	enabledLinks := 0
+	for _, link := range links {
+		if link.config.Delay.Duration() < 0 {
+			return fmt.Errorf("%s.delay non puo essere negativo", link.name)
+		}
+		rate := link.config.ResolvedRate()
+		if rate != NetworkRateUnlimited && !networkRatePattern.MatchString(string(rate)) {
+			return fmt.Errorf("%s.rate %q non valido", link.name, rate)
+		}
+		if !link.config.Enabled {
+			continue
+		}
+		enabledLinks++
+		if link.config.Delay.Duration() == 0 && rate == NetworkRateUnlimited {
+			return fmt.Errorf("%s abilitato senza delay o limite di banda", link.name)
+		}
+	}
+
+	if config.Enabled && enabledLinks == 0 {
+		return fmt.Errorf("network.enabled=true richiede almeno un collegamento abilitato")
+	}
 	return nil
 }
 
@@ -317,6 +413,10 @@ func ResolveDefaults(config Config) Config {
 	if config.Kafka.Partitions == nil {
 		count := config.Kafka.ResolvedPartitions()
 		config.Kafka.Partitions = &count
+	}
+	if config.Network != nil {
+		resolvedNetwork := config.ResolvedNetwork()
+		config.Network = &resolvedNetwork
 	}
 	simulator := config.Simulator
 	if simulator.StartLateTolerance.Duration() <= 0 {
@@ -360,6 +460,7 @@ func BuildEffective(config Config, replayStartAt time.Time) EffectiveConfig {
 		Simulator: config.Simulator,
 		Edge:      config.Edge,
 		Cloud:     config.Cloud,
+		Network:   config.Network,
 	}
 }
 

@@ -1,0 +1,34 @@
+experiment:
+  name: edge-kafka-delay-100ms
+
+workload:
+  acceleration_factor: 20000
+  start_lead_time: 60s
+
+simulator:
+  telemetry_queue_capacity: 5000
+  start_late_tolerance: 10s
+
+edge:
+  window_size: 5m
+  ingress_queue_capacity: 10000
+  kafka_producer_batch_size: 10
+  kafka_producer_batch_max_wait: 100ms
+
+cloud:
+  consumer_commit_batch_size: 100
+  max_edge_watermark_skew: 720h
+  workers: 3
+  window_size: 15m
+
+kafka:
+  partitions: 6
+
+network:
+  enabled: true
+  simulator_to_edge:
+    enabled: false
+  edge_to_kafka:
+    enabled: true
+    delay: 100ms
+    rate: unlimited

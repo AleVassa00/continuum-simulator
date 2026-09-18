@@ -39,6 +39,8 @@ RUN_STATUS="failed"
 ADDRESSES_LOADED="false"
 METRICS_STARTED="false"
 KAFKA_METRICS_STARTED="false"
+NETWORK_ENABLED="false"
+NETWORK_CONFIG_JSON='{"enabled":false,"simulator_to_edge":{"enabled":false,"delay":"0s","rate":"unlimited"},"edge_to_kafka":{"enabled":false,"delay":"0s","rate":"unlimited"}}'
 
 validate_positive_integer() {
   local name="$1"
@@ -66,6 +68,8 @@ load_experiment_description() {
     die "experiment.name puo contenere solo lettere, numeri, punto, underscore e trattino"
   CONFIGURED_WORKERS="$(jq -er '.workers' <<<"${description}")"
   CONFIGURED_PARTITIONS="$(jq -er '.kafka_partitions | select(type == "number" and . > 0 and . == floor)' <<<"${description}")"
+  NETWORK_CONFIG_JSON="$(jq -cer '.network' <<<"${description}")"
+  NETWORK_ENABLED="$(jq -er '.network.enabled | select(type == "boolean")' <<<"${description}")"
 }
 
 initialize_artifacts() {
@@ -91,12 +95,13 @@ initialize_artifacts() {
   if ! mkdir "${ARTIFACT_DIR}"; then
     die "directory artefatti gia esistente o non creabile: ${ARTIFACT_DIR}"
   fi
-  mkdir "${ARTIFACT_DIR}/logs" "${ARTIFACT_DIR}/metrics" "${ARTIFACT_DIR}/compose"
+  mkdir "${ARTIFACT_DIR}/logs" "${ARTIFACT_DIR}/metrics" "${ARTIFACT_DIR}/compose" "${ARTIFACT_DIR}/netem"
   exec > >(tee -a "${ARTIFACT_DIR}/orchestrator.log") 2>&1
   trap finalize_run EXIT
 
   cp "${EXPERIMENT_CONFIG_PATH}" "${ARTIFACT_DIR}/experiment.yaml"
   cp "${RESOURCE_PROFILE_PATH}" "${ARTIFACT_DIR}/resource-profile.env"
+  jq . <<<"${NETWORK_CONFIG_JSON}" >"${ARTIFACT_DIR}/netem/requested.json"
 
   public_json="$(terraform_output public_ips)"
   private_json="$(terraform_output private_ips)"
@@ -199,6 +204,7 @@ write_run_metadata() {
     --argjson kafka_partitions "${CONFIGURED_PARTITIONS}" \
     --argjson metrics_interval_seconds "${METRICS_INTERVAL_SECONDS}" \
     --argjson instance_identities "${INSTANCE_IDENTITIES}" \
+    --argjson network "${NETWORK_CONFIG_JSON}" \
     --argjson exit_code "${exit_code}" \
     '{
       run_id: $run_id,
@@ -220,6 +226,7 @@ write_run_metadata() {
         kafka_lag: "metrics/kafka-lag.log",
         kafka_lag_final: "kafka-consumer-groups-final.txt"
       },
+      network: $network,
       ec2: $instance_identities,
       cpu_credits: {
         source: "AWS/EC2 CloudWatch",
@@ -292,6 +299,13 @@ finalize_run() {
   set +e
 
   stop_metric_collectors
+
+  if [[ "${NETWORK_ENABLED}" == "true" && -n "${ARTIFACT_DIR}" ]]; then
+    capture_netem_snapshot final || true
+  fi
+  if [[ "${NETWORK_ENABLED}" == "true" && "${ADDRESSES_LOADED}" == "true" && -n "${ARTIFACT_DIR}" ]]; then
+    clear_netem final || log "cleanup netem finale incompleta"
+  fi
 
   if [[ -n "${ARTIFACT_DIR}" ]]; then
     if [[ "${KAFKA_METRICS_STARTED}" == "true" ]]; then
@@ -383,6 +397,108 @@ docker compose --env-file .env -f deploy/compose/distributed/workers.generated.y
   ssh_run "${PUBLIC_IPS[cloud-core]}" 'set -euo pipefail
 cd /opt/continuum/current
 docker compose --env-file .env -f deploy/compose/distributed/cloud-core.generated.yml down --remove-orphans --volumes --timeout 30'
+}
+
+run_netem_helper() {
+  local role="$1"
+  shift
+  ssh_run "${PUBLIC_IPS[${role}]}" bash -s -- "$@" <"${SCRIPT_DIR}/netem-container.sh"
+}
+
+clear_netem() {
+  local phase="$1"
+  local status=0
+  local output="${ARTIFACT_DIR}/netem/${phase}-cleanup.log"
+
+  : >"${output}"
+  if ! run_netem_helper simulator clear simulator-edge- 13 >>"${output}" 2>&1; then
+    status=1
+  fi
+  if ! run_netem_helper edge clear edge- 13 >>"${output}" 2>&1; then
+    status=1
+  fi
+  return "${status}"
+}
+
+apply_netem_link() {
+  local link="$1"
+  local role prefix target_environment delay rate
+
+  [[ "$(jq -r --arg link "${link}" '.[$link].enabled' <<<"${NETWORK_CONFIG_JSON}")" == "true" ]] || return 0
+  delay="$(jq -er --arg link "${link}" '.[$link].delay' <<<"${NETWORK_CONFIG_JSON}")"
+  rate="$(jq -er --arg link "${link}" '.[$link].rate' <<<"${NETWORK_CONFIG_JSON}")"
+
+  case "${link}" in
+    simulator_to_edge)
+      role="simulator"
+      prefix="simulator-edge-"
+      target_environment="MQTT_ENDPOINT"
+      ;;
+    edge_to_kafka)
+      role="edge"
+      prefix="edge-"
+      target_environment="KAFKA_BROKER"
+      ;;
+    *) die "collegamento netem non supportato: ${link}" ;;
+  esac
+
+  run_netem_helper "${role}" apply "${prefix}" 13 "${delay}" "${rate}" "${target_environment}" \
+    >"${ARTIFACT_DIR}/netem/${link}-applied.tsv" ||
+    die "applicazione netem fallita per ${link}"
+  run_netem_helper "${role}" show "${prefix}" 13 \
+    >"${ARTIFACT_DIR}/netem/${link}-verified.txt" ||
+    die "verifica netem fallita per ${link}"
+}
+
+apply_netem() {
+  [[ "${NETWORK_ENABLED}" == "true" ]] || return 0
+  log "applicazione dei profili tc-netem nelle namespace dei container"
+  apply_netem_link simulator_to_edge
+  apply_netem_link edge_to_kafka
+}
+
+capture_netem_snapshot() {
+  local phase="$1"
+  local link role prefix
+
+  for link in simulator_to_edge edge_to_kafka; do
+    [[ "$(jq -r --arg link "${link}" '.[$link].enabled' <<<"${NETWORK_CONFIG_JSON}")" == "true" ]] || continue
+    case "${link}" in
+      simulator_to_edge) role="simulator"; prefix="simulator-edge-" ;;
+      edge_to_kafka) role="edge"; prefix="edge-" ;;
+    esac
+    run_netem_helper "${role}" snapshot "${prefix}" 13 \
+      >"${ARTIFACT_DIR}/netem/${link}-${phase}.txt"
+  done
+}
+
+start_netem_metric_collectors() {
+  local link role prefix output pid
+
+  [[ "${NETWORK_ENABLED}" == "true" ]] || return 0
+  for link in simulator_to_edge edge_to_kafka; do
+    [[ "$(jq -r --arg link "${link}" '.[$link].enabled' <<<"${NETWORK_CONFIG_JSON}")" == "true" ]] || continue
+    case "${link}" in
+      simulator_to_edge) role="simulator"; prefix="simulator-edge-" ;;
+      edge_to_kafka) role="edge"; prefix="edge-" ;;
+    esac
+    output="${ARTIFACT_DIR}/metrics/netem-${link}.log"
+    run_netem_helper "${role}" monitor "${prefix}" 13 "${METRICS_INTERVAL_SECONDS}" \
+      >"${output}" 2>&1 &
+    METRICS_PIDS["netem-${link}"]=$!
+  done
+
+  for link in simulator_to_edge edge_to_kafka; do
+    output="${ARTIFACT_DIR}/metrics/netem-${link}.log"
+    [[ -e "${output}" ]] || continue
+    for _ in $(seq 1 10); do
+      [[ -s "${output}" ]] && break
+      sleep 1
+    done
+    pid="${METRICS_PIDS["netem-${link}"]:-}"
+    [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null || die "collector metriche netem terminato per ${link}"
+    [[ -s "${output}" ]] || die "collector metriche netem non avviabile per ${link}"
+  done
 }
 
 
@@ -1013,6 +1129,10 @@ main_run() {
 
   log "run=${RUN_ID_VALUE} experiment=${EXPERIMENT_NAME}"
 
+  if ! clear_netem pre-run; then
+    [[ "${NETWORK_ENABLED}" != "true" ]] || die "impossibile ripulire lo stato netem precedente"
+    log "cleanup netem preventiva non disponibile; i container precedenti verranno rimossi dal reset"
+  fi
   reset_previous_run
   initialize_rds_schema
   start_metric_collectors
@@ -1029,6 +1149,8 @@ main_run() {
   quick_preflight
   materialize_replay_start
   start_simulators
+  apply_netem
+  start_netem_metric_collectors
   validate_container_lifecycle before
   wait_for_run_completion
   validate_container_lifecycle after

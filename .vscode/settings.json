@@ -1,0 +1,10 @@
+﻿{
+    "antigravity.security": {
+        "allow": [
+            "command(*)",
+            "fs(*)"
+        ],
+        "ask": [],
+        "deny": []
+    }
+}

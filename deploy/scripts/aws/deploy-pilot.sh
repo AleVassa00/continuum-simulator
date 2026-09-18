@@ -15,6 +15,7 @@ EXPERIMENT_INPUT=""
 STAGING_ROOT=""
 COMMON_ARCHIVE=""
 REPLAY_ARCHIVE=""
+NETWORK_ENABLED="false"
 
 cleanup() {
   [[ -z "${STAGING_ROOT}" || ! -d "${STAGING_ROOT}" ]] || rm -rf -- "${STAGING_ROOT}"
@@ -339,6 +340,34 @@ REPLAY_START_AT=1970-01-01T00:00:00Z docker compose \
   esac
 }
 
+ensure_netem_dependencies() {
+  local role host
+
+  [[ "${NETWORK_ENABLED}" == "true" ]] || return 0
+  for role in simulator edge; do
+    host="${PUBLIC_IPS[${role}]}"
+    log "verifica dipendenze tc-netem su ${role}"
+    ssh_run "${host}" 'set -euo pipefail
+if ! command -v tc >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1 || ! command -v nsenter >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo -n apt-get update -y
+    sudo -n apt-get install -y iproute2 util-linux
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo -n dnf install -y iproute util-linux
+  elif command -v yum >/dev/null 2>&1; then
+    sudo -n yum install -y iproute util-linux
+  else
+    echo "package manager non supportato per installare tc/ip/nsenter" >&2
+    exit 1
+  fi
+fi
+command -v tc >/dev/null
+command -v ip >/dev/null
+command -v nsenter >/dev/null
+sudo -n true'
+  done
+}
+
 main() {
   local role
 
@@ -368,6 +397,11 @@ main() {
 
   EXPERIMENT_CONFIG="$(resolve_experiment "${EXPERIMENT_INPUT}")"
   export EXPERIMENT_CONFIG
+  NETWORK_ENABLED="$(
+    cd "${REPO_ROOT}"
+    go run ./cmd/runconfig --experiment "${EXPERIMENT_CONFIG}" --describe |
+      jq -er '.network.enabled | select(type == "boolean")'
+  )"
 
   load_terraform_addresses
   load_rds_configuration
@@ -376,6 +410,7 @@ main() {
   for role in "${ROLES[@]}"; do
     verify_host_runtime "${role}"
   done
+  ensure_netem_dependencies
 
   generate_deployment
   prepare_common_archive

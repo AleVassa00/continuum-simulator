@@ -15,11 +15,24 @@ import (
 const defaultExperimentPath = "experiments/worker-scaling/cloud-scale-w1.yaml"
 
 type experimentDescription struct {
-	KafkaPartitions int    `json:"kafka_partitions"`
-	ExperimentName  string `json:"experiment_name"`
-	StartLeadTime   string `json:"start_lead_time"`
-	Workers         int    `json:"workers"`
-	ConfigSHA256    string `json:"config_sha256"`
+	KafkaPartitions int                `json:"kafka_partitions"`
+	ExperimentName  string             `json:"experiment_name"`
+	StartLeadTime   string             `json:"start_lead_time"`
+	Workers         int                `json:"workers"`
+	Network         networkDescription `json:"network"`
+	ConfigSHA256    string             `json:"config_sha256"`
+}
+
+type networkDescription struct {
+	Enabled         bool                   `json:"enabled"`
+	SimulatorToEdge networkLinkDescription `json:"simulator_to_edge"`
+	EdgeToKafka     networkLinkDescription `json:"edge_to_kafka"`
+}
+
+type networkLinkDescription struct {
+	Enabled bool   `json:"enabled"`
+	Delay   string `json:"delay"`
+	Rate    string `json:"rate"`
 }
 
 type materializedRun struct {
@@ -80,12 +93,26 @@ func run(args []string, output io.Writer) error {
 		if strings.TrimSpace(*baseTimeValue) != "" || strings.TrimSpace(*effectiveOutputPath) != "" {
 			return fmt.Errorf("--describe cannot be combined with --base-time or --output")
 		}
+		network := config.ResolvedNetwork()
 		return writeJSON(output, experimentDescription{
 			KafkaPartitions: config.Kafka.ResolvedPartitions(),
 			ExperimentName:  config.Experiment.Name,
 			StartLeadTime:   config.Workload.StartLeadTime.String(),
 			Workers:         config.Cloud.Workers,
-			ConfigSHA256:    configSHA256,
+			Network: networkDescription{
+				Enabled: network.Enabled,
+				SimulatorToEdge: networkLinkDescription{
+					Enabled: network.SimulatorToEdge.Enabled,
+					Delay:   network.SimulatorToEdge.Delay.String(),
+					Rate:    string(network.SimulatorToEdge.ResolvedRate()),
+				},
+				EdgeToKafka: networkLinkDescription{
+					Enabled: network.EdgeToKafka.Enabled,
+					Delay:   network.EdgeToKafka.Delay.String(),
+					Rate:    string(network.EdgeToKafka.ResolvedRate()),
+				},
+			},
+			ConfigSHA256: configSHA256,
 		})
 	}
 
