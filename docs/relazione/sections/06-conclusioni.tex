@@ -36,12 +36,15 @@ livelli.
 La valutazione sperimentale ha mostrato che l'aumento del numero di Cloud
 Worker riduce la latenza di emissione delle finestre globali fino a quando il
 parallelismo disponibile risulta effettivamente utile per il workload
-considerato. Gli esperimenti di rete hanno inoltre evidenziato il compromesso
-tra latenza e completezza introdotto dalla politica bounded: una sorgente
-rallentata può essere attesa dalla politica conservative oppure superata dalla
-frontiera event-time, riducendo la latenza al costo di contributi late.
+considerato. Gli esperimenti sulle condizioni di rete hanno inoltre
+evidenziato il compromesso tra latenza e completezza introdotto dalla politica
+bounded. Uno skew limitato consente alla frontiera event-time di avanzare
+senza attendere indefinitamente le sorgenti più arretrate, al costo di
+contributi late; tale effetto può manifestarsi anche per il naturale
+disallineamento tra gli Edge ed essere ulteriormente amplificato da condizioni
+di rete degradate.
 
 Nel complesso, i risultati mostrano come la distribuzione dell'elaborazione
 tra Edge e Cloud, insieme alla gestione esplicita del progresso in event time,
-permetta di studiare sia la scalabilità del livello Cloud sia il comportamento
-del sistema in presenza di sorgenti con velocità differenti.
+permetta di studiare sia la scalabilità del livello Cloud sia il compromesso
+tra tempestività e completezza nella produzione dei risultati globali.
