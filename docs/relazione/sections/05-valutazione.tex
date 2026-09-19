@@ -150,44 +150,104 @@ numero di Worker.
 
 Le condizioni di rete sono emulate tramite Linux \code{tc-netem} nel network
 namespace dei container interessati. Le regole sono selettive e non alterano
-il traffico di orchestrazione o di raccolta delle metriche. Viene degradato
-soltanto il traffico di \code{edge-8} verso Kafka, mentre gli altri Edge e il
-collegamento Cloud--Global rimangono invariati. In questo modo è possibile
-osservare l'effetto di una singola sorgente rallentata sul progresso
-event-time della relativa partizione.
+il traffico di orchestrazione o di raccolta delle metriche. Nelle
+configurazioni degradate viene modificato soltanto il traffico di
+\code{edge-8} verso Kafka; gli altri Edge e il collegamento Cloud--Global
+rimangono invariati.
 
-La campagna utilizza sei Cloud Worker e considera due profili di rete. Nel
-profilo \emph{delay} vengono aggiunti 50 ms al traffico Edge--Kafka, mentre
-nel profilo \emph{bandwidth} il traffico di \code{edge-8} verso Kafka viene
-limitato a 140 kbit/s. Per le prove con banda limitata la capacità della coda
-Edge viene dimensionata in modo da assorbire l'accumulo transitorio senza
-introdurre drop.
+La campagna utilizza sei Cloud Worker e considera due profili di degradazione.
+Nel profilo \emph{delay} vengono aggiunti 50 ms al traffico di
+\code{edge-8} verso Kafka; il valore è stato scelto come perturbazione
+moderata, sufficiente a introdurre disallineamento senza causare saturazione
+delle code o perdite a monte.
 
-Per ciascun profilo vengono confrontate due politiche di avanzamento
-event-time. La configurazione \emph{conservative} utilizza uno skew
-sufficientemente ampio da non forzare l'avanzamento della frontiera e attende
-quindi il progresso della sorgente rallentata. La configurazione
-\emph{bounded} ammette invece uno skew massimo di 150 minuti in event time,
-equivalente a 450 ms reali con fattore di accelerazione 20\,000. Quando tale
-limite viene superato, la frontiera può avanzare e i contributi che
-raggiungono successivamente una finestra già finalizzata vengono classificati
-come late e scartati.
+Nel profilo \emph{bandwidth} lo stesso traffico viene limitato a 140 kbit/s,
+valore prossimo al rate normalmente osservato per \code{edge-8} nelle
+esecuzioni non limitate e quindi adatto a rendere il collegamento un vincolo
+effettivo senza interrompere il flusso.
 
-Tutte le esecuzioni considerate terminano senza drop nei Simulator, negli
-Edge o nell'emulazione di rete e con lag finale nullo per entrambi i consumer
-group. Nelle configurazioni bounded i contributi late sono quindi attribuibili
-alla politica di avanzamento studiata e non a perdite infrastrutturali.
+La politica \emph{conservative} utilizza uno skew sufficientemente ampio da
+non forzare l'avanzamento della frontiera. La politica \emph{bounded} utilizza
+invece uno skew massimo di 150 minuti in event time, equivalente a 450 ms
+reali con fattore di accelerazione 20\,000. Se il disallineamento tra le
+sorgenti supera tale limite, la frontiera può avanzare e gli aggregati
+relativi a finestre già finalizzate vengono successivamente classificati
+come late.
+
+L'analisi viene suddivisa in due confronti. Il primo mantiene fissa la
+politica bounded e valuta l'effetto aggiuntivo della degradazione di rete
+rispetto a una configurazione di controllo senza NetEm. Il secondo confronta
+le politiche conservative e bounded mantenendo invariata la condizione di
+rete.
 
 \begin{table}[H]
-    \caption{Condizioni di rete Edge--Cloud: completezza e latenza globale.
-    Latenze e durata sono espresse in secondi.}
-    \label{tab:network-results}
+    \caption{Effetto della degradazione di rete con politica bounded.
+    Le variazioni sono calcolate rispetto al controllo senza NetEm.}
+    \label{tab:network-bounded}
+    \centering
+    \begin{tabular}{@{}lrrrr@{}}
+        \toprule
+        Condizione &
+        Completezza &
+        Eventi late &
+        $\Delta$ completezza &
+        $\Delta$ late \\
+        \midrule
+
+        Controllo
+        & 89.87\%
+        & 213\,388
+        & --
+        & -- \\
+
+        Delay 50 ms
+        & 89.12\%
+        & 229\,301
+        & -0.75 p.p.
+        & +15\,913 \\
+
+        Banda 140 kbit/s
+        & 82.44\%
+        & 370\,046
+        & -7.43 p.p.
+        & +156\,658 \\
+
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+La configurazione di controllo mostra che lo skew bounded di 150 minuti in
+event time produce contributi late anche in assenza di degradazione
+artificiale della rete: la completezza è pari all'89.87\% e vengono
+registrati 213\,388 contributi late. Il naturale disallineamento tra gli
+Edge può quindi essere sufficiente a provocare l'avanzamento della frontiera.
+
+Rispetto a questo riferimento, l'aggiunta di 50 ms di ritardo produce un
+effetto aggiuntivo limitato: la completezza diminuisce di circa 0.75 punti
+percentuali e vengono registrati 15\,913 contributi late aggiuntivi.
+
+La limitazione della banda a 140 kbit/s produce invece un effetto più
+marcato: la completezza diminuisce di circa 7.43 punti percentuali rispetto
+al controllo bounded e vengono registrati 156\,658 contributi late
+aggiuntivi.
+
+
+\paragraph{Confronto tra politiche event-time.}
+
+Il secondo confronto mantiene invariata la condizione di rete e valuta
+l'effetto della politica di avanzamento sulla latenza e sulla completezza.
+
+\begin{table}[H]
+    \caption{Confronto tra politiche conservative e bounded a parità di
+    condizione di rete. Latenze e durata sono espresse in secondi.}
+    \label{tab:network-policies}
     \centering
     \resizebox{\columnwidth}{!}{%
     \begin{tabular}{@{}llrrrrrr@{}}
         \toprule
         Profilo & Politica & Compl. & Eventi late & p50 & p95 & p99 & Durata \\
         \midrule
+
         Delay 50 ms
         & Conservative & 100.00\% & 0
         & 1.71 & 3.87 & 4.23 & 126.31 \\
@@ -196,6 +256,8 @@ alla politica di avanzamento studiata e non a perdite infrastrutturali.
         & Bounded & 89.12\% & 229\,301
         & 0.57 & 0.83 & 1.16 & 126.29 \\
 
+        \midrule
+
         Banda 140 kbit/s
         & Conservative & 100.00\% & 0
         & 27.01 & 37.82 & 38.61 & 162.27 \\
@@ -203,38 +265,54 @@ alla politica di avanzamento studiata e non a perdite infrastrutturali.
         Banda 140 kbit/s
         & Bounded & 82.44\% & 370\,046
         & 0.61 & 1.58 & 2.77 & 165.47 \\
+
         \bottomrule
     \end{tabular}%
     }
 \end{table}
 
-Con il ritardo aggiunto di 50 ms, la politica conservative mantiene il
-100\% degli eventi con un p95 pari a 3.87 s. La politica bounded riduce il
-p95 a 0.83 s, con una completezza dell'89.12\%.
 
-Con il collegamento limitato a 140 kbit/s, la configurazione conservative
-mantiene nuovamente il 100\% degli eventi, ma il p95 raggiunge 37.82 s. La
-configurazione bounded riduce invece il p95 a 1.58 s, con una completezza
+
+Con 50 ms di ritardo aggiunto al traffico di \code{edge-8}, la politica
+conservative preserva il 100\% degli eventi e presenta un p95 pari a
+3.87 s. La politica bounded riduce il p95 a 0.83 s, con una completezza
+dell'89.12\%.
+
+Il compromesso risulta più marcato con la limitazione di banda. La politica
+conservative mantiene il 100\% degli eventi, ma il p95 raggiunge 37.82 s.
+La politica bounded mantiene invece il p95 a 1.58 s, con una completezza
 dell'82.44\%.
 
-Le due configurazioni bounded registrano rispettivamente 229\,301 e
-370\,000 eventi late in media. La riduzione della latenza di emissione è quindi
-ottenuta consentendo alla frontiera event-time di avanzare senza attendere
-indefinitamente la sorgente rallentata, al costo di una riduzione misurabile
-della completezza dei risultati.
+A parità di condizione di rete, la politica conservative trasferisce quindi
+il rallentamento della sorgente sul tempo necessario alla finalizzazione
+delle finestre. La politica bounded limita tale attesa consentendo alla
+frontiera event-time di avanzare, al costo di contributi successivamente
+classificati come late.
+
+
 
 \subsection{Discussione dei risultati}
 
-
 La campagna di scalabilità mostra che l'aumento del numero di Cloud Worker
 riduce la latenza di emissione senza modificare workload, partizionamento o
-risultati prodotti. Il beneficio è evidente fino a quattro Worker e presenta
-rendimenti decrescenti prima del limite di sei Worker imposto dal numero di
-partizioni. Il workload mantiene inoltre una distribuzione non perfettamente
-uniforme degli eventi tra le partizioni.
+risultati prodotti. Il beneficio è evidente fino a quattro Worker e tende a
+ridursi avvicinandosi al limite di parallelismo imposto dalle sei partizioni
+Kafka. Inoltre, poiché ciascuna partizione può essere assegnata a un solo
+Worker, un eventuale sbilanciamento del carico tra le partizioni non può essere
+eliminato semplicemente aumentando il numero di Worker.
 
-La campagna di rete mostra invece il compromesso introdotto dalla politica
-bounded. In presenza di una sorgente rallentata, la configurazione
-conservative mantiene la completezza attendendone il progresso, mentre la
-configurazione bounded può ridurre la latenza di emissione al costo di
-contributi successivamente classificati come late.
+La campagna relativa alle condizioni di rete evidenzia invece due aspetti.
+In primo luogo, la configurazione bounded di controllo mostra che lo skew
+scelto può produrre contributi late anche senza degradazione artificiale
+della rete, a causa del naturale disallineamento nel progresso degli Edge.
+Rispetto a questo riferimento, il ritardo aggiuntivo di 50 ms produce un
+effetto limitato sulla completezza, mentre la limitazione di banda a
+140 kbit/s determina un aumento più marcato dei contributi late.
+
+In secondo luogo, a parità di condizione di rete emerge il compromesso tra
+latenza e completezza delle due politiche event-time. La configurazione
+conservative attende il progresso delle sorgenti più arretrate e preserva la
+completezza, trasferendo il disallineamento sulla latenza di finalizzazione.
+La configurazione bounded limita invece tale attesa consentendo alla frontiera
+di avanzare, riducendo la latenza al costo di contributi successivamente
+classificati come late.
