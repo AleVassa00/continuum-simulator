@@ -7,8 +7,8 @@ La valutazione risponde a due domande. La prima riguarda la capacità del
 livello Cloud di elaborare lo stesso workload riducendo il ritardo di
 produzione dei risultati all'aumentare delle repliche. La seconda riguarda il
 compromesso tra latenza e completezza quando una sorgente logica viene
-rallentata sui collegamenti Edge--Cloud e Cloud Worker--Global Aggregator. Le
-prove sono eseguite sul deployment AWS di Fig.~\ref{fig:architecture}.
+rallentata sul collegamento Edge--Cloud. Le prove sono eseguite sul deployment
+AWS di Fig.~\ref{fig:architecture}.
 
 Il workload definitivo comprende 2106784 osservazioni distribuite tra 13
 replay shard. Il replay usa un fattore di accelerazione pari a 20000; tale
@@ -125,36 +125,91 @@ che limita il guadagno ottenibile aumentando le repliche.
 
 Le condizioni di rete sono emulate tramite Linux \code{tc-netem} nel network
 namespace dei container interessati. Le regole sono selettive e non alterano
-il traffico di orchestrazione o raccolta delle metriche. Sul primo confine
-viene rallentato soltanto \code{edge-8} nelle scritture verso Kafka; sul
-secondo viene rallentato il Cloud Worker che, in quella run, possiede la
-source partition 0 nelle pubblicazioni verso il listener Kafka consumato dal
-Global Aggregator. I due collegamenti non vengono degradati
-contemporaneamente.
+il traffico di orchestrazione o raccolta delle metriche. Viene degradato
+soltanto \code{edge-8} nelle scritture verso Kafka; gli altri Edge e il
+collegamento Cloud--Global restano invariati. La scelta consente di osservare
+l'effetto di una singola sorgente lenta sulla frontiera della partizione 0.
 
-La campagna usa sei Cloud Worker e confronta una baseline con due tipi di
-degradazione. Per la latenza viene aggiunto un ritardo di 50 ms. Un pilot con
-ritardo maggiore aveva saturato la coda di ingresso dell'Edge e introdotto
-drop a monte; è stato quindi escluso perché non avrebbe isolato l'effetto del
-watermark. Per la banda sono predisposti limiti pari a 150 kbit/s sul
-collegamento Edge--Kafka e 100 kbit/s su quello Cloud--Kafka--Global, da
-applicare separatamente.
+La campagna usa sei Cloud Worker e due profili di rete. Nel profilo
+\emph{delay} si aggiungono 50 ms al traffico Edge--Kafka. Un pilot a 150 ms
+aveva saturato la coda di ingresso e viene escluso dall'analisi. Nel profilo
+\emph{bandwidth} il collegamento è limitato a 140 kbit/s. Il valore deriva da
+sei run non limitate, nelle quali \code{edge-8} ha prodotto tra 138.89 e
+142.99 kbit/s, con media 140.33 kbit/s. Poiché il producer Kafka sincrono
+trasforma il limite di banda in backpressure, per questo profilo la coda Edge
+è portata a 100\,000 elementi: le occupazioni massime osservate restano al
+58.00\% e 62.52\%, senza scarti.
 
-Ogni degradazione confronta due politiche di avanzamento. La configurazione
+Ogni profilo confronta due politiche di avanzamento. La configurazione
 \emph{conservative} usa uno skew di 720 ore in event time e attende quindi, di
 fatto, la sorgente rallentata. La configurazione \emph{bounded} ammette uno
-skew di 30 minuti in event time, equivalente a 90 ms reali con accelerazione
-20\,000, e può ridurre il tempo di emissione scartando i contributi che
-arrivano dopo il superamento della frontiera. Il confronto misura pertanto un
-compromesso esplicito tra latenza e completezza, non un miglioramento ottenuto
-nascondendo perdite infrastrutturali.
+skew di 150 minuti in event time, equivalente a 450 ms reali con accelerazione
+20\,000, e può avanzare scartando i contributi che arrivano dopo il
+superamento della frontiera. Tutte le run riportate terminano con qualità
+\emph{pass}, nessun drop nei Simulator, negli Edge o in NetEm e lag finale
+nullo per entrambi i consumer group. Per il delay conservative si riporta la
+media di due repliche valide; per gli altri profili è disponibile una run
+valida.
 
-% Completare questa parte con i risultati finali della campagna di rete:
-% - profilo e numero di repliche valide;
-% - p50/p95/p99 della global emission latency;
-% - completezza globale e numero di eventi/finestre late;
-% - rate effettivo e backlog tc-netem per i profili di banda;
-% - assenza di drop Simulator/Edge e lag finale nullo.
+\begin{table}[H]
+    \caption{Condizioni di rete Edge--Cloud: completezza e latenza globale.
+    Latenze e durata sono espresse in secondi.}
+    \label{tab:network-results}
+    \centering
+    \resizebox{\columnwidth}{!}{%
+    \begin{tabular}{@{}llrrrrrr@{}}
+        \toprule
+        Profilo & Politica & Compl. & Late & p50 & p95 & p99 & Durata \\
+        \midrule
+        Delay 50 ms & Conservative & 100.00\% & 0 & 1.71 & 3.87 & 4.23 & 126.31 \\
+        Delay 50 ms & Bounded & 89.12\% & 229\,301 & 0.57 & 0.83 & 1.16 & 126.29 \\
+        Banda 140 kbit/s & Conservative & 100.00\% & 0 & 27.01 & 37.82 & 38.61 & 162.27 \\
+        Banda 140 kbit/s & Bounded & 82.44\% & 370\,046 & 0.61 & 1.58 & 2.77 & 165.47 \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \begin{tikzpicture}[x=0.72cm,y=0.032cm,font=\scriptsize]
+        \draw[->] (0,0) -- (5.15,0);
+        \draw[->] (0,0) -- (0,108) node[above] {\%};
+        \foreach \y in {0,20,40,60,80,100} {
+            \draw (0,\y) -- (-0.08,\y) node[left] {\y};
+            \draw[gray!20] (0,\y) -- (5,\y);
+        }
+        \fill[blue!65]   (0.65,0) rectangle (1.35,100);
+        \fill[orange!80] (1.65,0) rectangle (2.35,89.12);
+        \fill[blue!65]   (2.65,0) rectangle (3.35,100);
+        \fill[orange!80] (3.65,0) rectangle (4.35,82.44);
+        \node[rotate=35,anchor=east] at (1,-4) {Delay C};
+        \node[rotate=35,anchor=east] at (2,-4) {Delay B};
+        \node[rotate=35,anchor=east] at (3,-4) {Banda C};
+        \node[rotate=35,anchor=east] at (4,-4) {Banda B};
+    \end{tikzpicture}
+    \caption{Completezza degli esperimenti di rete. C indica la politica
+    conservative, B la politica bounded.}
+    \label{fig:network-completeness}
+\end{figure}
+
+Con ritardo aggiunto, la politica bounded riduce il p95 da 3.87 a 0.83 s
+($-78.5\%$), accettando una completezza dell'89.12\%. Con banda limitata il
+profilo conservative conserva tutti gli eventi ma accumula backlog: la durata
+sale a 162.27 s e il p95 raggiunge 37.82 s. La politica bounded mantiene il
+p95 a 1.58 s, ma include l'82.44\% degli eventi. In questo secondo caso il
+rate effettivo, calcolato sull'intera durata della run, è pari a 103.91 kbit/s
+nel conservative e 106.97 kbit/s nel bounded; il limite NetEm è un tetto e
+non un throughput obiettivo.
+
+Le run bounded registrano rispettivamente 229\,301 e 370\,046 eventi late,
+che spiegano interamente la differenza rispetto agli eventi processati. Il
+numero di finestre globali resta 2\,710 e il protocollo non segnala finestre
+incomplete: l'incompletezza dei dati è quindi una conseguenza dichiarata
+della politica event-time, non di errori di trasporto o terminazione. Nel
+profilo bandwidth bounded il massimo di 40.28 s, a fronte di un p99 di 2.77
+s, riguarda una coda estrema di finestre emesse durante il drenaggio finale e
+non rappresenta il comportamento della maggior parte delle finestre.
 
 \subsection{Discussione dei risultati}
 
@@ -163,6 +218,7 @@ permette di ridurre la latenza di emissione senza cambiare workload o
 risultati. Il guadagno non è lineare: è limitato dal numero di partizioni,
 dallo sbilanciamento residuo del loro carico, dal costo del coordinamento
 tramite Kafka e dalla condivisione delle risorse fisiche. La campagna di rete
-estende questa analisi distinguendo la politica conservativa, che
-privilegia la completezza, da quella bounded, che limita l'attesa imponendo un
-costo misurabile in contributi late.
+mostra inoltre che la politica conservativa assorbe il rallentamento come
+backlog e latenza, mentre quella bounded limita l'attesa imponendo un costo
+misurabile in contributi late. La banda limitata rende il compromesso più
+marcato del solo ritardo aggiunto.

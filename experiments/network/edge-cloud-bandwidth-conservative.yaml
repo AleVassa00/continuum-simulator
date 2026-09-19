@@ -1,6 +1,6 @@
-# The delay campaign measured about 139--143 kbit/s on edge-8. Limiting the
-# same link to 135 kbit/s applies moderate bandwidth pressure without the
-# severe queue growth expected from a 100 kbit/s cap.
+# Six delay runs measured 138.89--142.99 kbit/s on edge-8 (140.33 kbit/s
+# average). The 140 kbit/s cap therefore targets the observed natural rate;
+# the larger ingress queue absorbs the resulting transient backpressure.
 experiment:
   name: edge-cloud-bandwidth-conservative
 
@@ -14,7 +14,7 @@ simulator:
 
 edge:
   window_size: 5m
-  ingress_queue_capacity: 15000
+  ingress_queue_capacity: 100000
   kafka_producer_batch_size: 10
   kafka_producer_batch_max_wait: 100ms
 
@@ -36,4 +36,4 @@ network:
     enabled: true
     edge_ids: [edge-8]
     delay: 0s
-    rate: 135kbit
+    rate: 140kbit

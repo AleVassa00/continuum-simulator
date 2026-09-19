@@ -61,7 +61,10 @@ di circa il 40\% e il p95 di circa il 32\%. Il passaggio a sei worker non
 produce ulteriori miglioramenti, evidenziando rendimenti decrescenti dovuti a
 sbilanciamento, coordinamento e risorse condivise. La scalabilità è quindi
 dimostrata entro il deployment e il workload analizzati, senza generalizzarla
-a un'espansione illimitata. La campagna di rete è strutturata per separare gli
-effetti della degradazione del collegamento da quelli della politica bounded,
-mantenendo espliciti i limiti dello stato volatile e della telemetria con
-possibili perdite.
+a un'espansione illimitata. Nella campagna Edge--Cloud, la politica
+conservative mantiene il 100\% degli eventi sia con 50 ms di ritardo sia con
+il collegamento limitato a 140 kbit/s, pagando rispettivamente un p95 di 3.87
+e 37.82 s. Con uno skew bounded di 150 minuti il p95 scende a 0.83 e 1.58 s,
+mentre la completezza si riduce all'89.12\% e all'82.44\%. Il sistema rende
+quindi osservabile e quantificabile il compromesso tra attesa e completezza,
+senza confonderlo con drop infrastrutturali.
