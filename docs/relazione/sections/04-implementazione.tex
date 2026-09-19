@@ -37,6 +37,40 @@ aggregati ricevuti per partizione Kafka e producono un
 operazione di riduzione ai contributi delle diverse partizioni relativi allo
 stesso intervallo temporale.
 
+\subsection{Modello di concorrenza}
+
+L'implementazione in Go separa le operazioni di I/O dalla logica di
+aggiornamento dello stato delle finestre. Le goroutine vengono utilizzate
+principalmente per disaccoppiare le comunicazioni di rete dall'elaborazione,
+mentre gli aggregatori mantengono un modello di aggiornamento sequenziale.
+
+Nel Simulator il replay temporale e la pubblicazione MQTT sono separati
+mediante una coda bufferizzata. Il ciclo principale produce gli eventi
+secondo la timeline accelerata, mentre una goroutine dedicata ne gestisce
+l'invio verso il broker MQTT. L'inserimento nella coda è non bloccante:
+quando la capacità configurata viene esaurita, l'evento viene registrato come
+drop locale invece di ritardare il replay.
+
+Nell'Edge, il processing degli eventi e la pubblicazione verso Kafka sono
+eseguiti in due goroutine distinte collegate tramite un channel. Il primo
+stadio aggiorna sequenzialmente lo stato della finestra Edge, mentre il
+secondo effettua la serializzazione Avro, il batching e la pubblicazione
+sincrona degli aggregati verso Kafka.
+
+Nei Cloud Worker, per ogni partizione Kafka assegnata viene avviata una
+goroutine dedicata alla lettura. I record acquisiti confluiscono in un unico
+channel e vengono successivamente elaborati in modo sequenziale dal ciclo
+principale del Worker. Il parallelismo del livello
+Cloud deriva quindi principalmente dall'esecuzione di più Cloud Worker e
+dalla distribuzione delle partizioni Kafka tra essi, non da aggiornamenti
+concorrenti dello stato all'interno dello stesso Worker.
+
+Il Global Aggregator non introduce concorrenza esplicita nel ciclo
+applicativo di consumo: i record vengono acquisiti da Kafka, elaborati e
+committati in sequenza. Questa scelta mantiene serializzati gli aggiornamenti
+dello stato globale e semplifica la gestione delle finestre e della frontiera
+event-time.
+
 \subsection{Progresso event-time e completamento}
 
 La chiusura delle finestre Cloud è governata dal progresso in event time

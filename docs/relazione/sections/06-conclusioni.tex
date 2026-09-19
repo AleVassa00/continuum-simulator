@@ -1,75 +1,47 @@
-\section{Limitazioni}
+\section{Limiti del deployment sperimentale}
 \label{sec:limitazioni}
 
-\subsection{Scalabilità durante l'esecuzione}
+La tolleranza ai guasti non rientra tra i requisiti individuali selezionati
+per il progetto e non è stata oggetto della campagna sperimentale. Lo stato
+delle finestre in elaborazione è mantenuto in memoria dai Cloud Worker e dal
+Global Aggregator e non è previsto un meccanismo di checkpoint o migrazione
+dello stato durante una run. Un guasto di uno di questi componenti richiede
+quindi il riavvio dell'esecuzione anziché il recupero trasparente dello stato
+precedente.
 
-I Cloud Worker e il Global Aggregator mantengono in memoria lo stato delle
-finestre in elaborazione. Tale stato non viene migrato tra Worker e non è
-previsto un meccanismo di checkpoint che consenta di trasferirlo durante una
-run.
+La valutazione è inoltre condizionata dalle risorse disponibili
+nell'ambiente AWS utilizzato. I Cloud Worker vengono eseguiti sullo stesso
+host fisico virtuale e condividono quindi CPU, memoria e capacità di rete;
+l'aumento del numero di Worker misura pertanto la scalabilità del livello
+applicativo all'interno del deployment considerato e non equivale a una
+valutazione su un numero crescente di nodi EC2 indipendenti.
 
-Per questo motivo la scalabilità viene valutata configurando il numero di
-Cloud Worker prima dell'avvio del replay e confrontando esecuzioni distinte.
-Un rebalance del consumer group dopo l'inizio dell'elaborazione invalida la
-run e i Worker non riprendono una precedente esecuzione a partire da offset
-già committati. Il sistema permette quindi di studiare l'aumento del
-parallelismo tra esecuzioni differenti, ma non implementa una variazione
-dinamica del numero di Worker durante la stessa run.
-
-\subsection{Completezza e rappresentatività}
-
-La telemetria Simulator--Edge utilizza MQTT con QoS~0 e attraversa code di
-capacità limitata. Per evitare che eventuali perdite vengano interpretate
-come un miglioramento prestazionale, nella campagna di scalabilità vengono
-considerate valide soltanto le esecuzioni che mantengono il 100\% degli
-eventi, senza drop o contributi late.
-
-Negli esperimenti bounded, invece, i contributi late costituiscono un effetto
-previsto della politica event-time studiata. Una sorgente che rimane indietro
-oltre lo skew configurato può essere superata dalla frontiera; i contributi
-che raggiungono successivamente una finestra già finalizzata vengono
-registrati come late e scartati. Eventuali drop nei Simulator, negli Edge o
-nell'emulazione di rete rimangono invece condizioni di invalidità della run.
-
-Il workload utilizza un solo tipo di dispositivo, i sensori BME280, e
-considera le osservazioni relative a un solo mese. I 150 sensori selezionati
-sono distribuiti in modo quasi uniforme tra i 13 Edge Site, ma il numero di
-eventi prodotto dalle diverse zone non è necessariamente uniforme. Le medie
-sono inoltre calcolate a partire dal numero di campioni validi, per cui
-contributi contenenti un numero maggiore di osservazioni hanno un peso
-maggiore nel risultato globale.
-
-I Cloud Worker condividono il medesimo host Workers e sono eseguiti con i
-limiti di CPU e memoria definiti dal profilo sperimentale. I risultati
-descrivono pertanto il comportamento del deployment e del workload analizzati
-e non vengono generalizzati automaticamente ad altri dataset, algoritmi più
-costosi o configurazioni infrastrutturali differenti.
+Il Cloud Core utilizza una configurazione infrastrutturale differente dagli
+altri host poiché concentra sia il broker Kafka sia il Global Aggregator.
+Nel deployment sperimentale è stata quindi utilizzata un'istanza
+\code{c6i.large}, con l'obiettivo di fornire capacità stabile al broker e
+ridurre il rischio che l'infrastruttura Kafka costituisse il collo di
+bottiglia durante la valutazione della scalabilità dei Cloud Worker.
+La scelta consente di concentrare l'analisi sul livello Worker, ma i risultati
+rimangono specifici della configurazione infrastrutturale utilizzata.
 
 \section{Conclusioni}
 \label{sec:conclusioni}
 
-La campagna AWS mostra che l'aumento del parallelismo del livello Cloud riduce
-la latenza di emissione mantenendo invariati workload e risultati. Passando da
-uno a quattro Cloud Worker, la mediana della \emph{global emission latency}
-diminuisce di circa il 40\% e il p95 di circa il 32\%. Con sei Worker viene
-raggiunto il massimo parallelismo consentito dalle sei partizioni Kafka, ma
-non si osserva un ulteriore miglioramento: la mediana rimane sostanzialmente
-invariata, mentre p95 e p99 risultano leggermente superiori rispetto a W4.
-I risultati mostrano quindi un beneficio del parallelismo fino a tre-quattro
-Worker e rendimenti decrescenti oltre tale configurazione per il workload e
-il deployment analizzati.
+Il progetto ha realizzato una pipeline distribuita per il monitoraggio
+ambientale nel Compute Continuum, suddividendo l'elaborazione tra Simulator,
+Edge e Cloud e utilizzando MQTT e Kafka per la comunicazione tra i diversi
+livelli.
 
-La campagna Edge--Cloud evidenzia invece il compromesso tra latenza e
-completezza introdotto dalla politica bounded. Con 50 ms di ritardo aggiunto,
-la configurazione conservative mantiene il 100\% degli eventi con un p95 pari
-a 3.87 s, mentre la configurazione bounded riduce il p95 a 0.83 s con una
-completezza dell'89.12\%. Con il collegamento di \code{edge-8} limitato a
-140 kbit/s, la configurazione conservative mantiene il 100\% degli eventi con
-un p95 pari a 37.82 s, mentre la configurazione bounded riduce il p95 a
-1.58 s con una completezza dell'82.44\%.
+La valutazione sperimentale ha mostrato che l'aumento del numero di Cloud
+Worker riduce la latenza di emissione delle finestre globali fino a quando il
+parallelismo disponibile risulta effettivamente utile per il workload
+considerato. Gli esperimenti di rete hanno inoltre evidenziato il compromesso
+tra latenza e completezza introdotto dalla politica bounded: una sorgente
+rallentata può essere attesa dalla politica conservative oppure superata dalla
+frontiera event-time, riducendo la latenza al costo di contributi late.
 
-Nelle configurazioni bounded la riduzione della completezza è spiegata dai
-contributi registrati come late, mentre nelle esecuzioni considerate non sono
-presenti drop nei Simulator, negli Edge o nell'emulazione di rete. Il sistema
-permette quindi di osservare e quantificare il compromesso tra il tempo di
-attesa di una sorgente rallentata e la completezza dei risultati prodotti.
+Nel complesso, i risultati mostrano come la distribuzione dell'elaborazione
+tra Edge e Cloud, insieme alla gestione esplicita del progresso in event time,
+permetta di studiare sia la scalabilità del livello Cloud sia il comportamento
+del sistema in presenza di sorgenti con velocità differenti.
