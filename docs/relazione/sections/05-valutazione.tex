@@ -137,41 +137,46 @@ Il miglioramento è evidente fino a quattro Worker: rispetto a W1, W4 riduce
 la mediana di circa il 40\% e il p95 di circa il 32\%. Con W6 viene raggiunto
 il massimo parallelismo consentito dalle sei partizioni Kafka, ma non si
 osserva un ulteriore miglioramento: la mediana rimane sostanzialmente
-invariata rispetto a W4, mentre p95 e p99 mostrano una lieve regressione.
+invariata, mentre p95 e p99 risultano leggermente superiori rispetto a W4.
 
-Questo risultato indica che, per il workload e il deployment considerati,
-l'aumento del numero di Worker oltre quattro non costituisce più il fattore
-principale che determina la latenza di emissione. Il makespan rimane inoltre
-sostanzialmente invariato, come atteso per un workload il cui ritmo di ingresso
-è determinato dal replay.
+Il mancato miglioramento osservato con W6 può essere ricondotto anche alla
+granularità del partizionamento: ciascuna partizione Kafka è assegnata a un
+solo Worker del consumer group, quindi un eventuale sbilanciamento del carico
+tra le sei partizioni non può essere ulteriormente suddiviso aumentando il
+numero di Worker.
 
 
 \subsection{Impatto delle condizioni di rete}
 
 Le condizioni di rete sono emulate tramite Linux \code{tc-netem} nel network
 namespace dei container interessati. Le regole sono selettive e non alterano
-il traffico di orchestrazione o raccolta delle metriche. Viene degradato
-soltanto \code{edge-8} nelle scritture verso Kafka; gli altri Edge e il
-collegamento Cloud--Global restano invariati. La scelta consente di osservare
-l'effetto di una singola sorgente lenta sulla frontiera della partizione 0.
+il traffico di orchestrazione o di raccolta delle metriche. Viene degradato
+soltanto il traffico di \code{edge-8} verso Kafka, mentre gli altri Edge e il
+collegamento Cloud--Global rimangono invariati. In questo modo è possibile
+osservare l'effetto di una singola sorgente rallentata sul progresso
+event-time della relativa partizione.
 
-La campagna usa sei Cloud Worker e considera due profili di rete. Nel profilo
-\emph{delay} vengono aggiunti 50 ms al traffico Edge--Kafka, in modo da
-introdurre un rallentamento misurabile senza generare drop a monte. Nel
-profilo \emph{bandwidth} il traffico di \code{edge-8} verso Kafka viene
-limitato a 140 kbit/s, valore prossimo al rate osservato in assenza di
-limitazione. Per queste prove la capacità della coda Edge viene dimensionata
-in modo da assorbire l'accumulo transitorio senza introdurre drop.
+La campagna utilizza sei Cloud Worker e considera due profili di rete. Nel
+profilo \emph{delay} vengono aggiunti 50 ms al traffico Edge--Kafka, mentre
+nel profilo \emph{bandwidth} il traffico di \code{edge-8} verso Kafka viene
+limitato a 140 kbit/s. Per le prove con banda limitata la capacità della coda
+Edge viene dimensionata in modo da assorbire l'accumulo transitorio senza
+introdurre drop.
 
-Ogni profilo confronta due politiche di avanzamento. La configurazione
-\emph{conservative} usa uno skew di 720 ore in event time e attende quindi, di
-fatto, la sorgente rallentata. La configurazione \emph{bounded} ammette uno
-skew di 150 minuti in event time, equivalente a 450 ms reali con accelerazione
-20\,000, e può avanzare scartando i contributi che arrivano dopo il
-superamento della frontiera. Tutte le run considerate terminano senza drop nei Simulator, negli Edge o
-nell'emulazione di rete e con lag finale nullo per entrambi i consumer group.
-I valori riportati in Tab.~\ref{tab:network-results} sono calcolati sulle
-esecuzioni valide disponibili per ciascuna configurazione.
+Per ciascun profilo vengono confrontate due politiche di avanzamento
+event-time. La configurazione \emph{conservative} utilizza uno skew
+sufficientemente ampio da non forzare l'avanzamento della frontiera e attende
+quindi il progresso della sorgente rallentata. La configurazione
+\emph{bounded} ammette invece uno skew massimo di 150 minuti in event time,
+equivalente a 450 ms reali con fattore di accelerazione 20\,000. Quando tale
+limite viene superato, la frontiera può avanzare e i contributi che
+raggiungono successivamente una finestra già finalizzata vengono classificati
+come late e scartati.
+
+Tutte le esecuzioni considerate terminano senza drop nei Simulator, negli
+Edge o nell'emulazione di rete e con lag finale nullo per entrambi i consumer
+group. Nelle configurazioni bounded i contributi late sono quindi attribuibili
+alla politica di avanzamento studiata e non a perdite infrastrutturali.
 
 \begin{table}[H]
     \caption{Condizioni di rete Edge--Cloud: completezza e latenza globale.
@@ -183,50 +188,40 @@ esecuzioni valide disponibili per ciascuna configurazione.
         \toprule
         Profilo & Politica & Compl. & Eventi late & p50 & p95 & p99 & Durata \\
         \midrule
-        Delay 50 ms & Conservative & 100.00\% & 0 & 1.71 & 3.87 & 4.23 & 126.31 \\
-        Delay 50 ms & Bounded & 89.12\% & 229\,301 & 0.57 & 0.83 & 1.16 & 126.29 \\
-        Banda 140 kbit/s & Conservative & 100.00\% & 0 & 27.01 & 37.82 & 38.61 & 162.27 \\
-        Banda 140 kbit/s & Bounded & 82.44\% & 370\,046 & 0.61 & 1.58 & 2.77 & 165.47 \\
+        Delay 50 ms
+        & Conservative & 100.00\% & 0
+        & 1.71 & 3.87 & 4.23 & 126.31 \\
+
+        Delay 50 ms
+        & Bounded & 89.12\% & 229\,301
+        & 0.57 & 0.83 & 1.16 & 126.29 \\
+
+        Banda 140 kbit/s
+        & Conservative & 100.00\% & 0
+        & 27.01 & 37.82 & 38.61 & 162.27 \\
+
+        Banda 140 kbit/s
+        & Bounded & 82.44\% & 370\,046
+        & 0.61 & 1.58 & 2.77 & 165.47 \\
         \bottomrule
     \end{tabular}%
     }
 \end{table}
 
-\begin{figure}[H]
-    \centering
-    \begin{tikzpicture}[x=0.72cm,y=0.032cm,font=\scriptsize]
-        \draw[->] (0,0) -- (5.15,0);
-        \draw[->] (0,0) -- (0,108) node[above] {\%};
-        \foreach \y in {0,20,40,60,80,100} {
-            \draw (0,\y) -- (-0.08,\y) node[left] {\y};
-            \draw[gray!20] (0,\y) -- (5,\y);
-        }
-        \fill[blue!65]   (0.65,0) rectangle (1.35,100);
-        \fill[orange!80] (1.65,0) rectangle (2.35,89.12);
-        \fill[blue!65]   (2.65,0) rectangle (3.35,100);
-        \fill[orange!80] (3.65,0) rectangle (4.35,82.44);
-        \node[rotate=35,anchor=east] at (1,-4) {Delay C};
-        \node[rotate=35,anchor=east] at (2,-4) {Delay B};
-        \node[rotate=35,anchor=east] at (3,-4) {Banda C};
-        \node[rotate=35,anchor=east] at (4,-4) {Banda B};
-    \end{tikzpicture}
-    \caption{Completezza degli esperimenti di rete. C indica la politica
-    conservative, B la politica bounded.}
-    \label{fig:network-completeness}
-\end{figure}
+Con il ritardo aggiunto di 50 ms, la politica conservative mantiene il
+100\% degli eventi con un p95 pari a 3.87 s. La politica bounded riduce il
+p95 a 0.83 s, con una completezza dell'89.12\%.
 
-Con ritardo aggiunto, la politica bounded riduce il p95 da 3.87 a 0.83 s
-($-78.5\%$), con una completezza dell'89.12\%. La configurazione conservative
-mantiene invece il 100\% degli eventi con un p95 pari a 3.87 s.
-
-Con banda limitata, la configurazione conservative conserva il 100\% degli
-eventi ma raggiunge un p95 pari a 37.82 s. La configurazione bounded riduce
-il p95 a 1.58 s, con una completezza dell'82.44\%.
+Con il collegamento limitato a 140 kbit/s, la configurazione conservative
+mantiene nuovamente il 100\% degli eventi, ma il p95 raggiunge 37.82 s. La
+configurazione bounded riduce invece il p95 a 1.58 s, con una completezza
+dell'82.44\%.
 
 Le due configurazioni bounded registrano rispettivamente 229\,301 e
-370\,046 eventi late. Tali valori spiegano interamente la differenza tra gli
-eventi elaborati dagli Edge e quelli inclusi nei risultati globali, mentre
-nelle run considerate non sono presenti drop infrastrutturali.
+370\,046 eventi late. La riduzione della latenza di emissione è quindi
+ottenuta consentendo alla frontiera event-time di avanzare senza attendere
+indefinitamente la sorgente rallentata, al costo di una riduzione misurabile
+della completezza dei risultati.
 
 \subsection{Discussione dei risultati}
 

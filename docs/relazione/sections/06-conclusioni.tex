@@ -25,7 +25,7 @@ considerate valide soltanto le esecuzioni che mantengono il 100\% degli
 eventi, senza drop o contributi late.
 
 Negli esperimenti bounded, invece, i contributi late costituiscono un effetto
-esplicito della politica event-time studiata. Una sorgente che rimane indietro
+previsto della politica event-time studiata. Una sorgente che rimane indietro
 oltre lo skew configurato può essere superata dalla frontiera; i contributi
 che raggiungono successivamente una finestra già finalizzata vengono
 registrati come late e scartati. Eventuali drop nei Simulator, negli Edge o
@@ -39,7 +39,7 @@ sono inoltre calcolate a partire dal numero di campioni validi, per cui
 contributi contenenti un numero maggiore di osservazioni hanno un peso
 maggiore nel risultato globale.
 
-Le repliche Cloud condividono il medesimo host Workers e sono eseguite con i
+I Cloud Worker condividono il medesimo host Workers e sono eseguiti con i
 limiti di CPU e memoria definiti dal profilo sperimentale. I risultati
 descrivono pertanto il comportamento del deployment e del workload analizzati
 e non vengono generalizzati automaticamente ad altri dataset, algoritmi più
@@ -50,12 +50,14 @@ costosi o configurazioni infrastrutturali differenti.
 
 La campagna AWS mostra che l'aumento del parallelismo del livello Cloud riduce
 la latenza di emissione mantenendo invariati workload e risultati. Passando da
-uno a quattro Cloud Worker, la mediana della global emission latency diminuisce
-di circa il 40\% e il p95 di circa il 32\%. L'aumento a sei Worker non produce
-un ulteriore miglioramento e mostra una lieve regressione nei percentili di
-coda. I risultati evidenziano quindi un beneficio del parallelismo nel range
-analizzato, con rendimenti decrescenti prima del limite di sei Worker imposto
-dal numero di partizioni Kafka.
+uno a quattro Cloud Worker, la mediana della \emph{global emission latency}
+diminuisce di circa il 40\% e il p95 di circa il 32\%. Con sei Worker viene
+raggiunto il massimo parallelismo consentito dalle sei partizioni Kafka, ma
+non si osserva un ulteriore miglioramento: la mediana rimane sostanzialmente
+invariata, mentre p95 e p99 risultano leggermente superiori rispetto a W4.
+I risultati mostrano quindi un beneficio del parallelismo fino a tre-quattro
+Worker e rendimenti decrescenti oltre tale configurazione per il workload e
+il deployment analizzati.
 
 La campagna Edge--Cloud evidenzia invece il compromesso tra latenza e
 completezza introdotto dalla politica bounded. Con 50 ms di ritardo aggiunto,
