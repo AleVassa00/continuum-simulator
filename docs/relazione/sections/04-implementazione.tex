@@ -217,8 +217,7 @@ intervenire sul codice applicativo.
 Per il deployment distribuito l'infrastruttura AWS è definita mediante
 Terraform. Sono previsti quattro host EC2 con ruoli distinti: Simulator, Edge,
 Cloud Core e Workers. L'host Simulator esegue i processi di replay, l'host Edge
-ospita i broker Mosquitto e gli Edge Gateway, l'host Workers esegue le repliche
-dei Cloud Worker, mentre Cloud Core ospita Kafka e il Global Aggregator.
+ospita i broker Mosquitto e gli Edge Gateway, l'host Workers esegue i Cloud Worker, mentre Cloud Core ospita Kafka e il Global Aggregator.
 La separazione consente di far attraversare realmente la rete ai flussi
 Simulator--Edge, Edge--Cloud e Cloud Worker--Global Aggregator e di modificare
 indipendentemente il numero di worker utilizzato negli esperimenti.
