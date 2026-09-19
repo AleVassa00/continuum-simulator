@@ -29,48 +29,52 @@ La pipeline è composta dai seguenti stadi logici.
     \item \textbf{Elaborazione Edge:}
     Ogni Edge Site comprende un broker MQTT e un Edge Gateway. Il gateway
     riceve e valida le misure di temperatura, umidità e pressione e le
-    aggrega localmente su finestre temporali di durata configurabile. Questa
-    elaborazione consente di ridurre il volume di dati inoltrato verso il
-    Cloud, trasferendo statistiche aggregate anziché le singole osservazioni.
+    aggrega localmente su finestre temporali di durata configurabile. Questa elaborazione riduce il numero di record inoltrati verso il Cloud,
+trasferendo statistiche aggregate anziché le singole osservazioni.
 
     \item \textbf{Trasporto Edge--Cloud:}
-    Gli aggregati prodotti dagli Edge vengono pubblicati sul topic Kafka
-    \code{edge-aggregates}. Kafka è utilizzato per disaccoppiare produttori
-    e consumatori e per fornire persistenza e ordinamento dei record
-    all'interno delle partizioni~\cite{kafka}. Gli Edge sono distribuiti
-    staticamente tra un numero configurabile di partizioni. L'assegnamento è
-    calcolato prima del deployment sulla base del numero di eventi dei replay
-    shard, così da ridurre lo sbilanciamento atteso senza introdurre decisioni
-    dinamiche nel data path.
 
-    \item \textbf{Elaborazione Cloud.}
-    I Cloud Worker appartengono allo stesso consumer group Kafka. Ciascuna
-    partizione è assegnata a un solo worker e conserva uno stato di
-    aggregazione indipendente. Lo stato è separato logicamente per partizione,
-    ma risiede in memoria presso la replica assegnataria e non viene migrato:
-    l'assegnamento deve pertanto restare stabile per l'intera esecuzione. I
-    contributi degli Edge vengono combinati su finestre temporali di durata
+    Gli aggregati prodotti dagli Edge vengono pubblicati sul topic Kafka
+    \code{edge-aggregates}. Kafka disaccoppia produttori e consumatori e mantiene
+    l'ordinamento dei record all'interno di ciascuna partizione~\cite{kafka}.
+    Gli Edge sono assegnati staticamente alle partizioni prima dell'esecuzione.
+    L'assegnamento viene calcolato considerando il numero di eventi dei replay
+    shard, con l'obiettivo di ottenere una distribuzione del carico più uniforme.
+
+    \item \textbf{Elaborazione Cloud:}
+
+    I Cloud Worker appartengono allo stesso consumer group Kafka. Durante una
+    run ogni partizione viene assegnata a un solo Worker del gruppo, mentre un
+    Worker può elaborare una o più partizioni. Lo stato di aggregazione è
+    mantenuto separatamente per ciascuna partizione.
+
+    I contributi degli Edge vengono combinati su finestre temporali di durata
     configurabile, definita come multiplo della finestra Edge. Aumentando il
-    numero di worker è possibile elaborare più partizioni in parallelo, fino
-    al limite imposto dal numero di partizioni del topic.
+    numero di Worker, le partizioni possono essere distribuite tra un numero
+    maggiore di esecutori e quindi elaborate in parallelo, fino al limite imposto
+    dal numero di partizioni del topic. Il numero di Worker viene fissato prima
+    dell'avvio del replay e variato tra esecuzioni differenti.
 
     \item \textbf{Aggregazione globale e persistenza:}
+
     I risultati dei Cloud Worker vengono pubblicati sul topic
     \code{cloud-partition-aggregates} e consumati dal Global Aggregator.
-    Quest'ultimo combina i contributi relativi allo stesso intervallo
-    temporale provenienti dalle diverse partizioni e produce un unico
-    risultato globale, successivamente scritto su log oppure persistito
-    in PostgreSQL.
+    Quest'ultimo combina i contributi delle diverse partizioni relativi allo
+    stesso intervallo temporale e produce il risultato globale della finestra.
+    Nel deployment AWS tali risultati vengono persistiti in PostgreSQL tramite
+    Amazon RDS.
 \end{enumerate}
 
-Il numero di Cloud Worker può essere modificato tra esecuzioni senza cambiare
-la suddivisione logica del carico né il significato dei risultati prodotti.
-Il numero di partizioni Kafka e il numero di repliche del microservizio Cloud Worker
-sono configurabili separatamente. Le partizioni determinano la granularità con cui il
-workload viene suddiviso e pongono un limite superiore al parallelismo ottenibile dal
-consumer group, mentre il numero di Cloud Worker determina quanta parte di tale
-parallelismo viene effettivamente sfruttata. Aumentando il numero di repliche,
-le stesse partizioni vengono distribuite tra un numero maggiore di worker,
-senza modificare il workload né la suddivisione logica dei dati. Questa
-separazione consente di valutare la scalabilità orizzontale del livello Cloud
-mantenendo invariati gli input e i risultati attesi.
+Il numero di partizioni Kafka e il numero di Cloud Worker sono configurabili
+separatamente. Le partizioni determinano la suddivisione logica del workload
+e pongono il limite superiore al parallelismo del consumer group, mentre il
+numero di Worker determina quanta parte di tale parallelismo viene
+effettivamente sfruttata.
+
+Nella campagna sperimentale il numero di partizioni e l'assegnamento degli
+Edge rimangono invariati, mentre viene modificato soltanto il numero di Cloud
+Worker tra esecuzioni differenti. Le stesse partizioni vengono quindi
+ridistribuite tra un numero diverso di esecutori senza modificare il workload
+o i risultati attesi. Questa separazione permette di valutare la scalabilità
+orizzontale del livello Cloud mantenendo costante la suddivisione logica dei
+dati.

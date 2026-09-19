@@ -69,10 +69,12 @@ invece che una sorgente eccessivamente in ritardo blocchi indefinitamente
 la finalizzazione delle finestre.
 
 Una finestra Cloud viene emessa quando il proprio estremo superiore non è
-successivo a $F_P$. Negli esperimenti principali $S$ viene mantenuto
-sufficientemente ampio da non forzare l'avanzamento della frontiera: la
-completezza dipende quindi dal progresso naturale di tutti gli Edge della
-partizione.
+successivo a $F_P$. Nella campagna di scalabilità e nelle configurazioni conservative $S$ viene
+mantenuto sufficientemente ampio da non forzare l'avanzamento della frontiera:
+la finalizzazione dipende quindi dal progresso naturale degli Edge della
+partizione. Nelle configurazioni bounded viene invece utilizzato un valore
+inferiore, che consente alla frontiera di avanzare rispetto a una sorgente
+eccessivamente in ritardo.
 
 Un aggregato relativo a una finestra già superata dalla frontiera è
 considerato \emph{late}: non modifica né riapre il risultato già emesso.
@@ -115,7 +117,7 @@ dopo che la relativa finestra è stata superata da $F_G$ viene registrato come
 tutte le partizioni hanno raggiunto lo stato terminale e non rimangono
 finestre pendenti.
 
-\subsection{Comunicazione e affidabilità}
+\subsection{Comunicazione tra i componenti}
 
 \subsubsection{MQTT tra Simulator ed Edge}
 
@@ -125,23 +127,20 @@ questo tratto della pipeline per la semplicità della rappresentazione e per
 la facilità con cui i messaggi possono essere ispezionati durante lo sviluppo
 e il debugging.
 
-La telemetria viene prodotta con frequenza elevata: l'utilizzo di QoS~0 evita
-di attendere una conferma per ogni singola osservazione e permette al replay
-di procedere secondo il rate configurato. Il marker di fine replay utilizza
-invece QoS~1 e viene considerato completato soltanto dopo la ricezione del
-relativo PUBACK, poiché la sua perdita impedirebbe di determinare
-correttamente la terminazione della sorgente.
+La telemetria utilizza QoS~0, evitando il costo di una conferma applicativa
+per ogni singola osservazione. Il marker di fine replay utilizza invece
+QoS~1 e viene considerato completato dopo la ricezione del relativo PUBACK,
+poiché è utilizzato per segnalare esplicitamente la terminazione della
+sorgente.
 
 \subsubsection{Kafka tra Edge e Cloud}
 
 La comunicazione tra Edge e Cloud e tra Cloud Worker e Global Aggregator è
-affidata ad Apache Kafka. In questo tratto i messaggi sono serializzati in
-formato Apache Avro. Rispetto al JSON, Avro fornisce una rappresentazione
-binaria più compatta e definisce esplicitamente la struttura e i tipi dei
-record scambiati, caratteristica utile per aggregati composti da numerosi
-campi numerici e temporali. Gli schemi Avro sono inclusi direttamente
-nell'applicazione e devono quindi essere condivisi in modo coerente da
-producer e consumer; non viene utilizzato uno Schema Registry.
+affidata ad Apache Kafka. In questo tratto i messaggi sono serializzati in formato Apache Avro. Avro
+utilizza una rappresentazione binaria e permette di definire esplicitamente
+struttura e tipi dei record scambiati, caratteristica utile per gli aggregati
+composti da campi numerici e temporali. Gli schemi Avro sono inclusi
+direttamente nell'applicazione e condivisi dai producer e dai consumer.
 
 Gli Edge utilizzano writer Kafka sincroni e attendono l'acknowledgment delle
 scritture prima di proseguire. Gli aggregati appartenenti allo stesso Edge e
@@ -157,26 +156,15 @@ successivamente, al termine del replay, il relativo
 downstream riceva i dati prima delle informazioni che ne certificano il
 completamento.
 
-I Cloud Worker effettuano il commit degli offset Kafka solamente dopo che il
-record di input è stato elaborato e gli eventuali output sono stati pubblicati
-con successo. I commit possono essere raggruppati in batch configurabili per
-ridurne il costo; la ricezione di un marker terminale forza invece il commit
-degli offset ancora pendenti. Se un worker gestisce più partizioni, conserva
-per ciascuna il massimo next offset elaborato e include tutti gli avanzamenti
-pendenti nel commit.
+I Cloud Worker effettuano il commit degli offset Kafka dopo l'elaborazione
+dei record e la pubblicazione degli eventuali output. I commit possono essere
+raggruppati in batch configurabili per ridurne la frequenza; la ricezione di
+un marker terminale forza invece il commit degli offset ancora pendenti.
 
-Il Global Aggregator applica lo stesso ordine, effettuando per ciascun record
-il commit dopo l'elaborazione e l'eventuale scrittura del risultato nel sink;
-il batching configurabile degli offset riguarda invece i Cloud Worker. Questa
-strategia evita di confermare un record prima che i suoi effetti siano stati
-propagati, ma non realizza una transazione atomica end-to-end tra stato,
-output Kafka e offset di consumo.
-
-Un arresto dopo la pubblicazione dell'output ma prima del commit può quindi
-causare la rilettura di un record. Per questo motivo gli aggregati utilizzano
-identificativi deterministici e i componenti riconoscono i duplicati identici,
-mentre nel sink PostgreSQL l'identificativo dell'aggregato è una chiave
-univoca.
+Il Global Aggregator effettua il commit del record dopo l'elaborazione e,
+quando configurato il sink PostgreSQL, dopo la scrittura del risultato.
+Gli aggregati utilizzano identificativi deterministici, che consentono anche
+di riconoscere eventuali duplicati.
 \subsection{Deployment e piattaforma software}
 
 L'applicazione è sviluppata in Go e ciascun componente principale viene
@@ -196,12 +184,12 @@ La separazione consente di far attraversare realmente la rete ai flussi
 Simulator--Edge, Edge--Cloud e Cloud Worker--Global Aggregator e di modificare
 indipendentemente il numero di worker utilizzato negli esperimenti.
 
-La persistenza dei risultati globali può essere affidata a un'istanza
-PostgreSQL gestita tramite Amazon RDS. Il database non è esposto pubblicamente
-ed è raggiungibile dal solo Cloud Core. L'infrastruttura, la configurazione
-applicativa e l'avvio degli esperimenti sono gestiti tramite script dedicati,
-in modo da rendere ripetibile la preparazione dell'ambiente e la raccolta degli
-artefatti prodotti da ogni esecuzione. Prima di ogni run che utilizza questo
+Nel deployment AWS i risultati globali finalizzati vengono persistiti in
+un'istanza PostgreSQL gestita tramite Amazon RDS. Il database non è esposto
+pubblicamente ed è raggiungibile dal solo Cloud Core. L'infrastruttura, la
+configurazione applicativa e l'avvio degli esperimenti sono gestiti tramite
+script dedicati, in modo da rendere ripetibile la preparazione dell'ambiente
+e la raccolta degli artefatti prodotti da ogni esecuzione. Prima di ogni run che utilizza questo
 sink, il runner verifica PostgreSQL ed esegue esplicitamente il
 \code{TRUNCATE} della tabella \code{global\_aggregates}, così che essa contenga
 soltanto le finestre finali dell'esecuzione corrente.
