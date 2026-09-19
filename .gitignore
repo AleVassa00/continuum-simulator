@@ -57,3 +57,4 @@ dataset/output/*
 docs/discussione-professoressa-architettura.md
 deploy/pilot.env
 tmp
+.vscode
