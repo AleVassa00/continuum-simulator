@@ -18,7 +18,6 @@ type ReplayRuntime struct {
 	PublishEndOfReplay EndOfReplayPublisher
 }
 
-// ScheduledTime converte l'EventTime originale nella corrispondente deadline della timeline accelerata del replay
 func (pacer ReplayPacer) ScheduledTime(eventTime time.Time) time.Time {
 	eventOffset := eventTime.Sub(pacer.Epoch)
 	acceleratedNanoseconds := float64(eventOffset) / pacer.AccelerationFactor
@@ -27,12 +26,10 @@ func (pacer ReplayPacer) ScheduledTime(eventTime time.Time) time.Time {
 	return pacer.StartAt.Add(acceleratedOffset)
 }
 
-// localReplayStart associa l'istante configurato di avvio al riferimento monotono di now, mantenendo invariato il corrispondente wall-clock time
 func localReplayStart(now time.Time, configuredStart time.Time) time.Time {
 	return now.Add(configuredStart.Sub(now))
 }
 
-// waitUntil sospende la goroutine fino alla deadline prevista dell'evento. Se la deadline è già trascorsa, ritorna immediatamente
 func waitUntil(scheduledTime time.Time) {
 	wait := time.Until(scheduledTime)
 	if wait > 0 {
@@ -40,13 +37,11 @@ func waitUntil(scheduledTime time.Time) {
 	}
 }
 
-// replaySite coordina l'intero replay di un sito: pacing degli eventi, replay egress (telemetria ed EndOfReplay) e drain finale
 func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntime) (stats ReplayStats, replayErr error) {
 	stats.QueueCapacity = config.TelemetryQueueCapacity
 
 	anchorNow := time.Now()
 
-	// Costruzione del ReplayPacer
 	pacer := ReplayPacer{
 		Epoch:              config.ReplayEpoch,
 		StartAt:            localReplayStart(anchorNow, config.ReplayStartAt),
@@ -80,7 +75,7 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 		return stats, err
 	}
 
-	// Il loop termina con successo solo a EOF reale, anche per uno shard vuoto.
+	// L'EOS segue sempre l'ultima riga del replay.
 	egress.EnqueueEndOfReplay()
 
 	if err := closeEgress(); err != nil {
@@ -90,7 +85,6 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 	return stats, nil
 }
 
-// runReplayLoop legge gli eventi dal CSV, ne calcola la deadline accelerata e li offre alla replay egress rispettando il pacing del replay
 func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer, egress *ReplayEgress, stats *ReplayStats) error {
 	header, err := reader.Read()
 	if err == io.EOF {
@@ -103,7 +97,6 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 		return err
 	}
 
-	// mappa contatori per ogni sensore
 	sequences := make(map[string]uint64)
 
 	for {
@@ -119,7 +112,6 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 		if err != nil {
 			return err
 		}
-		// Sequence progressivo indipendente per ogni sensore
 		sequence := sequences[measurement.SensorID] + 1
 		event, err := buildSensorEvent(measurement, sequence)
 		if err != nil {
@@ -132,7 +124,7 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 
 		scheduledTime := pacer.ScheduledTime(measurement.EventTime)
 
-		// Il primo evento verifica che il processo sia partito entro la tolleranza prevista rispetto all'istante configurato
+		// Verifica la sincronizzazione all'avvio.
 		if stats.OfferedEvents == 0 {
 			actualTime := time.Now()
 			lateness := actualTime.Sub(scheduledTime)
@@ -150,7 +142,6 @@ func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer
 		}
 
 		waitUntil(scheduledTime)
-		// Il scheduling lag misura quanto l'offerta reale è avvenuta dopo la deadline prevista
 		offeredAt := time.Now()
 		schedulingLag := offeredAt.Sub(scheduledTime)
 

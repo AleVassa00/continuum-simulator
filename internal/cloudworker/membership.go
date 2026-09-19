@@ -6,8 +6,7 @@ import (
 	"strings"
 )
 
-// BuildMembership validates the static Edge-to-partition plan generated before
-// the experiment and indexes it by Kafka source partition.
+// BuildMembership indicizza la topologia Edge per partizione.
 func BuildMembership(edgePartitions map[string]int, partitionCount int) (map[int][]string, error) {
 	if partitionCount <= 0 {
 		return nil, fmt.Errorf("source partition count must be positive")

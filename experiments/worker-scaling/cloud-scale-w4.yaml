@@ -1,5 +1,4 @@
-# Optional non-divisor point: with six partitions, four Workers receive an
-# uneven 2/2/1/1 assignment. Use the same calibrated factor as the other W runs.
+# Con sei partizioni, W4 usa un assegnamento 2/2/1/1.
 experiment:
   name: cloud-scale-w4
 

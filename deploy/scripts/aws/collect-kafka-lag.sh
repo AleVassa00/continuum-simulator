@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Executed over SSH on cloud-core. One read-only Go observer for the whole run.
+# Collector read-only eseguito su cloud-core.
 set -Eeuo pipefail
 
 interval="$1"
@@ -33,8 +33,7 @@ if [[ "${mode}" == loop ]]; then
   printf '%s\n' "$$" >"${pidfile}"
 fi
 
-# Riusa la stessa immagine del Global Aggregator già distribuita sull'host,
-# anche quando il container applicativo è terminato.
+# Riusa l'immagine del Global Aggregator.
 image_id="$(docker inspect --format '{{.Image}}' global-aggregator)"
 
 container_id="$(docker create \

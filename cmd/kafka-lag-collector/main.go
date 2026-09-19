@@ -1,4 +1,4 @@
-// kafka-lag-collector observes committed offsets without joining consumer groups.
+// Osserva gli offset senza unirsi ai consumer group.
 package main
 
 import (

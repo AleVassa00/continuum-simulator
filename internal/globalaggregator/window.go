@@ -17,7 +17,7 @@ type windowState struct {
 	start time.Time
 	end   time.Time
 
-	contributors map[int]model.CloudPartitionAggregate // source partition -> immutable partial
+	contributors map[int]model.CloudPartitionAggregate // Contributo per partizione.
 	events       uint64
 
 	temperature metricState
@@ -77,7 +77,7 @@ func (state *windowState) buildAggregate(
 	expectedPartitions uint64,
 	emittedAt time.Time,
 ) model.GlobalAggregate {
-	// Stable partition order gives the same reduction across worker counts.
+	// L'ordine stabile rende la riduzione deterministica.
 	state.events = 0
 	state.temperature = metricState{}
 	state.humidity = metricState{}
@@ -97,7 +97,7 @@ func (state *windowState) buildAggregate(
 		WindowStart:            state.start,
 		WindowEnd:              state.end,
 		ExpectedPartitions:     expectedPartitions,
-		ContributingPartitions: expectedPartitions, // Includes certified zero contributions.
+		ContributingPartitions: expectedPartitions, // Include i contributi nulli certificati.
 		Events:                 state.events,
 		Temperature:            state.temperature.buildAggregate(),
 		Humidity:               state.humidity.buildAggregate(),

@@ -1,5 +1,3 @@
-# PROVISIONAL acceleration_factor: replace it with the value selected by
-# experiments/calibration before the official campaign.
 experiment:
   name: cloud-scale-w2
 

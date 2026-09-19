@@ -24,8 +24,7 @@ type KafkaConfig struct {
 	Partitions *int `yaml:"partitions,omitempty"`
 }
 
-// yaml.v3 otherwise coerces fractional scalars to int. A partition count must
-// be an integer, and a supplied zero must not be confused with an absent value.
+// Rifiuta valori frazionari senza confondere zero e campo assente.
 func (config *KafkaConfig) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
 		return fmt.Errorf("kafka must be a mapping")
@@ -94,7 +93,6 @@ const (
 	DefaultEdgeKafkaProducerBatchMaxWait = 100 * time.Millisecond
 )
 
-// EdgeProducerBatchSize rejects fractional YAML values instead of truncating them.
 type EdgeProducerBatchSize int
 
 func (size *EdgeProducerBatchSize) UnmarshalYAML(node *yaml.Node) error {
@@ -208,7 +206,6 @@ func (config Config) ResolvedNetwork() NetworkConfig {
 	return resolved
 }
 
-// CommitBatchSize rejects fractional YAML values instead of truncating them.
 type CommitBatchSize int
 
 func (size *CommitBatchSize) UnmarshalYAML(node *yaml.Node) error {

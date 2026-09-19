@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Sent to cloud-core over SSH only after Global completion. Stdout is NDJSON;
-# Docker/psql diagnostics stay on stderr. No credentials in command arguments.
+# Esporta NDJSON su stdout dopo il completamento del Global.
 set -Eeuo pipefail
 set +x
 cd /opt/continuum/current

@@ -9,8 +9,8 @@ import (
 	"continuum/internal/cloudworker"
 	"continuum/internal/globalaggregator"
 	"continuum/internal/model"
-	"time"
 	"github.com/segmentio/kafka-go"
+	"time"
 )
 
 func TestConfiguredPartitionPipeline(t *testing.T) {
@@ -26,7 +26,7 @@ func TestConfiguredPartitionPipeline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ids := make([]string, 13) // Producer count is independent of the source partition count.
+			ids := make([]string, 13) // Edge e partizioni sono indipendenti.
 			for e := range ids {
 				ids[e] = fmt.Sprintf("edge-%d", e)
 			}

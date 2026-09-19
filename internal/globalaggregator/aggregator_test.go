@@ -29,7 +29,7 @@ func TestOnlyCertifiedPartitionCompleteness(t *testing.T) {
 	if len(outputs) != 0 {
 		t.Fatal("five partials cannot complete six partitions")
 	}
-	// Partition 5 sends a partial for a later window, advancing its CompleteThrough
+	// La partizione 5 avanza con una finestra successiva.
 	p5Next := partial(5, testStart.Add(15*time.Minute))
 	if err := a.Add(ctx, p5Next); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestNoWindowPolicyAndNoTimeout(t *testing.T) {
 	start := testStart.Add(2 * time.Minute)
 	for p := 0; p < 6; p++ {
 		v := partial(p, start)
-		// Global trusts exact window boundaries finalized by Cloud; no 15m rewindowing.
+		// Il Global usa le finestre gia chiuse dal Cloud.
 		v.WindowEnd = start.Add(7 * time.Minute)
 		v.AggregateID = model.PartitionAggregateID(p, v.WindowStart, v.WindowEnd)
 		if err := a.Add(ctx, v); err != nil {

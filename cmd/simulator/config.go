@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// SimulatorConfig contiene la configurazione runtime di una singola istanza del simulatore associata a un sito/edge
 type SimulatorConfig struct {
 	SiteID                 string
 	MQTTEndpoint           string
@@ -22,20 +21,12 @@ type SimulatorConfig struct {
 }
 
 const (
-	// Istante di riferimento della timeline storica del dataset
-	defaultReplayEpoch = "2025-01-01T00:00:00Z"
-
-	// Fattore di accelerazione del replay del dataset
-	defaultAccelerationFactor = 1000.0
-
-	// Numero massimo di eventi che possono attendere localmente di essere pubblicati verso MQTT
+	defaultReplayEpoch            = "2025-01-01T00:00:00Z"
+	defaultAccelerationFactor     = 1000.0
 	defaultTelemetryQueueCapacity = 1000
-
-	// Tolleranza per il ritardo di avvio del replay
-	defaultStartLateTolerance = 10 * time.Second
+	defaultStartLateTolerance     = 10 * time.Second
 )
 
-// loadSimulatorConfig costruisce la configurazione del simulatore leggendo e validando le variabili d'ambiente
 func loadSimulatorConfig() (SimulatorConfig, error) {
 
 	siteID := strings.TrimSpace(os.Getenv("SITE_ID"))
@@ -120,7 +111,6 @@ func parseRFC3339UTC(name string, value string) (time.Time, error) {
 	return parsed.UTC(), nil
 }
 
-// legge il fattore de accelerazione
 func parseAccelerationFactor(value string) (float64, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -138,7 +128,6 @@ func parseAccelerationFactor(value string) (float64, error) {
 	return factor, nil
 }
 
-// legge la capacità del buffer locale utilizzato tra la generazione degli eventi e il publisher MQTT
 func parseTelemetryQueueCapacity(value string) (int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

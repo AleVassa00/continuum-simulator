@@ -1095,8 +1095,7 @@ case "${role}" in
       if [[ "${phase}" == "before" ]]; then
         check_container "edge-${edge_number}" running healthy
       else
-        # Edge exits successfully after handling Simulator EOS and publishing its final aggregate.
-        # Healthchecks are meaningful only while the process is running.
+        # Un Edge può terminare regolarmente dopo l'EOS.
         check_container "edge-${edge_number}" exited none
       fi
     done
@@ -1104,7 +1103,7 @@ case "${role}" in
   simulator)
     for edge_number in $(seq 0 12); do
       if [[ "${phase}" == "before" ]]; then
-        # A fast shard may already have completed between compose up and this snapshot.
+        # Uno shard veloce può essere già terminato.
         check_container "simulator-edge-${edge_number}" running-or-exited-0 none
       else
         check_container "simulator-edge-${edge_number}" exited none

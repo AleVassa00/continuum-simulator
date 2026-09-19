@@ -13,8 +13,7 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// Partition readers fetch concurrently; one processing loop per worker keeps
-// computation serial within the worker, with distinct state for each assignment
+// Le letture sono concorrenti; l'elaborazione del worker resta seriale.
 func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessagePublisher) (result error) {
 
 	group, err := kafka.NewConsumerGroup(kafka.ConsumerGroupConfig{
@@ -26,7 +25,7 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 	}
 	failures := make(chan error, 1)
 	defer func() {
-		// Close waits for generation callbacks, including their final offset flush.
+		// Close attende anche il flush finale degli offset.
 		group.Close()
 		select {
 		case failure := <-failures:
@@ -54,8 +53,7 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 		}
 		if err != nil {
 
-			// A fresh broker may still be initializing __consumer_offsets. Retrying
-			// group setup is safe only before any source input has been processed.
+			// Il broker può creare __consumer_offsets durante il primo join.
 			if !processed.Load() && (errors.Is(err, kafka.RebalanceInProgress) || errors.Is(err, kafka.GroupCoordinatorNotAvailable)) {
 				continue
 			}
@@ -155,8 +153,7 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 	for {
 		select {
 		case <-ctx.Done():
-			// Flush only successfully processed inputs, using the generation's
-			// connection before its callback returns. No wall-clock commit policy.
+			// Committa solo gli input già elaborati.
 			return commits.flush()
 		case err := <-readErrors:
 			return err

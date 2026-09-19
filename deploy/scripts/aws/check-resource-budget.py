@@ -26,8 +26,7 @@ def check(config, capacity):
         kafka = next((row for row in rows if row["container"] == "kafka"), None)
         if kafka is None:
             raise ValueError("kafka-init requires kafka in the same Compose file")
-        # run-experiment starts only kafka and kafka-init during bootstrap. The
-        # Global Aggregator starts after kafka-init has completed successfully.
+        # Durante il bootstrap partono solo Kafka e kafka-init.
         phases["bootstrap"] = [kafka, kafka_init]
 
     phase_totals = {}

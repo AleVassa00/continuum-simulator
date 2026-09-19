@@ -20,7 +20,7 @@ func main() {
 		panic(err)
 	}
 	fmt.Printf("Global sink: %s\n", config.SinkType)
-	// Operazione esplicita del runner, mai eseguita dal normale avvio del consumer.
+	// Il reset è richiesto esplicitamente dal runner.
 	if *resetPostgresIfEnabled {
 		if config.SinkType != "postgres" {
 			fmt.Println("PostgreSQL reset saltato: sink log")

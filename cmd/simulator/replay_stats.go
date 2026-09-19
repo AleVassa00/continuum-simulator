@@ -8,27 +8,26 @@ import (
 )
 
 type ReplayStats struct {
-	OfferedEvents           int // Numero totale di eventi offerti dal replay alla telemetry egress
-	TelemetryEnqueued       int // Numero di eventi accettati nella coda locale di telemetria
-	TelemetryLocallyDropped int // Numero di eventi scartati localmente perché non accettati dalla coda
+	OfferedEvents           int
+	TelemetryEnqueued       int
+	TelemetryLocallyDropped int
 
-	QueueCapacity int // Capacità massima configurata della telemetry queue
+	QueueCapacity int
 
-	MQTTPublishAttempts uint64 // Numero totale di tentativi di publish MQTT QoS0 effettuati dalla egress
-	MQTTPublishErrors   uint64 // Numero di errori rilevati durante i tentativi di publish MQTT QoS0
+	MQTTPublishAttempts uint64
+	MQTTPublishErrors   uint64
 
-	SchedulingLagTotal time.Duration // Somma dei ritardi tra scheduled time e momento effettivo di offerta degli eventi
-	SchedulingLagMax   time.Duration // Massimo scheduling lag osservato durante il replay
+	SchedulingLagTotal time.Duration
+	SchedulingLagMax   time.Duration
 
-	FirstOfferedAt time.Time // Istante reale in cui è stato offerto il primo evento.
-	LastOfferedAt  time.Time // Istante reale in cui è stato offerto l'ultimo evento.
-	CompletedAt    time.Time // Istante reale in cui il replay ha completato anche il drain della egress.
+	FirstOfferedAt time.Time
+	LastOfferedAt  time.Time
+	CompletedAt    time.Time
 
-	EOSSuccesses int // Numero di EndOfReplay pubblicati con PUBACK ricevuto correttamente.
-	EOSFailures  int // Numero di fallimenti durante publish o attesa del PUBACK dell'EndOfReplay.
+	EOSSuccesses int
+	EOSFailures  int
 }
 
-// AverageSchedulingLag restituisce il ritardo medio osservato tra le deadline pianificate e l'effettiva offerta degli eventi
 func (stats ReplayStats) AverageSchedulingLag() time.Duration {
 	if stats.OfferedEvents == 0 {
 		return 0
@@ -36,7 +35,6 @@ func (stats ReplayStats) AverageSchedulingLag() time.Duration {
 	return stats.SchedulingLagTotal / time.Duration(stats.OfferedEvents)
 }
 
-// OfferDuration restituisce l'intervallo reale compreso tra la prima e l'ultima offerta del replay
 func (stats ReplayStats) OfferDuration() time.Duration {
 	if stats.OfferedEvents <= 1 || stats.FirstOfferedAt.IsZero() || stats.LastOfferedAt.IsZero() {
 		return 0
@@ -50,7 +48,6 @@ func (stats ReplayStats) OfferDuration() time.Duration {
 	return duration
 }
 
-// DrainDuration misura il tempo necessario a completare la telemetry egress dopo l'offerta dell'ultimo evento
 func (stats ReplayStats) DrainDuration() time.Duration {
 	if stats.LastOfferedAt.IsZero() || stats.CompletedAt.IsZero() {
 		return 0
@@ -64,18 +61,16 @@ func (stats ReplayStats) DrainDuration() time.Duration {
 	return duration
 }
 
-// Throughput calcola il rate medio degli eventi offerti durante il replay
 func (stats ReplayStats) Throughput() float64 {
 	duration := stats.OfferDuration()
 	if stats.OfferedEvents <= 1 || duration <= 0 {
 		return 0
 	}
 
-	// Prima e ultima offerta delimitano OfferedEvents-1 intervalli
+	// N eventi delimitano N-1 intervalli.
 	return float64(stats.OfferedEvents-1) / duration.Seconds()
 }
 
-// RecordOffer registra una nuova offerta e aggiorna le metriche temporali e di scheduling del replay
 func (stats *ReplayStats) RecordOffer(offeredAt time.Time, schedulingLag time.Duration) {
 	if schedulingLag < 0 {
 		schedulingLag = 0
@@ -91,7 +86,6 @@ func (stats *ReplayStats) RecordOffer(offeredAt time.Time, schedulingLag time.Du
 	stats.SchedulingLagMax = max(stats.SchedulingLagMax, schedulingLag)
 }
 
-// recordReplayEgressStats trasferisce le statistiche finali della replay egress nelle statistiche complessive del replay
 func recordReplayEgressStats(stats *ReplayStats, egressStats ReplayEgressStats) {
 	stats.MQTTPublishAttempts = egressStats.PublishAttempts
 	stats.MQTTPublishErrors = egressStats.PublishErrors
@@ -99,7 +93,6 @@ func recordReplayEgressStats(stats *ReplayStats, egressStats ReplayEgressStats) 
 	stats.EOSFailures = egressStats.EOSFailures
 }
 
-// printReplaySummary stampa le principali metriche raccolte durante l'esecuzione del replay
 func printReplaySummary(siteID string, stats ReplayStats, replayErr error) {
 	status := "completato"
 	if replayErr != nil {

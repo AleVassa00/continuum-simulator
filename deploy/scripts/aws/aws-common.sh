@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Funzioni comuni ai runner AWS.
-# La configurazione locale vive esclusivamente in deploy/pilot.env.
+# Funzioni comuni dei runner AWS.
 
 readonly AWS_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly REPO_ROOT="$(cd "${AWS_COMMON_DIR}/../../.." && pwd -P)"
@@ -12,8 +11,7 @@ declare -A PUBLIC_IPS
 declare -A PRIVATE_IPS
 declare -a SSH_ARGS
 
-# Preserve exported overrides when one runner starts another one. Each direct
-# invocation still receives defaults in init_aws_context.
+# Mantiene gli override esportati tra runner.
 TERRAFORM_BIN="${TERRAFORM_BIN:-}"
 TERRAFORM_DIR="${TERRAFORM_DIR:-}"
 RESOURCE_PROFILE_PATH=""

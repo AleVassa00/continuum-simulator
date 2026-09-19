@@ -1,5 +1,4 @@
-# These existing subnets provide the two AZs required by an RDS subnet group.
-# The database itself remains Single-AZ; no EC2/network resources are replaced.
+# RDS usa due subnet esistenti ma resta Single-AZ.
 data "aws_subnet" "rds" {
   for_each = {
     us-east-1a = "subnet-02dca42218e70700e"
@@ -57,7 +56,7 @@ resource "aws_db_instance" "global" {
   ca_cert_identifier     = "rds-ca-rsa2048-g1"
 
   backup_retention_period = 1
-  # Prevent accidental destruction. Disable explicitly before dismantling the pilot.
+  # Evita cancellazioni accidentali del database.
   deletion_protection       = true
   skip_final_snapshot       = false
   final_snapshot_identifier = "continuum-global-final"

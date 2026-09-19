@@ -1,6 +1,4 @@
-# Third calibration point. Select the highest calibration factor for which
-# Simulator, Edge and Kafka remain healthy and W1 is the component under pressure.
-# Copy the selected value into every worker-scaling YAML.
+# Terzo punto di calibrazione.
 experiment:
   name: calibration-w1-a20000
 

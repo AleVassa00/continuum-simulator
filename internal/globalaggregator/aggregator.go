@@ -18,7 +18,7 @@ type partitionState struct {
 	last    *model.CloudPartitionAggregate
 }
 
-// Exact-window reducer: no Edge membership, timers, or event-time window policy.
+// Riduce le finestre prodotte dalle partizioni Cloud.
 type Aggregator struct {
 	partitions                []partitionState
 	windows                   map[windowKey]*windowState
@@ -86,9 +86,7 @@ func (a *Aggregator) AddWithResult(ctx context.Context, input model.CloudPartiti
 	if p.ended || a.complete {
 		return nil, fmt.Errorf("partition partial after EOS")
 	}
-	// The global watermark has already finalized this window. Preserve the
-	// Cloud-level semantics: do not reopen the result, but retain monotonic
-	// progress from the late source partition.
+	// Una finestra già emessa non viene riaperta.
 	if !a.completeThrough.IsZero() && !input.WindowEnd.After(a.completeThrough) {
 		if input.CompleteThrough.Before(p.through) {
 			return nil, fmt.Errorf("partition progress regressed")
@@ -202,7 +200,7 @@ func (a *Aggregator) emitReady(ctx context.Context) error {
 		if !ready {
 			continue
 		}
-		// Missing partials count as zero ONLY after ordered progress/EOS certificates.
+		// Il progresso certifica le partizioni senza contributi per la finestra.
 		out := s.buildAggregate(uint64(len(a.partitions)), time.Now().UTC())
 		if err := ValidateGlobalAggregate(out); err != nil {
 			return err

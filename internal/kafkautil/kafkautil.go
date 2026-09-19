@@ -26,7 +26,6 @@ func ParseRecordType(headers []kafka.Header) (string, error) {
 	return recordType, nil
 }
 
-// CommitMessage esegue il commit di un singolo messaggio Kafka con il timeout specificato.
 func CommitMessage(reader *kafka.Reader, message kafka.Message, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

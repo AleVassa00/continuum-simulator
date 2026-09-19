@@ -1,5 +1,4 @@
-# Keep the network profile aligned with edge-cloud-bandwidth-conservative.yaml;
-# only the Cloud watermark policy differs between the two experiments.
+# Stesso profilo di rete del conservative.
 experiment:
   name: edge-cloud-bandwidth-bounded
 
@@ -19,7 +18,7 @@ edge:
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew_real_time: 450ms # 150m event-time at 20000x
+  max_edge_watermark_skew_real_time: 450ms # 150m event-time a 20000x
   workers: 6
   window_size: 15m
 

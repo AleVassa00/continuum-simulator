@@ -25,8 +25,7 @@ UNITS = {"B": 1, "kB": 1000, "MB": 1000**2, "GB": 1000**3,
 
 
 def timestamp(value):
-    # Docker/date and PostgreSQL emit variable fractional precision; normalize it
-    # to the six microsecond digits accepted by every supported Python version.
+    # Normalizza la precisione frazionaria a sei cifre.
     value = re.sub(
         r"\.(\d+)(?=Z$|[+-]\d{2}:\d{2}$)",
         lambda match: "." + (match.group(1) + "000000")[:6],
@@ -99,7 +98,7 @@ def late_records(text, expected, partitions):
             row[key] = int(row[key])
         if row["events"] <= 0 or not 0 <= row["source_partition"] < partitions or row["offset"] < 0 or row["edge_id"] not in expected:
             raise ValueError(f"Invalid late record: {row}")
-        # slog renders time.Time in RFC3339; reject malformed evidence.
+        # I timestamp slog devono essere RFC3339.
         timestamp(row["cloud_window_end"])
         timestamp(row["watermark"])
         previous = unique.get(row["aggregate_id"])
@@ -287,7 +286,7 @@ def global_records(directory, cloud_log):
         return records(cloud_log, "GLOBAL_AGGREGATE")
     if sink != "postgres":
         raise ValueError(f"Unsupported global sink: {sink}")
-    # No fallback to logs: a missing/partial DB export must fail explicitly.
+    # Un export PostgreSQL incompleto invalida il riepilogo.
     rows = []
     for line in (directory / "global-aggregates.ndjson").read_text(encoding="utf-8-sig").splitlines():
         row = json.loads(line)
@@ -534,7 +533,7 @@ def main():
     except (ValueError, KeyError, OSError, TypeError) as exc:
         result = {"quality_status": "unavailable", "error": str(exc)}
         print(json.dumps(result))
-        # Do not leave a previous passing summary after a failed reprocessing.
+        # Rimuove un riepilogo precedente non più valido.
         write_csv(args.artifact_directory / "run-summary.csv", [result])
         (args.artifact_directory / "postprocess-result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         return 1

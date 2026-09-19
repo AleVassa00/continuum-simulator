@@ -33,8 +33,7 @@ type lagRow struct {
 	committed, end int64
 }
 
-// Fetch commits BEFORE log ends: a commit advancing between requests must not
-// be compared with an older log end. This is still not an atomic snapshot.
+// Legge prima i commit e poi i log end.
 func snapshot(ctx context.Context, client offsetClient, t target) ([]lagRow, error) {
 	ids := make([]int, t.partitions)
 	ends := make([]kafka.OffsetRequest, t.partitions)
@@ -85,8 +84,7 @@ func snapshot(ctx context.Context, client offsetClient, t target) ([]lagRow, err
 	return rows, nil
 }
 
-// Retains the existing parser's complete-query envelope and six numeric columns.
-// No partial rows or fabricated zeros are emitted when a query fails.
+// Una query fallita non produce righe parziali.
 func sample(ctx context.Context, client offsetClient, out io.Writer, count int) bool {
 	success := true
 	for _, t := range targets(count) {
@@ -126,7 +124,7 @@ func collect(ctx context.Context, client offsetClient, out io.Writer, interval t
 			}
 			return nil
 		}
-		// A slow query does not create concurrent samplers or a backlog of polls.
+		// I campionamenti non si sovrappongono.
 		select {
 		case <-ctx.Done():
 			return nil

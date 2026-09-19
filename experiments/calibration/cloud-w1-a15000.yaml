@@ -1,5 +1,4 @@
-# Second calibration point. Run only if A10000 is complete and does not put
-# sufficient pressure on W1. Continue with A20000 only if the upstream remains healthy.
+# Secondo punto di calibrazione.
 experiment:
   name: calibration-w1-a15000
 

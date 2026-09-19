@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Run on cloud-core after deploy-pilot.sh, before the first experiment.
-# No tunnel/public endpoint is needed: the client uses cloud-core's security group.
+# Eseguire su cloud-core prima della prima run.
 set -Eeuo pipefail
 set +x
 
@@ -14,7 +13,7 @@ if [[ -n "$("${compose[@]}" ps --status running -q global-aggregator)" ]]; then
   exit 1
 fi
 
-# Credentials stay in the container environment, never in CLI arguments or SQL.
+# Le credenziali restano nell'ambiente del container.
 "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh global-aggregator -eu -c '
   [ "$GLOBAL_SINK_TYPE" = postgres ] || { echo "PostgreSQL sink is not enabled" >&2; exit 1; }
   export PGHOST="$GLOBAL_POSTGRES_HOST" PGPORT="$GLOBAL_POSTGRES_PORT"

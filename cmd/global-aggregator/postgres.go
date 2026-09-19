@@ -44,8 +44,7 @@ func newPostgresPool(ctx context.Context, config *pgxpool.Config) (*pgxpool.Pool
 	return pool, nil
 }
 
-// resetPostgresAggregates richiede un database gia disponibile e uno schema gia
-// installato. Il Ping deve riuscire prima del TRUNCATE; non crea ne migra tabelle.
+// Svuota il sink dopo aver verificato la connessione.
 func resetPostgresAggregates(ctx context.Context, config *pgxpool.Config) error {
 	pool, err := newPostgresPool(ctx, config)
 	if err != nil {
@@ -88,7 +87,7 @@ func postgresAggregateArguments(aggregate model.GlobalAggregate) ([]any, error) 
 		aggregate.Pressure.Average, aggregate.Pressure.Min, aggregate.Pressure.Max,
 		aggregate.EmittedAt,
 	}
-	// I parametri conservano l'ordine delle colonne nell'INSERT; pgx mappa i puntatori nil a NULL.
+	// pgx mappa i puntatori nil a NULL.
 	for index, argument := range arguments {
 		if counter, ok := argument.(uint64); ok {
 			if counter > math.MaxInt64 {
@@ -100,8 +99,7 @@ func postgresAggregateArguments(aggregate model.GlobalAggregate) ([]any, error) 
 	return arguments, nil
 }
 
-// I dettagli del driver/server possono contenere credenziali o dati: esponiamo
-// soltanto operazione, cancellazione/timeout e codice SQLSTATE.
+// Evita di riportare dettagli potenzialmente sensibili del driver.
 func postgresError(operation string, err error) error {
 	if errors.Is(err, context.Canceled) {
 		return fmt.Errorf("PostgreSQL %s: %w", operation, context.Canceled)

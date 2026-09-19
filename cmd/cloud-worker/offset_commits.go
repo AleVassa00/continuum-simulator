@@ -9,7 +9,6 @@ import (
 
 var errOffsetCommit = errors.New("Cloud offset commit failed")
 
-// Owned by the generation's single processing loop, never shared by readers.
 type offsetCommitBatch struct {
 	topic     string
 	batchSize int
@@ -25,7 +24,7 @@ func newOffsetCommitBatch(topic string, batchSize int, commit func(map[string]ma
 	return &offsetCommitBatch{topic: topic, batchSize: batchSize, pending: make(map[int]int64), commit: commit}, nil
 }
 
-// Called ONLY after Process (including every synchronous publish) succeeds.
+// L'offset viene aggiunto solo dopo Process.
 func (b *offsetCommitBatch) add(message kafka.Message) error {
 	next := message.Offset + 1
 	if previous, ok := b.pending[message.Partition]; !ok || next > previous {
@@ -38,8 +37,7 @@ func (b *offsetCommitBatch) add(message kafka.Message) error {
 	return nil
 }
 
-// An Edge terminal marker is a durable source boundary: include its next offset
-// and commit every successfully processed offset still pending for this worker.
+// L'EOS forza il commit degli offset pendenti.
 func (b *offsetCommitBatch) addAndFlush(message kafka.Message) error {
 	if err := b.add(message); err != nil {
 		return err
@@ -54,7 +52,7 @@ func (b *offsetCommitBatch) flush() error {
 	if err := b.commit(map[string]map[int]int64{b.topic: b.pending}); err != nil {
 		return fmt.Errorf("%w: %w", errOffsetCommit, err)
 	}
-	// Do not clear state on failure or mutate a map passed to the commit call.
+	// In caso di errore gli offset restano pendenti.
 	b.pending = make(map[int]int64)
 	b.processed = 0
 	return nil

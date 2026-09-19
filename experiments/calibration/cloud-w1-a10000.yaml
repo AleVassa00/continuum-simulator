@@ -1,5 +1,4 @@
-# First calibration point. Continue with A15000 only if the complete pipeline
-# remains correct and the Cloud Worker is not yet sufficiently loaded.
+# Primo punto di calibrazione.
 experiment:
   name: calibration-w1-a10000
 

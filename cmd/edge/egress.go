@@ -125,8 +125,7 @@ func (egress *KafkaEgress) Run() error {
 	}
 }
 
-// The terminal marker is appended by the same synchronous writer only after
-// every preceding aggregate, including its progress, has been acknowledged.
+// L'EOS viene scritto dopo l'ultimo batch confermato.
 func (egress *KafkaEgress) publishEndOfInput() error {
 	message := kafka.Message{
 		Key:     []byte(egress.edgeID),

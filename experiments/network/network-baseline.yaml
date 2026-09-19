@@ -17,13 +17,12 @@ edge:
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew_real_time: 129600ms # 720h event-time at 20000x
+  max_edge_watermark_skew_real_time: 129600ms # 720h event-time a 20000x
   workers: 6
   window_size: 15m
 
 global:
-  max_partition_watermark_skew_real_time: 129600ms # 720h event-time at 20000x
+  max_partition_watermark_skew_real_time: 129600ms # 720h event-time a 20000x
 
 kafka:
   partitions: 6
-

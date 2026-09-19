@@ -9,7 +9,6 @@ import (
 	"github.com/linkedin/goavro/v2"
 )
 
-// Le mappe restano confinate al codec; il dominio usa sempre le struct model.
 func encodeRecord(codec *goavro.Codec, record map[string]any) ([]byte, error) {
 	for field, value := range record {
 		var err error
@@ -37,7 +36,6 @@ func decodeRecord(codec *goavro.Codec, payload []byte) (map[string]any, error) {
 		return nil, fmt.Errorf("payload Avro con %d byte dopo il record", len(remaining))
 	}
 
-	// Lo schema statico e il decoder garantiscono campi e tipi delle asserzioni.
 	record := native.(map[string]any)
 	for field, value := range record {
 		switch field {
@@ -70,8 +68,7 @@ func decodeCounter(value int64) (uint64, error) {
 }
 
 func encodeTimestamp(value time.Time) (int64, error) {
-	// goavro tratta timestamp-nanos come il long sottostante. Il mapping
-	// esplicito conserva la precisione di time.Time e normalizza il decode in UTC.
+	// goavro rappresenta timestamp-nanos come int64.
 	nanos := value.UnixNano()
 	if !time.Unix(0, nanos).Equal(value) {
 		return 0, fmt.Errorf("timestamp %s non rappresentabile come timestamp-nanos", value.Format(time.RFC3339Nano))

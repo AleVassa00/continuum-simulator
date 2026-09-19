@@ -17,7 +17,7 @@ edge:
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew_real_time: 129600ms # 720h event-time: no intentional late discard
+  max_edge_watermark_skew_real_time: 129600ms # 720h event-time, senza scarti intenzionali
   workers: 6
   window_size: 15m
 
@@ -34,4 +34,3 @@ network:
     edge_ids: [edge-8]
     delay: 50ms
     rate: unlimited
-

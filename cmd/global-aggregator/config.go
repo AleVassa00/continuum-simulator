@@ -71,12 +71,11 @@ func loadGlobalAggregatorConfig() (GlobalAggregatorConfig, error) {
 	}, nil
 }
 
-// Il pool riceve una configurazione già interpretata e validata, senza rileggere l'environment.
 func loadPostgresConfig() (*pgxpool.Config, error) {
 	host := envutil.OrDefault("GLOBAL_POSTGRES_HOST", "")
 	database := envutil.OrDefault("GLOBAL_POSTGRES_DATABASE", "")
 	user := envutil.OrDefault("GLOBAL_POSTGRES_USER", "")
-	// La password è obbligatoria ma non viene modificata: anche gli spazi possono farne parte.
+	// La password non viene normalizzata.
 	password := os.Getenv("GLOBAL_POSTGRES_PASSWORD")
 	for _, field := range []struct{ name, value string }{
 		{"GLOBAL_POSTGRES_HOST", host},
@@ -111,10 +110,10 @@ func loadPostgresConfig() (*pgxpool.Config, error) {
 	connection.RawQuery = query.Encode()
 	config, err := pgxpool.ParseConfig(connection.String())
 	if err != nil {
-		// Gli errori del parser possono contenere la connection string: non la esponiamo.
+		// Non esporre la connection string nell'errore.
 		return nil, fmt.Errorf("configurazione PostgreSQL non valida: controllare host e impostazioni SSL del driver")
 	}
-	// La password non entra nella connection string, nemmeno in quella conservata dal driver.
+	// La password viene assegnata dopo il parsing.
 	config.ConnConfig.Password = password
 	return config, nil
 }

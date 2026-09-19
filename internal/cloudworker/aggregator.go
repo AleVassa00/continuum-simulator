@@ -14,8 +14,7 @@ type edgeProgress struct {
 	last            *model.EdgeAggregate
 }
 
-// PartitionAggregator is owned by an input partition, never a worker.
-// Single-threaded and volatile: a mid-run ownership change invalidates the run.
+// Ogni partizione possiede il proprio stato volatile.
 type PartitionAggregator struct {
 	partition            int
 	windowSize           time.Duration
@@ -65,8 +64,6 @@ func NewPartitionAggregator(partition, count int, members []string, windowSize, 
 	return a, nil
 }
 
-// Initialize certifies a partition with no configured producers as terminal.
-// It is called exactly by the consumer-group owner of that partition.
 func (a *PartitionAggregator) Initialize() Output {
 	return a.advance()
 }
@@ -114,9 +111,7 @@ func (a *PartitionAggregator) Add(partition int, input model.EdgeAggregate) (Out
 		return out, nil
 	}
 
-	// A late aggregate belongs to a Cloud window that the partition watermark
-	// has already finalized. It must not reopen that window. Its embedded
-	// progress is still useful and may let this Edge catch up with its peers.
+	// Un record late non riapre una finestra già emessa.
 	if !a.completeThrough.IsZero() && !cloudEnd.After(a.completeThrough) {
 		if through.After(edge.completeThrough) {
 			edge.completeThrough = through
@@ -196,9 +191,7 @@ func (a *PartitionAggregator) advance() Output {
 
 	frontier := minimum
 	if !allEnded {
-		// Preserve the natural minimum while no Edge is excessively delayed.
-		// Once max-min exceeds the configured bound, advance only to max-skew;
-		// records for Cloud windows already crossed become explicit late drops.
+		// Lo skew limita quanto una sorgente lenta può trattenere la frontiera.
 		boundedFrontier := maximum.Add(-a.maxEdgeWatermarkSkew)
 		if boundedFrontier.After(frontier) {
 			frontier = boundedFrontier
@@ -227,10 +220,7 @@ func (a *PartitionAggregator) flush(all bool, frontier time.Time) []model.CloudP
 	var aggregates []model.CloudPartitionAggregate
 	for index, key := range keys {
 		state := a.windows[key]
-		// Publish the same ordered data/progress contract used by an Edge:
-		// each aggregate certifies at least its own window, while only the
-		// final aggregate in this flush may certify a later frontier. Earlier
-		// records must not certify windows whose aggregates are still pending.
+		// Solo l'ultimo output può certificare l'intera frontiera.
 		through := state.end
 		if index == len(keys)-1 && frontier.After(through) {
 			through = frontier

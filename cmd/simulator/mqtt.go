@@ -21,7 +21,6 @@ type EndOfReplayPublisher func(topic string) error
 
 const publishAckTimeout = 5 * time.Second
 
-// connectMQTTClient crea il client MQTT del simulatore e attende il completamento della connessione al broker
 func connectMQTTClient(siteID string, endpoint string) (mqtt.Client, error) {
 
 	options := mqtt.NewClientOptions()
@@ -48,7 +47,7 @@ func connectMQTTClient(siteID string, endpoint string) (mqtt.Client, error) {
 	return client, nil
 }
 
-// publishSensorEvent serializza un SensorEvent e lo pubblica con QoS 0. La publish è best effort e non attende alcuna conferma dal broker
+// La telemetria usa QoS 0 e non attende conferme.
 func publishSensorEvent(publish MQTTPublish, topic string, event model.SensorEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
@@ -59,14 +58,11 @@ func publishSensorEvent(publish MQTTPublish, topic string, event model.SensorEve
 		return fmt.Errorf("client MQTT ha restituito un token nil sul topic %s", topic)
 	}
 
-	// non attendiamo il completamento del token
 	return token.Error()
 }
 
-// publishEndOfReplay pubblica il segnale di fine replay con QoS 1 e attende il completamento della publish entro il timeout configurato
+// L'EOS usa QoS 1 e deve essere confermato.
 func publishEndOfReplay(publish MQTTPublish, topic string) error {
-
-	// QoS 1: l'EndOfReplay deve essere confermato prima di terminare il replay
 	token := publish(topic, 1, false, []byte{})
 
 	if token == nil {

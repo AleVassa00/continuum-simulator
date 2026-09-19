@@ -32,6 +32,6 @@ func runCloudWorker() error {
 	defer writer.Close()
 
 	fmt.Printf("Avvio Cloud Worker %s: %s@%s -> %s@%s window=%s max_edge_watermark_skew=%s partitions=%d\n", config.WorkerID, config.InputTopic, config.KafkaBroker, config.OutputTopic, config.KafkaOutputBroker, config.WindowSize, config.MaxEdgeWatermarkSkew, config.SourcePartitionCount)
-	// Shutdown does not certify open windows. Only deterministic progress/EOS can.
+	// Solo progresso ed EOS chiudono le finestre aperte.
 	return consume(ctx, config, func(ctx context.Context, m kafka.Message) error { return writer.WriteMessages(ctx, m) })
 }

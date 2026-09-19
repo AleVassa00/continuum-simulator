@@ -61,7 +61,6 @@ func newJSONLogSink(writer io.Writer) globalaggregator.GlobalAggregateSink {
 		_ context.Context,
 		aggregate model.GlobalAggregate,
 	) error {
-		// emit ha già validato il dominio; il sink è responsabile soltanto del formato e dell'I/O.
 		payload, err := json.Marshal(globalAggregateLog{
 			AggregateID:            aggregate.AggregateID,
 			WindowStart:            aggregate.WindowStart,

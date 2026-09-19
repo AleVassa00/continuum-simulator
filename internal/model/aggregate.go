@@ -19,8 +19,7 @@ type EdgeAggregate struct {
 
 	WindowStart time.Time
 	WindowEnd   time.Time
-	// CompleteThrough certifies that this Edge will not subsequently publish
-	// an aggregate whose WindowEnd is at or before this event-time frontier.
+	// Frontiera event-time certificata dall'Edge.
 	CompleteThrough time.Time
 
 	Events uint64
@@ -39,8 +38,7 @@ type CloudPartitionAggregate struct {
 
 	WindowStart time.Time
 	WindowEnd   time.Time
-	// CompleteThrough certifies that this partition will not subsequently publish
-	// an aggregate whose WindowEnd is at or before this event-time frontier.
+	// Frontiera event-time certificata dalla partizione.
 	CompleteThrough time.Time
 
 	InputAggregates uint64

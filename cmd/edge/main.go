@@ -105,8 +105,7 @@ func runEdge() error {
 	if stats.endOfReplayProcessed.Load() != 1 {
 		return fmt.Errorf("Edge %s stopped without Simulator EOS; EdgeEndOfInput not published", config.EdgeID)
 	}
-	// The synchronous egress has already appended EdgeEndOfInput after every data
-	// record. Closing the writer completes the producer lifecycle.
+	// L'egress sincrono ha già pubblicato l'EOS.
 	writerClosed = true
 	if err := kafkaWriter.Close(); err != nil {
 		return fmt.Errorf("Edge %s: Kafka writer close failed: %w", config.EdgeID, err)

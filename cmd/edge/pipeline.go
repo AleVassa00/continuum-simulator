@@ -9,8 +9,7 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// edgePipeline conserva l'esito dei due stadi concorrenti.
-// L'aggregatore rimane di esclusiva competenza di runEdgeLoop.
+// Stato dei due stadi concorrenti dell'Edge.
 type edgePipeline struct {
 	processorDone <-chan error
 	kafkaDone     <-chan error
@@ -77,13 +76,11 @@ func stopEdgeIngress(ingress *EdgeIngress, client mqtt.Client, readiness *Readin
 	readiness.MarkNotReady()
 	subscriptions.Invalidate()
 
-	// In caso di fallimento della connessione MQTT il client è nil.
 	if client != nil {
 		client.Disconnect(250)
 	}
 
-	// Da questo momento non accettiamo più ingress.
-	// runEdgeLoop drena ciò che era già stato accettato.
+	// Chiude l'ingresso dopo aver invalidato le callback MQTT.
 	ingress.Close()
 }
 

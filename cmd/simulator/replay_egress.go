@@ -9,7 +9,6 @@ import (
 	"continuum/internal/mqtttopic"
 )
 
-// ReplayEgressKind discrimina la tipologia di record instradato attraverso l'egress del replay.
 type ReplayEgressKind byte
 
 const (
@@ -17,7 +16,6 @@ const (
 	ReplayEgressEndOfReplay
 )
 
-// ReplayEgressRecord rappresenta un elemento tipizzato dell'unico stream logico del replay
 type ReplayEgressRecord struct {
 	Kind      ReplayEgressKind
 	Telemetry model.SensorEvent
@@ -25,7 +23,7 @@ type ReplayEgressRecord struct {
 
 type TelemetryPublisher func(topic string, event model.SensorEvent) error
 
-// ReplayEgress disaccoppia la generazione/pacing del replay dalla trasmissione MQTT
+// Telemetria ed EOS condividono una coda ordinata.
 type ReplayEgress struct {
 	queue chan ReplayEgressRecord
 
@@ -44,7 +42,6 @@ type ReplayEgress struct {
 	eosErr             error
 }
 
-// ReplayEgressStats aggrega le metriche operative raccolte durante il ciclo di vita della egress.
 type ReplayEgressStats struct {
 	PublishAttempts    uint64
 	PublishErrors      uint64
@@ -53,7 +50,6 @@ type ReplayEgressStats struct {
 	TelemetryDrainedAt time.Time
 }
 
-// newReplayEgress alloca la coda locale con la capacità configurata e avvia la goroutine di consumo.
 func newReplayEgress(siteID string, capacity int, publishTelemetry TelemetryPublisher, publishEndOfReplay EndOfReplayPublisher) *ReplayEgress {
 
 	egress := &ReplayEgress{
@@ -69,7 +65,6 @@ func newReplayEgress(siteID string, capacity int, publishTelemetry TelemetryPubl
 	return egress
 }
 
-// TryEnqueueTelemetry offre un evento di telemetria alla coda in modalità non bloccante
 func (egress *ReplayEgress) TryEnqueueTelemetry(event model.SensorEvent) bool {
 	select {
 	case egress.queue <- ReplayEgressRecord{
@@ -82,14 +77,12 @@ func (egress *ReplayEgress) TryEnqueueTelemetry(event model.SensorEvent) bool {
 	}
 }
 
-// EnqueueEndOfReplay accoda il marker di fine replay nello stesso canale della telemetria
 func (egress *ReplayEgress) EnqueueEndOfReplay() {
 	egress.queue <- ReplayEgressRecord{
 		Kind: ReplayEgressEndOfReplay,
 	}
 }
 
-// CloseAndWait chiude la coda e attende la terminazione della goroutine consumatrice
 func (egress *ReplayEgress) CloseAndWait() (ReplayEgressStats, error) {
 	egress.closeOnce.Do(func() {
 		close(egress.queue)
@@ -105,7 +98,6 @@ func (egress *ReplayEgress) CloseAndWait() (ReplayEgressStats, error) {
 	}, egress.eosErr
 }
 
-// run consuma sequenzialmente i record dalla coda ed esegue le relative pubblicazioni MQTT
 func (egress *ReplayEgress) run() {
 	defer close(egress.done)
 
@@ -115,15 +107,14 @@ func (egress *ReplayEgress) run() {
 			egress.publishAttempts++
 
 			event := record.Telemetry
-			// EmittedAt riflette il momento esatto di consegna al client MQTT, distinto dall'EventTime originale
+			// EventTime resta quello del dataset.
 			event.EmittedAt = time.Now().UTC()
 			if err := egress.publishTelemetry(mqtttopic.Telemetry(event.SensorID), event); err != nil {
 				egress.publishErrors++
 			}
 
 		case ReplayEgressEndOfReplay:
-			// Tutte le telemetrie precedenti sono state elaborate e invocate
-			// Fissiamo TelemetryDrainedAt prima della publish bloccante con PUBACK dell'EOS, preservando il significato di CompletedAt e DrainDuration
+			// L'EOS viene pubblicato dopo il drain della telemetria.
 			if egress.telemetryDrainedAt.IsZero() {
 				egress.telemetryDrainedAt = time.Now()
 			}
@@ -138,7 +129,7 @@ func (egress *ReplayEgress) run() {
 		}
 	}
 
-	// Se il replay non ha generato alcun EOS registriamo TelemetryDrainedAt al termine del drain delle sole telemetrie
+	// Gestisce anche la chiusura anticipata senza EOS.
 	if egress.telemetryDrainedAt.IsZero() {
 		egress.telemetryDrainedAt = time.Now()
 	}

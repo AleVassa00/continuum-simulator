@@ -25,10 +25,7 @@ func (balancer testFixedPartitionBalancer) Balance(_ kafka.Message, _ ...int) in
 	return balancer.partition
 }
 
-// Opt-in: KAFKA_INTEGRATION_BROKER must point to a disposable, single-broker
-// Kafka. Unique test topics/groups are created and left there for inspection.
-// Exercises the real worker consumer group and Kafka on BOTH pipeline hops;
-// the real Global reducer is connected to an in-memory assertion sink.
+// Test opzionale su un broker Kafka usa-e-getta.
 func TestKafkaPartitionPipeline(t *testing.T) {
 	broker := os.Getenv("KAFKA_INTEGRATION_BROKER")
 	if broker == "" {
@@ -55,8 +52,7 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					pollKafka(t, ctx, func() bool {
 						return validateKafkaTopology(ctx, broker, input, count) == nil && validateKafkaTopology(ctx, broker, output, 1) == nil
 					})
-					// Each deployment is a new process in production. Do not reuse the
-					// default process-wide metadata cache across newly created test topics.
+					// Ogni deployment usa metadati Kafka nuovi.
 					transport := &kafka.Transport{}
 					defer transport.CloseIdleConnections()
 					client := &kafka.Client{Addr: kafka.TCP(broker), Timeout: 5 * time.Second, Transport: transport}
@@ -97,8 +93,7 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 							}
 						}
 					}()
-					// Readiness comes from broker membership + assignment, NOT elapsed
-					// silence. No input is offered before the requested group is stable.
+					// Attende membership e assegnamento del consumer group.
 					pollKafka(t, ctx, func() bool {
 						r, err := client.DescribeGroups(ctx, &kafka.DescribeGroupsRequest{GroupIDs: []string{group}})
 						if err != nil || len(r.Groups) != 1 {
@@ -142,8 +137,7 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 							wantOffsets[partition]++
 						}
 					}
-					// Each Edge writes its terminal marker with the same synchronous
-					// writer/key, after all of that Edge's aggregate/progress records.
+					// Ogni Edge scrive l'EOS dopo i propri aggregati.
 					for _, id := range ids {
 						end := edgeEndInput(id)
 						partition := partitionPlan[id]
@@ -204,8 +198,7 @@ func TestKafkaPartitionPipeline(t *testing.T) {
 					} else if !reflect.DeepEqual(baseline, globals) {
 						t.Fatal("Global results depend on worker count")
 					}
-					// EOS publication precedes commit: wait for the broker to confirm
-					// the exact NEXT offset of every input partition, including empty ones.
+					// Attende il commit dell'offset successivo all'EOS.
 					partitionIDs := make([]int, count)
 					for p := range partitionIDs {
 						partitionIDs[p] = p

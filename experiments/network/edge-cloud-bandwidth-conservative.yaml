@@ -1,6 +1,4 @@
-# Six delay runs measured 138.89--142.99 kbit/s on edge-8 (140.33 kbit/s
-# average). The 140 kbit/s cap therefore targets the observed natural rate;
-# the larger ingress queue absorbs the resulting transient backpressure.
+# Banda scelta dal throughput osservato di edge-8.
 experiment:
   name: edge-cloud-bandwidth-conservative
 

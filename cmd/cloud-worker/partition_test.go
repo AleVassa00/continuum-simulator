@@ -69,8 +69,7 @@ func feedGlobal(ctx context.Context, g *globalaggregator.Aggregator, m kafka.Mes
 	return fmt.Errorf("unknown control")
 }
 
-// Uses the actual kafka-go RangeGroupBalancer and Hash balancer, the actual
-// message processor and Avro codecs, and the Global reducer. No worker bypass.
+// Verifica il percorso da bilanciamento Kafka a riduzione globale.
 func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 	var baselinePartials []model.CloudPartitionAggregate
 	var baselineGlobals []model.GlobalAggregate
@@ -126,7 +125,7 @@ func TestW1W2W4W6HaveIdenticalPartitionSemantics(t *testing.T) {
 				end.Partition = p
 				streams[p] = append(streams[p], end, end)
 			}
-			// Different inter-partition scheduling per worker count, same partition logs.
+			// Cambia lo scheduling, non i log delle partizioni.
 			for pending := true; pending; {
 				pending = false
 				for w := workers - 1; w >= 0; w-- {

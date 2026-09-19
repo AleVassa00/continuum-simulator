@@ -1,5 +1,3 @@
-# PROVISIONAL acceleration_factor: after calibration, replace 10000 with the
-# selected value in every YAML in this directory before the official campaign.
 experiment:
   name: cloud-scale-w1
 

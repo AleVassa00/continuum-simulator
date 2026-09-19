@@ -422,8 +422,7 @@ main() {
   prepare_common_archive
   prepare_replay_archive
 
-  # Prima fermiamo tutti i servizi della vecchia versione; poi sostituiamo
-  # direttamente /opt/continuum/current. Non esistono release versionate.
+  # Ferma i servizi prima di sostituire il deployment corrente.
   for role in "${ROLES[@]}"; do
     stop_existing_stack "${role}"
   done

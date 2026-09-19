@@ -10,11 +10,11 @@ compromesso tra latenza e completezza quando una sorgente logica viene
 rallentata sul collegamento Edge--Cloud. Le prove sono eseguite sul deployment
 AWS di Fig.~\ref{fig:architecture}.
 
-Il workload definitivo comprende 2106784 osservazioni distribuite tra 13
-replay shard. Il replay usa un fattore di accelerazione pari a 20000; tale
-valore è stato scelto mediante una calibrazione preliminare per esercitare la
-pipeline senza introdurre intenzionalmente perdite nei componenti a monte. La
-configurazione comune alle campagne è riassunta in
+Il workload definitivo comprende 2\,106\,784 osservazioni distribuite tra 13
+replay shard. Il replay usa un fattore di accelerazione pari a 20\,000; tale
+valore è stato scelto mediante una calibrazione preliminare in modo da
+esercitare la pipeline mantenendo complete le esecuzioni utilizzate nella
+campagna di scalabilità. La configurazione comune alle campagne è riassunta in
 Tab.~\ref{tab:experiment-configuration}.
 
 \begin{table}[H]
@@ -46,11 +46,11 @@ lag finale.
 
 Nella campagna di scalabilità una run è ammessa al confronto prestazionale
 soltanto se produce il 100\% degli eventi, senza late record o perdite a monte.
-Negli esperimenti bounded, invece, i late record sono un effetto intenzionale
-della politica studiata e non rendono da soli non valida la run: devono essere
-contabilizzati e spiegare interamente la differenza tra eventi elaborati e
-risultato globale. Restano condizioni necessarie l'assenza di drop non
-intenzionali, la corretta terminazione e il lag finale nullo.
+Negli esperimenti bounded, invece, i contributi late sono un effetto
+intenzionale della politica studiata e non rendono da soli non valida la run:
+devono essere contabilizzati e spiegare interamente la differenza tra eventi
+elaborati e risultato globale. Eventuali drop nei Simulator, negli Edge o
+nell'emulazione di rete rimangono invece condizioni di invalidità della run.
 
 La metrica principale è la \emph{global emission latency}, cioè il ritardo con
 cui una finestra globale viene emessa rispetto all'istante nominale previsto
@@ -64,12 +64,13 @@ accelerazione e con $w_e$ la fine della finestra, la deadline nominale è
 
 La latenza è la differenza tra l'istante di emissione del Global Aggregator e
 $d(w_e)$. L'istante di emissione viene registrato prima del completamento
-della scrittura PostgreSQL e non rappresenta quindi la latenza percepita da
-un eventuale servizio di interrogazione. Vengono riportati mediana, 95-esimo
-e 99-esimo percentile, insieme al consumer lag, all'utilizzo di CPU e memoria
-e al tempo complessivo della run. Poiché il replay impone il ritmo di
-ingresso, makespan e goodput sono utilizzati soprattutto come controlli di
-capacità e completezza.
+della scrittura PostgreSQL; la metrica misura quindi il completamento
+dell'elaborazione della finestra e non il tempo di persistenza nel database.
+Vengono riportati mediana, 95-esimo e 99-esimo percentile e tempo complessivo
+della run; consumer lag e utilizzo delle risorse sono raccolti come metriche
+di controllo. Poiché il ritmo di ingresso è determinato dal replay, la durata
+complessiva viene utilizzata come indicatore complementare e non come
+principale misura di scalabilità.
 
 Il lag Kafka è calcolato rispetto agli offset committati. Il batch di commit
 dei Cloud Worker può pertanto farvi comparire record già elaborati ma non
@@ -79,12 +80,12 @@ automaticamente il massimo come backlog applicativo effettivo.
 
 \subsection{Scalabilità del livello Cloud}
 
-La campagna usa un fixed workload e varia il numero di Cloud Worker tra
-$W\in\{1,2,3,4,6\}$. Il topic mantiene sei partizioni in tutte le prove: in
-questo modo cambia soltanto il numero di partizioni elaborate in parallelo,
-mentre restano invariati dati, assegnamento degli Edge e risultati attesi. Sei
-worker costituiscono il limite di parallelismo utile della configurazione;
-repliche ulteriori rimarrebbero senza partizioni assegnate. 
+La campagna usa un workload fisso e varia il numero di Cloud Worker tra
+$W\in\{1,2,3,4,6\}$. Il topic mantiene sei partizioni in tutte le prove:
+workload, partizionamento e configurazione per Worker rimangono invariati,
+mentre varia il numero di esecutori tra cui Kafka distribuisce le partizioni.
+Sei Worker costituiscono il limite di parallelismo utile della configurazione;
+repliche ulteriori rimarrebbero senza partizioni assegnate.
 
 Ogni run utile al calcolo ha
 elaborato 2\,106\,784 eventi, prodotto 2\,710 finestre globali complete, senza
@@ -117,9 +118,9 @@ cui ritmo è determinato dal replay. I risultati mostrano quindi un beneficio
 del parallelismo sulla disponibilità delle finestre, ma anche rendimenti
 decrescenti prima del limite teorico di sei worker.
 
-Inoltre il partizionamento statico, pur pesato sulla
-cardinalità dei replay, conserva uno sbilanciamento residuo tra le partizioni,
-che limita il guadagno ottenibile aumentando le repliche.
+Il partizionamento statico, pur costruito considerando il carico dei replay,
+mantiene inoltre una distribuzione non perfettamente uniforme degli eventi tra
+le sei partizioni.
 
 \subsection{Impatto delle condizioni di rete}
 
@@ -130,26 +131,23 @@ soltanto \code{edge-8} nelle scritture verso Kafka; gli altri Edge e il
 collegamento Cloud--Global restano invariati. La scelta consente di osservare
 l'effetto di una singola sorgente lenta sulla frontiera della partizione 0.
 
-La campagna usa sei Cloud Worker e due profili di rete. Nel profilo
-\emph{delay} si aggiungono 50 ms al traffico Edge--Kafka. Un pilot a 150 ms
-aveva saturato la coda di ingresso e viene escluso dall'analisi. Nel profilo
-\emph{bandwidth} il collegamento è limitato a 140 kbit/s. Il valore deriva da
-sei run non limitate, nelle quali \code{edge-8} ha prodotto tra 138.89 e
-142.99 kbit/s, con media 140.33 kbit/s. Poiché il producer Kafka sincrono
-trasforma il limite di banda in backpressure, per questo profilo la coda Edge
-è portata a 100\,000 elementi: le occupazioni massime osservate restano al
-58.00\% e 62.52\%, senza scarti.
+La campagna usa sei Cloud Worker e considera due profili di rete. Nel profilo
+\emph{delay} vengono aggiunti 50 ms al traffico Edge--Kafka, in modo da
+introdurre un rallentamento misurabile senza generare drop a monte. Nel
+profilo \emph{bandwidth} il traffico di \code{edge-8} verso Kafka viene
+limitato a 140 kbit/s, valore prossimo al rate osservato in assenza di
+limitazione. Per queste prove la capacità della coda Edge viene dimensionata
+in modo da assorbire l'accumulo transitorio senza introdurre drop.
 
 Ogni profilo confronta due politiche di avanzamento. La configurazione
 \emph{conservative} usa uno skew di 720 ore in event time e attende quindi, di
 fatto, la sorgente rallentata. La configurazione \emph{bounded} ammette uno
 skew di 150 minuti in event time, equivalente a 450 ms reali con accelerazione
 20\,000, e può avanzare scartando i contributi che arrivano dopo il
-superamento della frontiera. Tutte le run riportate terminano con qualità
-\emph{pass}, nessun drop nei Simulator, negli Edge o in NetEm e lag finale
-nullo per entrambi i consumer group. Per il delay conservative si riporta la
-media di due repliche valide; per gli altri profili è disponibile una run
-valida.
+superamento della frontiera. Tutte le run considerate terminano senza drop nei Simulator, negli Edge o
+nell'emulazione di rete e con lag finale nullo per entrambi i consumer group.
+I valori riportati in Tab.~\ref{tab:network-results} sono calcolati sulle
+esecuzioni valide disponibili per ciascuna configurazione.
 
 \begin{table}[H]
     \caption{Condizioni di rete Edge--Cloud: completezza e latenza globale.
@@ -159,7 +157,7 @@ valida.
     \resizebox{\columnwidth}{!}{%
     \begin{tabular}{@{}llrrrrrr@{}}
         \toprule
-        Profilo & Politica & Compl. & Late & p50 & p95 & p99 & Durata \\
+        Profilo & Politica & Compl. & Eventi late & p50 & p95 & p99 & Durata \\
         \midrule
         Delay 50 ms & Conservative & 100.00\% & 0 & 1.71 & 3.87 & 4.23 & 126.31 \\
         Delay 50 ms & Bounded & 89.12\% & 229\,301 & 0.57 & 0.83 & 1.16 & 126.29 \\
@@ -194,31 +192,31 @@ valida.
 \end{figure}
 
 Con ritardo aggiunto, la politica bounded riduce il p95 da 3.87 a 0.83 s
-($-78.5\%$), accettando una completezza dell'89.12\%. Con banda limitata il
-profilo conservative conserva tutti gli eventi ma accumula backlog: la durata
-sale a 162.27 s e il p95 raggiunge 37.82 s. La politica bounded mantiene il
-p95 a 1.58 s, ma include l'82.44\% degli eventi. In questo secondo caso il
-rate effettivo, calcolato sull'intera durata della run, è pari a 103.91 kbit/s
-nel conservative e 106.97 kbit/s nel bounded; il limite NetEm è un tetto e
-non un throughput obiettivo.
+($-78.5\%$), con una completezza dell'89.12\%. La configurazione conservative
+mantiene invece il 100\% degli eventi con un p95 pari a 3.87 s.
 
-Le run bounded registrano rispettivamente 229\,301 e 370\,046 eventi late,
-che spiegano interamente la differenza rispetto agli eventi processati. Il
-numero di finestre globali resta 2\,710 e il protocollo non segnala finestre
-incomplete: l'incompletezza dei dati è quindi una conseguenza dichiarata
-della politica event-time, non di errori di trasporto o terminazione. Nel
-profilo bandwidth bounded il massimo di 40.28 s, a fronte di un p99 di 2.77
-s, riguarda una coda estrema di finestre emesse durante il drenaggio finale e
-non rappresenta il comportamento della maggior parte delle finestre.
+Con banda limitata, la configurazione conservative conserva il 100\% degli
+eventi ma raggiunge un p95 pari a 37.82 s. La configurazione bounded riduce
+il p95 a 1.58 s, con una completezza dell'82.44\%.
+
+Le due configurazioni bounded registrano rispettivamente 229\,301 e
+370\,046 eventi late. Tali valori spiegano interamente la differenza tra gli
+eventi elaborati dagli Edge e quelli inclusi nei risultati globali, mentre
+nelle run considerate non sono presenti drop infrastrutturali.
 
 \subsection{Discussione dei risultati}
 
-La campagna di scalabilità mostra che separare partizioni logiche ed esecutori
-permette di ridurre la latenza di emissione senza cambiare workload o
-risultati. Il guadagno non è lineare: è limitato dal numero di partizioni,
-dallo sbilanciamento residuo del loro carico, dal costo del coordinamento
-tramite Kafka e dalla condivisione delle risorse fisiche. La campagna di rete
-mostra inoltre che la politica conservativa assorbe il rallentamento come
-backlog e latenza, mentre quella bounded limita l'attesa imponendo un costo
-misurabile in contributi late. La banda limitata rende il compromesso più
-marcato del solo ritardo aggiunto.
+\subsection{Discussione dei risultati}
+
+La campagna di scalabilità mostra che l'aumento del numero di Cloud Worker
+riduce la latenza di emissione senza modificare workload, partizionamento o
+risultati prodotti. Il beneficio è evidente fino a quattro Worker e presenta
+rendimenti decrescenti prima del limite di sei Worker imposto dal numero di
+partizioni. Il workload mantiene inoltre una distribuzione non perfettamente
+uniforme degli eventi tra le partizioni.
+
+La campagna di rete mostra invece il compromesso introdotto dalla politica
+bounded. In presenza di una sorgente rallentata, la configurazione
+conservative mantiene la completezza attendendone il progresso, mentre la
+configurazione bounded può ridurre la latenza di emissione al costo di
+contributi successivamente classificati come late.

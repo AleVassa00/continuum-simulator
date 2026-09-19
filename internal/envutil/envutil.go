@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-// OrDefault restituisce il valore trimmed della variabile d'ambiente,
-// oppure defaultValue se la variabile è vuota o non impostata.
 func OrDefault(
 	name string,
 	defaultValue string,
@@ -22,8 +20,6 @@ func OrDefault(
 	return value
 }
 
-// Required restituisce il valore trimmed della variabile d'ambiente,
-// oppure termina con panic se la variabile è vuota o non impostata.
 func Required(name string) string {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
@@ -38,7 +34,7 @@ func Required(name string) string {
 	return value
 }
 
-// SourcePartitionCount reads the deploygen-provided, immutable run topology.
+// Legge il numero di partizioni fissato per la run.
 func SourcePartitionCount() (int, error) {
 	count, err := strconv.Atoi(OrDefault("SOURCE_PARTITION_COUNT", strconv.Itoa(model.DefaultSourcePartitionCount)))
 	if err != nil || count <= 0 {

@@ -12,8 +12,7 @@ import (
 
 type KafkaMessagePublisher func(context.Context, kafka.Message) error
 
-// Data precedes progress/EOS synchronously on the SAME source-partition key.
-// A failed publish invalidates the run and prevents committing the input.
+// Dati ed EOS mantengono l'ordine della partizione sorgente.
 func (p *CloudMessageProcessor) publishOutput(ctx context.Context, out cloudworker.Output) error {
 	for _, a := range out.Aggregates {
 		if err := model.ValidateCloudPartitionAggregate(a); err != nil {

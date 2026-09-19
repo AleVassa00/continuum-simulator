@@ -1,5 +1,4 @@
-// Package avrocodec serializza soltanto i payload degli aggregati Kafka.
-// Ogni payload contiene un singolo record Avro binario con schema statico.
+// Package avrocodec gestisce i payload Avro usati su Kafka.
 package avrocodec
 
 import (

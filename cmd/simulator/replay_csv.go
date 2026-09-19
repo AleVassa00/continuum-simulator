@@ -11,7 +11,6 @@ import (
 	"continuum/internal/model"
 )
 
-/* Riga del dataset */
 type SensorMeasurement struct {
 	SensorID  string
 	EventTime time.Time
@@ -35,7 +34,6 @@ func validateReplayCSVHeader(header []string) error {
 	return nil
 }
 
-// parseMeasurement converte una riga CSV nella rappresentazione interna SensorMeasurement
 func parseMeasurement(row []string) (SensorMeasurement, error) {
 	eventTime, err := parseEventTime(strings.TrimSpace(row[1]))
 	if err != nil {
@@ -53,7 +51,6 @@ func parseMeasurement(row []string) (SensorMeasurement, error) {
 	return measurement, nil
 }
 
-// parseEventTime interpreta il timestamp del dataset nei formati supportati
 func parseEventTime(value string) (time.Time, error) {
 	eventTime, err := time.Parse(time.RFC3339, value)
 
@@ -71,7 +68,6 @@ func parseEventTime(value string) (time.Time, error) {
 	return eventTime, nil
 }
 
-// parseNullableMeasurement converte una misura testuale in un valore numerico nullable, preservando i valori mancanti
 func parseNullableMeasurement(value string) (model.NullableFloat64, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.EqualFold(value, "null") {
@@ -92,7 +88,6 @@ func parseNullableMeasurement(value string) (model.NullableFloat64, error) {
 	}, nil
 }
 
-// buildSensorEvent converte una misura del dataset nel SensorEvent utilizzato dal dominio
 func buildSensorEvent(measurement SensorMeasurement, sequence uint64) (model.SensorEvent, error) {
 	pressure, err := parseNullableMeasurement(measurement.Pressure)
 	if err != nil {
@@ -124,7 +119,6 @@ func buildSensorEvent(measurement SensorMeasurement, sequence uint64) (model.Sen
 	}, nil
 }
 
-// openReplayFile apre il file CSV utilizzato per il replay
 func openReplayFile(path string) (*os.File, error) {
 	file, err := os.Open(path)
 	if err != nil {
