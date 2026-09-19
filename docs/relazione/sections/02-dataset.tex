@@ -1,8 +1,7 @@
 \section{Dataset e costruzione del workload}
 \label{sec:dataset}
 
-Lo scenario è stato costruito a partire dal dataset pubblico
-Sensor.Community relativo ai sensori ambientali BME280. È stata considerata
+Lo scenario è stato costruito a partire dal dataset relativo ai sensori ambientali BME280. È stata considerata
 la finestra temporale di gennaio 2025 e il dataset, di dimensione pari a circa
 6.36 GB, è stato analizzato in modo incrementale per evitare il caricamento
 completo in memoria.
@@ -42,7 +41,7 @@ Una volta determinata la topologia sull'intera popolazione europea, è stato
 costruito il workload sperimentale selezionando 150 sensori. I sensori sono
 stati distribuiti nel modo più uniforme possibile tra i 13 Edge Site
 (11--12 sensori per Edge). La selezione all'interno di ciascun Edge è stata
-effettuata senza sostituzione utilizzando un seed pseudo-casuale fissato.
+effettuata utilizzando un seed pseudo-casuale fissato.
 In questo modo ogni Edge partecipa in maniera comparabile agli esperimenti,
 pur mantenendo le differenze naturali nel tasso di generazione degli eventi.
 

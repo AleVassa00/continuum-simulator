@@ -1,6 +1,6 @@
-# PILOT: 150kbit is the initial constrained-link value. Confirm from
-# netem-stats.csv that it is below the baseline edge-8 bitrate but does not
-# create tc packet drops before using the run in the final analysis.
+# The delay campaign measured about 139--142 kbit/s on edge-8. Limiting the
+# same link to 100 kbit/s makes bandwidth, rather than the natural send rate,
+# the controlled bottleneck while the conservative watermark preserves data.
 experiment:
   name: edge-cloud-bandwidth-conservative
 
@@ -9,7 +9,7 @@ workload:
   start_lead_time: 30s
 
 simulator:
-  telemetry_queue_capacity: 5000
+  telemetry_queue_capacity: 100000
   start_late_tolerance: 10s
 
 edge:
@@ -36,5 +36,4 @@ network:
     enabled: true
     edge_ids: [edge-8]
     delay: 0s
-    rate: 150kbit
-
+    rate: 100kbit

@@ -372,7 +372,6 @@ def summarize(directory):
     summary["global_event_loss_pct"] = (
             summary["global_event_loss_total"] / offered * 100.0
     )
-    )
     summary["cloud_late_aggregates_total"] = len(late)
     summary["cloud_late_events_total"] = sum(row["events"] for row in late)
     summary["cloud_late_record_attempts_total"] = late_attempts

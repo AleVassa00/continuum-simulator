@@ -11,22 +11,18 @@ massimo. Al momento della chiusura della finestra viene inoltre calcolata la
 media sui soli valori validi.
 
 Le statistiche sono state scelte in modo da poter essere combinate nei
-livelli successivi senza conservare le singole osservazioni. Indicando con
-$n_j$ il numero di valori validi e con $s_j$ la loro somma nel contributo
-$j$, la combinazione di più aggregati utilizza
+livelli successivi senza conservare le singole osservazioni. Per ottenere
+un aggregato a partire da più contributi, vengono sommati il numero di valori
+validi e le rispettive somme, mentre il minimo e il massimo sono ricavati
+considerando i valori estremi dei contributi che contengono almeno
+un'osservazione valida. La media viene quindi calcolata a partire dalla somma
+complessiva e dal numero totale di valori validi.
 
-\begin{equation}
-    n = \sum_j n_j,
-    \qquad
-    s = \sum_j s_j,
-    \qquad
-    \bar{x} = \frac{s}{n}.
-\end{equation}
+In questo modo la media globale viene ottenuta pesando implicitamente ciascun
+contributo in base al numero di osservazioni che contiene, evitando di
+calcolare una semplice media delle medie locali, che sarebbe errata quando
+gli aggregati hanno numerosità differenti.
 
-Minimo e massimo globali sono ottenuti rispettivamente come minimo e massimo
-dei contributi che contengono almeno un valore valido. In questo modo la media
-globale non viene calcolata come media delle medie locali, che produrrebbe un
-risultato errato quando gli aggregati contengono numerosità differenti.
 
 Le finestre Cloud hanno durata configurabile, ma devono essere un multiplo
 intero della durata delle finestre Edge. Ogni \code{EdgeAggregate} appartiene
@@ -40,25 +36,26 @@ stesso intervallo temporale.
 
 La chiusura delle finestre Cloud è governata dal progresso in event time
 delle sorgenti e non da timeout in processing time. Ogni
-\code{EdgeAggregate} contiene il campo \code{CompleteThrough}, che certifica
-che l'Edge non produrrà successivamente aggregati con estremo superiore
-precedente o uguale a tale istante. Aggregato e progresso viaggiano nello
-stesso record, evitando che la certificazione possa precedere i dati cui si
-riferisce.
+\code{EdgeAggregate} contiene il campo \code{CompleteThrough}, che rappresenta
+il progresso in event time del relativo Edge e svolge un ruolo analogo a un
+watermark per sorgente: certifica che l'Edge non produrrà più aggregati con
+estremo superiore precedente o uguale a tale valore.
 
 Quando l'arrivo di un evento determina il passaggio a una nuova finestra,
 l'Edge emette l'aggregato della finestra precedente e può avanzare
 \code{CompleteThrough} fino all'inizio della nuova finestra. In questo modo
-vengono certificate anche eventuali finestre intermedie prive di eventi.
-Gli Edge non producono infatti aggregati espliciti per le finestre vuote.
+vengono certificate anche eventuali finestre intermedie prive di eventi,
+per le quali gli Edge non producono aggregati espliciti.
 
 Il Cloud mantiene separatamente il progresso di ciascun Edge appartenente
-alla partizione Kafka elaborata. Indicando con $C_e$ il valore
-\code{CompleteThrough} dell'Edge attivo $e$ e con $S$ il massimo disallineamento
-ammesso tra le sorgenti, la frontiera della partizione è determinata da
+alla partizione Kafka elaborata e combina tali informazioni per determinare
+la frontiera di avanzamento della partizione, utilizzata per stabilire quando
+una finestra Cloud può essere considerata completa. Indicando con $C_e$ il
+valore \code{CompleteThrough} dell'Edge attivo $e$ e con $S$ il massimo
+disallineamento ammesso tra le sorgenti, la frontiera è determinata da
 
 \begin{equation}
-W_P =
+F_P =
 \max\left(
     \min_{e \in E_P} C_e,\;
     \max_{e \in E_P} C_e - S
@@ -66,14 +63,16 @@ W_P =
 \end{equation}
 
 Finché almeno un Edge attivo non ha ancora comunicato il proprio progresso,
-la frontiera non può avanzare. In condizioni normali essa coincide quindi
-con il minimo progresso degli Edge della partizione; il secondo termine
-impedisce invece che una sorgente eccessivamente in ritardo blocchi
-indefinitamente la finalizzazione delle finestre. Una finestra Cloud viene
-emessa quando il proprio estremo superiore non è successivo a $W_P$. Negli
-esperimenti principali $S$ viene mantenuto sufficientemente ampio da non
-forzare l'avanzamento della frontiera: la completezza dipende quindi dal
-progresso naturale di tutti gli Edge della partizione.
+la frontiera non può avanzare. In condizioni normali essa coincide con il
+minimo progresso degli Edge della partizione; il secondo termine impedisce
+invece che una sorgente eccessivamente in ritardo blocchi indefinitamente
+la finalizzazione delle finestre.
+
+Una finestra Cloud viene emessa quando il proprio estremo superiore non è
+successivo a $F_P$. Negli esperimenti principali $S$ viene mantenuto
+sufficientemente ampio da non forzare l'avanzamento della frontiera: la
+completezza dipende quindi dal progresso naturale di tutti gli Edge della
+partizione.
 
 Un aggregato relativo a una finestra già superata dalla frontiera è
 considerato \emph{late}: non modifica né riapre il risultato già emesso.
@@ -89,52 +88,74 @@ successivamente, un \code{EdgeEndOfInput}. Quando tutti gli Edge appartenenti
 a una partizione sono terminati, il Cloud Worker emette gli eventuali
 aggregati ancora pendenti e infine un \code{PartitionEndOfReplay}.
 
-Il Global Aggregator utilizza i risultati delle partizioni insieme ai relativi
-progressi e marker terminali per distinguere un contributo non ancora arrivato
-da un contributo effettivamente assente. Una finestra globale può quindi
-essere prodotta quando, per ogni partizione sorgente, è disponibile il
-relativo aggregato oppure è stato certificato che non ne verranno prodotti
-altri per quell'intervallo. Il replay termina quando tutte le partizioni hanno
-raggiunto lo stato terminale e non rimangono finestre pendenti.
+Il Global Aggregator utilizza il campo \code{CompleteThrough} contenuto nei
+\code{CloudPartitionAggregate}, insieme ai marker terminali delle partizioni,
+per distinguere un contributo non ancora arrivato da un contributo
+effettivamente assente. Il progresso globale è calcolato con la stessa
+politica bounded applicata dal Cloud agli Edge. Indicando con $C_p$ il
+progresso della partizione sorgente attiva $p$ e con $S_G$ il massimo
+disallineamento ammesso, la frontiera globale è
+
+\begin{equation}
+F_G =
+\max\left(
+    \min_{p \in P_A} C_p,\;
+    \max_{p \in P_A} C_p - S_G
+\right),
+\end{equation}
+
+dove $P_A$ è l'insieme delle partizioni non ancora terminate. Finché una
+partizione attiva non ha comunicato alcun progresso, la frontiera globale non
+avanza. Una finestra globale può essere prodotta quando, per ogni partizione
+sorgente, è disponibile il relativo aggregato oppure il progresso, la
+frontiera globale o il marker terminale certificano che non ne verranno
+prodotti altri per quell'intervallo. Un contributo che raggiunge il Global
+dopo che la relativa finestra è stata superata da $F_G$ viene registrato come
+\emph{late} e non riapre il risultato già emesso. Il replay termina quando
+tutte le partizioni hanno raggiunto lo stato terminale e non rimangono
+finestre pendenti.
 
 \subsection{Comunicazione e affidabilità}
+
+\subsubsection{MQTT tra Simulator ed Edge}
 
 La comunicazione tra Simulator ed Edge utilizza MQTT. Gli eventi dei sensori
 sono serializzati in JSON e pubblicati con QoS~0. JSON è stato scelto in
 questo tratto della pipeline per la semplicità della rappresentazione e per
 la facilità con cui i messaggi possono essere ispezionati durante lo sviluppo
-e il debugging. La telemetria viene inoltre prodotta con frequenza elevata:
-l'utilizzo di QoS~0 evita di attendere una conferma per ogni singola
-osservazione e permette al replay di procedere secondo il rate configurato.
-Il marker di fine replay utilizza invece QoS~1 e viene considerato completato
-soltanto dopo la ricezione del relativo PUBACK, poiché la sua perdita
-impedirebbe di determinare correttamente la terminazione della sorgente.
+e il debugging.
+
+La telemetria viene prodotta con frequenza elevata: l'utilizzo di QoS~0 evita
+di attendere una conferma per ogni singola osservazione e permette al replay
+di procedere secondo il rate configurato. Il marker di fine replay utilizza
+invece QoS~1 e viene considerato completato soltanto dopo la ricezione del
+relativo PUBACK, poiché la sua perdita impedirebbe di determinare
+correttamente la terminazione della sorgente.
+
+\subsubsection{Kafka tra Edge e Cloud}
 
 La comunicazione tra Edge e Cloud e tra Cloud Worker e Global Aggregator è
-invece affidata ad Apache Kafka. In questo tratto i messaggi sono serializzati
-in formato Apache Avro. Rispetto al JSON, Avro fornisce una rappresentazione
+affidata ad Apache Kafka. In questo tratto i messaggi sono serializzati in
+formato Apache Avro. Rispetto al JSON, Avro fornisce una rappresentazione
 binaria più compatta e definisce esplicitamente la struttura e i tipi dei
 record scambiati, caratteristica utile per aggregati composti da numerosi
 campi numerici e temporali. Gli schemi Avro sono inclusi direttamente
 nell'applicazione e devono quindi essere condivisi in modo coerente da
 producer e consumer; non viene utilizzato uno Schema Registry.
 
-Il tipo logico di ciascun record Kafka è indicato mediante l'header
-\code{record\_type}. In questo modo lo stesso meccanismo di trasporto può
-veicolare aggregati, informazioni di progresso e marker terminali. Questi
-ultimi non richiedono dati applicativi e vengono pertanto inviati con payload
-vuoto.
+Gli Edge utilizzano writer Kafka sincroni e attendono l'acknowledgment delle
+scritture prima di proseguire. Gli aggregati appartenenti allo stesso Edge e
+il relativo \code{EdgeEndOfInput} sono scritti sulla medesima partizione;
+prima di pubblicare il marker terminale vengono completate le scritture degli
+aggregati precedenti.
 
-Gli Edge utilizzano writer Kafka sincroni con acknowledgment del broker. Gli
-aggregati appartenenti allo stesso Edge e il relativo
-\code{EdgeEndOfInput} sono scritti sulla medesima partizione; prima di
-pubblicare il marker terminale vengono completate le scritture degli aggregati
-precedenti. Analogamente, il Cloud pubblica per ciascuna partizione prima gli
-eventuali \code{CloudPartitionAggregate}, quindi il relativo
-\code{PartitionProgress} e infine, quando necessario,
-\code{PartitionEndOfReplay}. L'ordinamento permette ai consumer downstream di
-interpretare un'informazione di progresso solo dopo aver ricevuto tutti i dati
-che essa certifica.
+Analogamente, il Cloud pubblica per ciascuna partizione gli eventuali
+\code{CloudPartitionAggregate}, che includono nel campo
+\code{CompleteThrough} l'informazione di progresso della partizione, e
+successivamente, al termine del replay, il relativo
+\code{PartitionEndOfReplay}. Tale ordinamento garantisce che il consumer
+downstream riceva i dati prima delle informazioni che ne certificano il
+completamento.
 
 I Cloud Worker effettuano il commit degli offset Kafka solamente dopo che il
 record di input è stato elaborato e gli eventuali output sono stati pubblicati
@@ -142,18 +163,20 @@ con successo. I commit possono essere raggruppati in batch configurabili per
 ridurne il costo; la ricezione di un marker terminale forza invece il commit
 degli offset ancora pendenti. Se un worker gestisce più partizioni, conserva
 per ciascuna il massimo next offset elaborato e include tutti gli avanzamenti
-pendenti nel commit. Il Global Aggregator applica lo stesso principio,
-effettuando il commit dopo l'elaborazione e la scrittura del risultato nel
-sink.
+pendenti nel commit.
 
-Questa strategia evita di confermare un record prima che i suoi effetti siano
-stati propagati, ma non realizza una transazione atomica end-to-end tra stato,
-output Kafka e offset di consumo. Un arresto dopo la pubblicazione dell'output
-ma prima del commit può quindi causare la rilettura di un record. Per questo
-motivo gli aggregati utilizzano identificativi deterministici e i componenti
-riconoscono i duplicati identici, mentre nel sink PostgreSQL l'identificativo
-dell'aggregato è una chiave univoca.
+Il Global Aggregator applica lo stesso ordine, effettuando per ciascun record
+il commit dopo l'elaborazione e l'eventuale scrittura del risultato nel sink;
+il batching configurabile degli offset riguarda invece i Cloud Worker. Questa
+strategia evita di confermare un record prima che i suoi effetti siano stati
+propagati, ma non realizza una transazione atomica end-to-end tra stato,
+output Kafka e offset di consumo.
 
+Un arresto dopo la pubblicazione dell'output ma prima del commit può quindi
+causare la rilettura di un record. Per questo motivo gli aggregati utilizzano
+identificativi deterministici e i componenti riconoscono i duplicati identici,
+mentre nel sink PostgreSQL l'identificativo dell'aggregato è una chiave
+univoca.
 \subsection{Deployment e piattaforma software}
 
 L'applicazione è sviluppata in Go e ciascun componente principale viene
@@ -170,15 +193,18 @@ Cloud Core e Workers. L'host Simulator esegue i processi di replay, l'host Edge
 ospita i broker Mosquitto e gli Edge Gateway, l'host Workers esegue le repliche
 dei Cloud Worker, mentre Cloud Core ospita Kafka e il Global Aggregator.
 La separazione consente di far attraversare realmente la rete ai flussi
-Simulator--Edge ed Edge--Cloud e di modificare indipendentemente il numero di
-worker utilizzato negli esperimenti.
+Simulator--Edge, Edge--Cloud e Cloud Worker--Global Aggregator e di modificare
+indipendentemente il numero di worker utilizzato negli esperimenti.
 
 La persistenza dei risultati globali può essere affidata a un'istanza
 PostgreSQL gestita tramite Amazon RDS. Il database non è esposto pubblicamente
 ed è raggiungibile dal solo Cloud Core. L'infrastruttura, la configurazione
 applicativa e l'avvio degli esperimenti sono gestiti tramite script dedicati,
 in modo da rendere ripetibile la preparazione dell'ambiente e la raccolta degli
-artefatti prodotti da ogni esecuzione.
+artefatti prodotti da ogni esecuzione. Prima di ogni run che utilizza questo
+sink, il runner verifica PostgreSQL ed esegue esplicitamente il
+\code{TRUNCATE} della tabella \code{global\_aggregates}, così che essa contenga
+soltanto le finestre finali dell'esecuzione corrente.
 
 Le principali librerie utilizzate dall'applicazione sono Eclipse Paho per MQTT,
 \code{kafka-go} per la comunicazione con Kafka, \code{goavro} per la

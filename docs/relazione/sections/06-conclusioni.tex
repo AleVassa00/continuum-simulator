@@ -26,11 +26,15 @@ esperimenti di saturazione o rete degradata le perdite sono a loro volta
 un risultato da riportare; un throughput apparentemente stabile ottenuto
 scartando dati non soddisfa il requisito di scalabilità.
 
-Il minimo dei watermark Edge evita risultati prematuri ma può trattenere
-finestre in memoria quando un Edge non avanza. Un timeout del runner
-interrompe una prova incompleta senza autorizzare il Global a ignorare la
-sorgente. Non sono implementati checkpoint, migrazione dello stato o una
-politica di esclusione dinamica degli Edge.
+Le frontiere del Cloud e del Global coincidono con il minimo progresso delle
+rispettive sorgenti finché il loro disallineamento resta entro il limite
+configurato. Questa politica preserva la completezza, ma può trattenere
+finestre in memoria quando una sorgente non avanza. La componente bounded
+permette di superare una sorgente eccessivamente in ritardo; in tal caso i
+contributi successivi sono esplicitamente registrati come late e scartati. Un
+timeout del runner interrompe una prova incompleta, ma non modifica da solo il
+progresso event-time. Non sono implementati checkpoint, migrazione dello
+stato o una politica di esclusione dinamica delle sorgenti.
 
 Il workload bilancia i sensori per zona e riguarda un solo tipo di dispositivo
 in un solo mese. Le medie sono pesate per numero di campioni validi: sensori
@@ -44,14 +48,20 @@ repliche entro un host non dimostra un'illimitata capacità di espansione.
 L'applicazione realizza una pipeline Edge--Cloud in Go con validazione locale,
 aggregazione gerarchica e comunicazione persistente nei passaggi Kafka. La
 separazione fra partizioni logiche ed esecutori mantiene invariato il
-significato degli output al variare delle repliche. Watermark espliciti,
-progresso di partizione ed EOS permettono di concludere le finestre soltanto
-quando ogni contributo è determinato, includendo le sorgenti senza dati.
+significato degli output al variare delle repliche. Progresso event-time
+esplicito ed EOS permettono di distinguere un contributo non ancora arrivato
+da uno effettivamente assente. Con skew ampio le frontiere attendono tutte le
+sorgenti; con skew limitato forniscono invece un compromesso controllato tra
+latenza e completezza, rendendo osservabili i contributi scartati come late.
 
-Le verifiche funzionali e gli artefatti preliminari forniscono una base per
-la valutazione, ma non consentono ancora di concludere che la scalabilità
-richiesta sia dimostrata. Il completamento del lavoro richiede una campagna
-EC2 valida e ripetuta, l'analisi dei tempi di disponibilità dei risultati e
-la valutazione di latenza e banda emulate. Le conclusioni quantitative
-dovranno essere aggiornate dopo tali esperimenti, conservando espliciti i
-limiti dello stato volatile e della telemetria con possibili perdite.
+La campagna AWS con due repliche per ciascuna configurazione mostra che il
+parallelismo Cloud riduce la latenza di emissione mantenendo invariati
+workload e risultati: passando da uno a quattro worker la mediana diminuisce
+di circa il 40\% e il p95 di circa il 32\%. Il passaggio a sei worker non
+produce ulteriori miglioramenti, evidenziando rendimenti decrescenti dovuti a
+sbilanciamento, coordinamento e risorse condivise. La scalabilità è quindi
+dimostrata entro il deployment e il workload analizzati, senza generalizzarla
+a un'espansione illimitata. La campagna di rete è strutturata per separare gli
+effetti della degradazione del collegamento da quelli della politica bounded,
+mantenendo espliciti i limiti dello stato volatile e della telemetria con
+possibili perdite.

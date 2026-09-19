@@ -1,5 +1,5 @@
 experiment:
-  name: edge-cloud-delay-conservative
+  name: network-bounded-control
 
 workload:
   acceleration_factor: 20000
@@ -17,21 +17,13 @@ edge:
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew_real_time: 129600ms # 720h event-time: no intentional late discard
+  max_edge_watermark_skew_real_time: 150ms # 30m event-time at 20000x
   workers: 6
   window_size: 15m
 
 global:
-  max_partition_watermark_skew_real_time: 129600ms
+  max_partition_watermark_skew_real_time: 129600ms # 720h event-time at 20000x
 
 kafka:
   partitions: 6
-
-network:
-  enabled: true
-  edge_to_kafka:
-    enabled: true
-    edge_ids: [edge-8]
-    delay: 50ms
-    rate: unlimited
 

@@ -6,7 +6,7 @@ workload:
   start_lead_time: 30s
 
 simulator:
-  telemetry_queue_capacity: 5000
+  telemetry_queue_capacity: 100000
   start_late_tolerance: 10s
 
 edge:
@@ -17,7 +17,7 @@ edge:
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew_real_time: 30ms # 10m event-time at 20000x
+  max_edge_watermark_skew_real_time: 90ms # 30m event-time at 20000x
   workers: 6
   window_size: 15m
 

@@ -46,12 +46,13 @@ La pipeline è composta dai seguenti stadi logici.
     \item \textbf{Elaborazione Cloud.}
     I Cloud Worker appartengono allo stesso consumer group Kafka. Ciascuna
     partizione è assegnata a un solo worker e conserva uno stato di
-    aggregazione indipendente. Lo stato appartiene quindi alla partizione
-    logica, non alla replica che la elabora. I contributi degli Edge vengono
-    combinati su finestre temporali di durata configurabile, definita come
-    multiplo della finestra Edge. Aumentando il numero di worker è possibile
-    elaborare più partizioni in parallelo, fino al limite imposto dal numero
-    di partizioni del topic.
+    aggregazione indipendente. Lo stato è separato logicamente per partizione,
+    ma risiede in memoria presso la replica assegnataria e non viene migrato:
+    l'assegnamento deve pertanto restare stabile per l'intera esecuzione. I
+    contributi degli Edge vengono combinati su finestre temporali di durata
+    configurabile, definita come multiplo della finestra Edge. Aumentando il
+    numero di worker è possibile elaborare più partizioni in parallelo, fino
+    al limite imposto dal numero di partizioni del topic.
 
     \item \textbf{Aggregazione globale e persistenza:}
     I risultati dei Cloud Worker vengono pubblicati sul topic
@@ -64,8 +65,12 @@ La pipeline è composta dai seguenti stadi logici.
 
 Il numero di Cloud Worker può essere modificato tra esecuzioni senza cambiare
 la suddivisione logica del carico né il significato dei risultati prodotti.
-Il numero di partizioni e quello dei worker rimangono configurazioni
-indipendenti: il primo definisce il parallelismo massimo e la granularità del
-carico, il secondo quanta parte di tale parallelismo viene effettivamente
-utilizzata. Questa separazione consente di valutare la scalabilità orizzontale
-del livello Cloud mantenendo invariati workload e risultati attesi.
+Il numero di partizioni Kafka e il numero di repliche del microservizio Cloud Worker
+sono configurabili separatamente. Le partizioni determinano la granularità con cui il
+workload viene suddiviso e pongono un limite superiore al parallelismo ottenibile dal
+consumer group, mentre il numero di Cloud Worker determina quanta parte di tale
+parallelismo viene effettivamente sfruttata. Aumentando il numero di repliche,
+le stesse partizioni vengono distribuite tra un numero maggiore di worker,
+senza modificare il workload né la suddivisione logica dei dati. Questa
+separazione consente di valutare la scalabilità orizzontale del livello Cloud
+mantenendo invariati gli input e i risultati attesi.

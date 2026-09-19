@@ -4,18 +4,17 @@
 \subsection{Ambiente e metodologia sperimentale}
 
 La valutazione risponde a due domande. La prima riguarda la capacità del
-livello Cloud di assorbire lo stesso workload riducendo ritardo e backlog
-all'aumentare delle repliche. La seconda riguarda l'effetto di latenza e banda
-disponibile sui due confini di rete Simulator--Edge ed Edge--Cloud. Le prove
-sono eseguite sul deployment AWS di Fig.~\ref{fig:architecture}; ogni
-configurazione viene ripetuta tre volte e viene considerata valida soltanto se
-i controlli di qualità confermano la completezza della pipeline.
+livello Cloud di elaborare lo stesso workload riducendo il ritardo di
+produzione dei risultati all'aumentare delle repliche. La seconda riguarda il
+compromesso tra latenza e completezza quando una sorgente logica viene
+rallentata sui collegamenti Edge--Cloud e Cloud Worker--Global Aggregator. Le
+prove sono eseguite sul deployment AWS di Fig.~\ref{fig:architecture}.
 
 Il workload definitivo comprende 2\,106\,784 osservazioni distribuite tra 13
 replay shard. Il replay usa un fattore di accelerazione pari a 20\,000; tale
-valore è stato scelto mediante una calibrazione preliminare per esercitare il
-livello Cloud senza introdurre intenzionalmente perdite nei componenti a
-monte. La configurazione comune alle campagne è riassunta in
+valore è stato scelto mediante una calibrazione preliminare per esercitare la
+pipeline senza introdurre intenzionalmente perdite nei componenti a monte. La
+configurazione comune alle campagne è riassunta in
 Tab.~\ref{tab:experiment-configuration}.
 
 \begin{table}[t]
@@ -39,11 +38,19 @@ Tab.~\ref{tab:experiment-configuration}.
 
 Per ogni run vengono conservati configurazione effettiva, log, metriche dei
 container, serie temporali del consumer lag e aggregati finali PostgreSQL. La
-riconciliazione verifica che gli eventi offerti dai Simulator coincidano con
-quelli accettati dagli Edge, che non vi siano errori di pubblicazione o record
-late, che tutte le finestre globali siano complete e che il lag finale sia
-nullo. Le esecuzioni che non rispettano tali condizioni vengono documentate
-ma escluse dal confronto prestazionale.
+riconciliazione verifica gli eventi offerti dai Simulator, quelli accettati e
+processati dagli Edge, gli eventi presenti nei risultati globali e quelli
+eventualmente scartati come late. Vengono inoltre controllati errori di
+pubblicazione, duplicati, finestre incomplete, terminazione del protocollo e
+lag finale.
+
+Nella campagna di scalabilità una run è ammessa al confronto prestazionale
+soltanto se produce il 100\% degli eventi, senza late record o perdite a monte.
+Negli esperimenti bounded, invece, i late record sono un effetto intenzionale
+della politica studiata e non rendono da soli non valida la run: devono essere
+contabilizzati e spiegare interamente la differenza tra eventi elaborati e
+risultato globale. Restano condizioni necessarie l'assenza di drop non
+intenzionali, la corretta terminazione e il lag finale nullo.
 
 La metrica principale è la \emph{global emission latency}, cioè il ritardo con
 cui una finestra globale viene emessa rispetto all'istante nominale previsto
@@ -56,67 +63,110 @@ accelerazione e con $w_e$ la fine della finestra, la deadline nominale è
 \end{equation}
 
 La latenza è la differenza tra l'istante di emissione del Global Aggregator e
-$d(w_e)$. Vengono riportati media, mediana, 95-esimo e 99-esimo percentile,
-insieme al massimo consumer lag, all'utilizzo di CPU e memoria e al tempo
-complessivo della run. Poiché il replay impone il ritmo di ingresso, il
-makespan e il goodput sono usati soprattutto come controlli di capacità e
-completezza; latenza e backlog evidenziano più direttamente il beneficio del
-parallelismo Cloud.
+$d(w_e)$. L'istante di emissione viene registrato prima del completamento
+della scrittura PostgreSQL e non rappresenta quindi la latenza percepita da
+un eventuale servizio di interrogazione. Vengono riportati mediana, 95-esimo
+e 99-esimo percentile, insieme al consumer lag, all'utilizzo di CPU e memoria
+e al tempo complessivo della run. Poiché il replay impone il ritmo di
+ingresso, makespan e goodput sono utilizzati soprattutto come controlli di
+capacità e completezza.
+
+Il lag Kafka è calcolato rispetto agli offset committati. Il batch di commit
+dei Cloud Worker può pertanto farvi comparire record già elaborati ma non
+ancora confermati, fino alla successiva operazione di commit. Il valore è
+usato con le serie temporali e con il lag finale, senza interpretarne
+automaticamente il massimo come backlog applicativo effettivo.
 
 \subsection{Scalabilità del livello Cloud}
 
 La campagna usa un fixed workload e varia il numero di Cloud Worker tra
-$W\in\{1,2,3,4,6\}$. Il topic mantiene sei partizioni in tutte le prove:
-in questo modo cambia soltanto il numero di partizioni elaborate in parallelo,
+$W\in\{1,2,3,4,6\}$. Il topic mantiene sei partizioni in tutte le prove: in
+questo modo cambia soltanto il numero di partizioni elaborate in parallelo,
 mentre restano invariati dati, assegnamento degli Edge e risultati attesi. Sei
 worker costituiscono il limite di parallelismo utile della configurazione;
-repliche ulteriori rimarrebbero senza partizioni assegnate.
+repliche ulteriori rimarrebbero senza partizioni assegnate. Ogni
+configurazione è stata eseguita due volte.
 
-Il confronto utilizza le distribuzioni della global emission latency, il picco
-e l'evoluzione del lag per partizione e l'utilizzo delle risorse. I valori
-riportati nei grafici saranno la media delle tre repliche valide; la
-variabilità tra run verrà mostrata esplicitamente, senza interpretare come
-speedup la sola durata del replay, che è principalmente determinata dal rate
-di ingresso.
+Tutte le dieci run hanno superato i controlli di qualità: ciascuna ha
+elaborato 2\,106\,784 eventi, prodotto 2\,710 finestre globali complete, senza
+late record, duplicati o errori di protocollo, e terminato con lag nullo. La
+Tab.~\ref{tab:scaling-results} riporta la media delle due repliche.
 
-% Risultati da inserire al termine della campagna:
-% - tabella con run valide/scartate e motivazione;
-% - grafico p50/p95/p99 della global emission latency per W;
-% - grafico del massimo lag Cloud per W e, se utile, serie temporali W1/W6;
-% - CPU dei worker e del Cloud Core;
-% - discussione dello sbilanciamento fra le sei partizioni e del punto di
-%   saturazione oltre il quale aggiungere worker non porta benefici.
+\begin{table}[t]
+    \caption{Risultati della campagna di scalabilità. Latenze e durata sono
+    espresse in secondi.}
+    \label{tab:scaling-results}
+    \centering
+    \begin{tabular}{@{}rrrrr@{}}
+        \toprule
+        $W$ & p50 & p95 & p99 & Durata \\
+        \midrule
+        1 & 0.57 & 1.21 & 1.40 & 125.82 \\
+        2 & 0.39 & 1.08 & 1.60 & 125.53 \\
+        3 & 0.39 & 0.83 & 1.16 & 125.54 \\
+        4 & 0.34 & 0.83 & 1.10 & 125.45 \\
+        6 & 0.35 & 1.01 & 1.58 & 126.18 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Il miglioramento è evidente fino a quattro worker: rispetto a W1, W4 riduce
+la mediana di circa il 40\% e il p95 di circa il 32\%. W6 non offre un
+ulteriore beneficio e mostra una lieve regressione dei percentili di coda.
+Il makespan rimane sostanzialmente invariato, come atteso per un workload il
+cui ritmo è determinato dal replay. I risultati mostrano quindi un beneficio
+del parallelismo sulla disponibilità delle finestre, ma anche rendimenti
+decrescenti prima del limite teorico di sei worker.
+
+Il massimo lag committato cresce da 114 record con W1 a 459 con W6, pur
+ritornando sempre a zero. Tale crescita non indica da sola un accumulo di
+lavoro: con più consumer indipendenti aumentano anche i batch di offset
+pendenti osservabili. Inoltre il partizionamento statico, pur pesato sulla
+cardinalità dei replay, conserva uno sbilanciamento residuo tra le partizioni,
+che limita il guadagno ottenibile aumentando le repliche.
 
 \subsection{Impatto delle condizioni di rete}
 
-Le condizioni di rete vengono emulate tramite Linux \code{tc-netem} nel
-network namespace dei container interessati. Le regole sono selettive: sul
-confine Simulator--Edge agiscono soltanto sul traffico MQTT verso il broker
-associato; sul confine Edge--Cloud agiscono soltanto sulle connessioni Kafka.
-Il traffico di orchestrazione e raccolta delle metriche non viene quindi
-alterato.
+Le condizioni di rete sono emulate tramite Linux \code{tc-netem} nel network
+namespace dei container interessati. Le regole sono selettive e non alterano
+il traffico di orchestrazione o raccolta delle metriche. Sul primo confine
+viene rallentato soltanto \code{edge-8} nelle scritture verso Kafka; sul
+secondo viene rallentato il Cloud Worker che, in quella run, possiede la
+source partition 0 nelle pubblicazioni verso il listener Kafka consumato dal
+Global Aggregator. I due collegamenti non vengono degradati
+contemporaneamente.
 
-La campagna usa tre Cloud Worker e confronta una baseline senza emulazione con
-ritardi aggiuntivi di 50 e 100 ms e con limiti di banda applicati separatamente
-ai due confini. Ogni profilo modifica una sola variabile alla volta. Oltre alla
-latenza di emissione e al lag vengono controllati code, errori e perdite: una
-riduzione apparente del carico ottenuta scartando telemetria non viene
-interpretata come miglioramento prestazionale.
+La campagna usa sei Cloud Worker e confronta una baseline con due tipi di
+degradazione. Per la latenza viene aggiunto un ritardo di 50 ms. Un pilot con
+ritardo maggiore aveva saturato la coda di ingresso dell'Edge e introdotto
+drop a monte; è stato quindi escluso perché non avrebbe isolato l'effetto del
+watermark. Per la banda sono predisposti limiti pari a 150 kbit/s sul
+collegamento Edge--Kafka e 100 kbit/s su quello Cloud--Kafka--Global, da
+applicare separatamente.
 
-% Risultati da inserire al termine della campagna:
-% - tabella con profilo, run valide, latenza e banda effettivamente applicate;
-% - grafici latency/lag rispetto al ritardo e al rate sui due confini;
-% - confronto delle code Simulator/Edge e dei tempi di pubblicazione Kafka;
-% - distinzione fra degradazione controllata e perdita di completezza.
+Ogni degradazione confronta due politiche di avanzamento. La configurazione
+\emph{conservative} usa uno skew di 720 ore in event time e attende quindi, di
+fatto, la sorgente rallentata. La configurazione \emph{bounded} ammette uno
+skew di 30 minuti in event time, equivalente a 90 ms reali con accelerazione
+20\,000, e può ridurre il tempo di emissione scartando i contributi che
+arrivano dopo il superamento della frontiera. Il confronto misura pertanto un
+compromesso esplicito tra latenza e completezza, non un miglioramento ottenuto
+nascondendo perdite infrastrutturali.
+
+% Completare questa parte con i risultati finali della campagna di rete:
+% - profilo e numero di repliche valide;
+% - p50/p95/p99 della global emission latency;
+% - completezza globale e numero di eventi/finestre late;
+% - rate effettivo e backlog tc-netem per i profili di banda;
+% - assenza di drop Simulator/Edge e lag finale nullo.
 
 \subsection{Discussione dei risultati}
 
-La discussione finale confronterà i benefici dell'aumento dei worker con i
-limiti osservati: parallelismo massimo pari al numero di partizioni,
-sbilanciamento residuo del carico, costo del coordinamento tramite Kafka e
-possibile contesa del Cloud Core, che ospita broker e Global Aggregator. Le
-conclusioni distingueranno inoltre la capacità di mantenere risultati completi
-dalla sola velocità di elaborazione.
-
-% Completare dopo le campagne con conclusioni quantitative, evitando di
-% generalizzare oltre il deployment e il dataset effettivamente misurati.
+La campagna di scalabilità mostra che separare partizioni logiche ed esecutori
+permette di ridurre la latenza di emissione senza cambiare workload o
+risultati. Il guadagno non è lineare: è limitato dal numero di partizioni,
+dallo sbilanciamento residuo del loro carico, dal costo del coordinamento
+tramite Kafka e dalla condivisione delle risorse fisiche. La campagna di rete
+estende questa analisi distinguendo la politica conservativa, che
+privilegia la completezza, da quella bounded, che limita l'attesa imponendo un
+costo misurabile in contributi late.

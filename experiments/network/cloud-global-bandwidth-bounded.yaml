@@ -7,7 +7,7 @@ workload:
   start_lead_time: 30s
 
 simulator:
-  telemetry_queue_capacity: 5000
+  telemetry_queue_capacity: 100000
   start_late_tolerance: 10s
 
 edge:
