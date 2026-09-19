@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// Converte l'event time nel tempo reale della simulazione
 type ReplayPacer struct {
 	Epoch              time.Time
 	StartAt            time.Time
@@ -37,6 +38,7 @@ func waitUntil(scheduledTime time.Time) {
 	}
 }
 
+// Legge uno shard e accoda gli eventi rispettando il ritmo configurato
 func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntime) (stats ReplayStats, replayErr error) {
 	stats.QueueCapacity = config.TelemetryQueueCapacity
 
@@ -85,6 +87,7 @@ func replaySite(reader *csv.Reader, config SimulatorConfig, runtime ReplayRuntim
 	return stats, nil
 }
 
+// Il loop produce solo telemetria; l'EOS viene aggiunto da replaySite
 func runReplayLoop(reader *csv.Reader, config SimulatorConfig, pacer ReplayPacer, egress *ReplayEgress, stats *ReplayStats) error {
 	header, err := reader.Read()
 	if err == io.EOF {

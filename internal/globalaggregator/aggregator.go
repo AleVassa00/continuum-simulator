@@ -60,6 +60,7 @@ func (a *Aggregator) Add(ctx context.Context, input model.CloudPartitionAggregat
 	return err
 }
 
+// AddWithResult unisce un partial oppure lo segnala come late
 func (a *Aggregator) AddWithResult(ctx context.Context, input model.CloudPartitionAggregate) (*LatePartitionAggregate, error) {
 	if err := model.ValidateCloudPartitionAggregate(input); err != nil {
 		return nil, err
@@ -132,6 +133,8 @@ func (a *Aggregator) AddWithResult(ctx context.Context, input model.CloudPartiti
 	a.advanceWatermark()
 	return nil, a.emitReady(ctx)
 }
+
+// L'EOS esclude la partizione dal calcolo della frontiera
 func (a *Aggregator) EndPartition(ctx context.Context, partition int) (bool, error) {
 	if err := model.ValidateSourcePartition(partition, len(a.partitions)); err != nil {
 		return false, err
@@ -154,6 +157,7 @@ func (a *Aggregator) EndPartition(ctx context.Context, partition int) (bool, err
 }
 func (a *Aggregator) IsComplete() bool { return a.complete }
 
+// Usa lo stesso criterio bounded applicato tra Edge e Cloud
 func (a *Aggregator) advanceWatermark() {
 	var minimum, maximum time.Time
 	active := false
@@ -185,6 +189,7 @@ func (a *Aggregator) advanceWatermark() {
 	}
 }
 
+// Emette le finestre complete in ordine temporale
 func (a *Aggregator) emitReady(ctx context.Context) error {
 	for _, key := range a.sortedOpenWindowKeys() {
 		s := a.windows[key]

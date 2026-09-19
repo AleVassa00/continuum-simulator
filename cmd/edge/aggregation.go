@@ -39,6 +39,7 @@ type WindowState struct {
 	Pressure    MetricState
 }
 
+// Mantiene la finestra Edge attualmente aperta
 type WindowAggregator struct {
 	edgeID     string
 	windowSize time.Duration
@@ -59,6 +60,7 @@ func newWindowState(start time.Time, end time.Time) *WindowState {
 	}
 }
 
+// Add restituisce la finestra precedente quando l'event time avanza
 func (aggregator *WindowAggregator) Add(eventID string, eventTime time.Time, measurement EdgeMeasurement) (*model.EdgeAggregate, error) {
 	windowStart := eventTime.Truncate(aggregator.windowSize)
 
@@ -132,6 +134,7 @@ func (aggregator *WindowAggregator) currentAggregate() *model.EdgeAggregate {
 	return &aggregate
 }
 
+// Flush emette solo finestre che contengono almeno un evento
 func (aggregator *WindowAggregator) Flush() *model.EdgeAggregate {
 	aggregate := aggregator.currentAggregate()
 	aggregator.current = nil

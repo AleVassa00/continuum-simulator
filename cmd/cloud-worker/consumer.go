@@ -86,6 +86,7 @@ func consume(ctx context.Context, config CloudWorkerConfig, publish KafkaMessage
 	}
 }
 
+// Ogni generation ricrea lo stato delle partizioni assegnate al worker
 func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudWorkerConfig, publish KafkaMessagePublisher, processed *atomic.Bool) error {
 	commits, err := newOffsetCommitBatch(config.InputTopic, config.ConsumerCommitBatchSize, gen.CommitOffsets)
 	if err != nil {
@@ -178,6 +179,7 @@ func consumeGeneration(ctx context.Context, gen *kafka.Generation, config CloudW
 	}
 }
 
+// Prima elabora e pubblica, poi registra l'offset
 func processAndCommitMessage(ctx context.Context, msg kafka.Message, p *CloudMessageProcessor, commit func(kafka.Message) error) error {
 	if err := p.Process(ctx, msg); err != nil {
 		return err

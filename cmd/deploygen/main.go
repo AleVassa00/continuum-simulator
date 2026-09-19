@@ -160,6 +160,7 @@ func main() {
 	}
 }
 
+// Carica esperimento e topologia, poi genera il deployment richiesto
 func runDeploygen(args []string, options deploygenOptions) error {
 	flags := flag.NewFlagSet("deploygen", flag.ContinueOnError)
 	flags.SetOutput(options.Stdout)
@@ -268,6 +269,7 @@ func generateLocalDeployment(config experiment.Config, edges []EdgeDeployment, o
 	return nil
 }
 
+// Genera i Compose separati usati dalle quattro macchine AWS
 func generateDistributedDeployment(config experiment.Config, edges []EdgeDeployment, options deploygenOptions) error {
 	resolved := experiment.ResolveDefaults(config)
 	composes := buildDistributedComposes(edges, resolved)

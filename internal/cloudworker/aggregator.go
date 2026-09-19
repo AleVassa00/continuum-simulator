@@ -68,6 +68,7 @@ func (a *PartitionAggregator) Initialize() Output {
 	return a.advance()
 }
 
+// Add aggiorna progresso e finestra della partizione sorgente
 func (a *PartitionAggregator) Add(partition int, input model.EdgeAggregate) (Output, error) {
 	out := Output{SourcePartition: a.partition}
 	if partition != a.partition {
@@ -146,6 +147,7 @@ func (a *PartitionAggregator) Add(partition int, input model.EdgeAggregate) (Out
 	return a.advance(), nil
 }
 
+// EndEdge chiude la partizione quando tutti i suoi Edge sono terminati
 func (a *PartitionAggregator) EndEdge(partition int, edgeID string) (Output, error) {
 	out := Output{SourcePartition: a.partition}
 	if partition != a.partition {
@@ -165,6 +167,7 @@ func (a *PartitionAggregator) EndEdge(partition int, edgeID string) (Output, err
 	return a.advance(), nil
 }
 
+// La frontiera è il minimo dei progressi, limitato dallo skew massimo
 func (a *PartitionAggregator) advance() Output {
 	out := Output{SourcePartition: a.partition}
 	if a.ended {

@@ -9,6 +9,7 @@ import (
 
 var errOffsetCommit = errors.New("Cloud offset commit failed")
 
+// Conserva il massimo next offset visto per ogni partizione
 type offsetCommitBatch struct {
 	topic     string
 	batchSize int
@@ -24,7 +25,7 @@ func newOffsetCommitBatch(topic string, batchSize int, commit func(map[string]ma
 	return &offsetCommitBatch{topic: topic, batchSize: batchSize, pending: make(map[int]int64), commit: commit}, nil
 }
 
-// L'offset viene aggiunto solo dopo Process.
+// L'offset viene aggiunto solo dopo Process
 func (b *offsetCommitBatch) add(message kafka.Message) error {
 	next := message.Offset + 1
 	if previous, ok := b.pending[message.Partition]; !ok || next > previous {
@@ -37,7 +38,7 @@ func (b *offsetCommitBatch) add(message kafka.Message) error {
 	return nil
 }
 
-// L'EOS forza il commit degli offset pendenti.
+// L'EOS forza il commit degli offset pendenti
 func (b *offsetCommitBatch) addAndFlush(message kafka.Message) error {
 	if err := b.add(message); err != nil {
 		return err
@@ -45,6 +46,7 @@ func (b *offsetCommitBatch) addAndFlush(message kafka.Message) error {
 	return b.flush()
 }
 
+// Invia insieme tutti gli offset elaborati e ancora pendenti
 func (b *offsetCommitBatch) flush() error {
 	if len(b.pending) == 0 {
 		return nil

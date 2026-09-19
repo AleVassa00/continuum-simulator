@@ -36,6 +36,7 @@ type pendingEdgeAggregate struct {
 	message   kafka.Message
 }
 
+// KafkaEgress raccoglie piccoli batch mantenendo l'ordine dell'Edge
 type KafkaEgress struct {
 	edgeID        string
 	topic         string
@@ -60,6 +61,7 @@ func newKafkaWriter(broker string, topic string, partition int, batchSize int) *
 	}
 }
 
+// Run scarica il batch per dimensione, timeout o EOS
 func (egress *KafkaEgress) Run() error {
 	pending := make([]pendingEdgeAggregate, 0, egress.batchSize)
 	var timer *time.Timer

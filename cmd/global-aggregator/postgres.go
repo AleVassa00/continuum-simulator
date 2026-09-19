@@ -60,6 +60,7 @@ func resetPostgresAggregates(ctx context.Context, config *pgxpool.Config) error 
 	return nil
 }
 
+// Il sink è idempotente rispetto all'identificativo dell'aggregato
 func newPostgresSink(pool *pgxpool.Pool) globalaggregator.GlobalAggregateSink {
 	return func(ctx context.Context, aggregate model.GlobalAggregate) error {
 		arguments, err := postgresAggregateArguments(aggregate)
