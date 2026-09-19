@@ -1,6 +1,6 @@
-# The delay campaign measured about 139--142 kbit/s on edge-8. Limiting the
-# same link to 100 kbit/s makes bandwidth, rather than the natural send rate,
-# the controlled bottleneck while the conservative watermark preserves data.
+# The delay campaign measured about 139--143 kbit/s on edge-8. Limiting the
+# same link to 135 kbit/s applies moderate bandwidth pressure without the
+# severe queue growth expected from a 100 kbit/s cap.
 experiment:
   name: edge-cloud-bandwidth-conservative
 
@@ -36,4 +36,4 @@ network:
     enabled: true
     edge_ids: [edge-8]
     delay: 0s
-    rate: 100kbit
+    rate: 135kbit

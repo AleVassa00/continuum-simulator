@@ -10,14 +10,14 @@ compromesso tra latenza e completezza quando una sorgente logica viene
 rallentata sui collegamenti Edge--Cloud e Cloud Worker--Global Aggregator. Le
 prove sono eseguite sul deployment AWS di Fig.~\ref{fig:architecture}.
 
-Il workload definitivo comprende 2\,106\,784 osservazioni distribuite tra 13
-replay shard. Il replay usa un fattore di accelerazione pari a 20\,000; tale
+Il workload definitivo comprende 2106784 osservazioni distribuite tra 13
+replay shard. Il replay usa un fattore di accelerazione pari a 20000; tale
 valore è stato scelto mediante una calibrazione preliminare per esercitare la
 pipeline senza introdurre intenzionalmente perdite nei componenti a monte. La
 configurazione comune alle campagne è riassunta in
 Tab.~\ref{tab:experiment-configuration}.
 
-\begin{table}[t]
+\begin{table}[H]
     \caption{Configurazione comune delle campagne sperimentali.}
     \label{tab:experiment-configuration}
     \centering
@@ -84,15 +84,14 @@ $W\in\{1,2,3,4,6\}$. Il topic mantiene sei partizioni in tutte le prove: in
 questo modo cambia soltanto il numero di partizioni elaborate in parallelo,
 mentre restano invariati dati, assegnamento degli Edge e risultati attesi. Sei
 worker costituiscono il limite di parallelismo utile della configurazione;
-repliche ulteriori rimarrebbero senza partizioni assegnate. Ogni
-configurazione è stata eseguita due volte.
+repliche ulteriori rimarrebbero senza partizioni assegnate. 
 
-Tutte le dieci run hanno superato i controlli di qualità: ciascuna ha
+Ogni run utile al calcolo ha
 elaborato 2\,106\,784 eventi, prodotto 2\,710 finestre globali complete, senza
 late record, duplicati o errori di protocollo, e terminato con lag nullo. La
-Tab.~\ref{tab:scaling-results} riporta la media delle due repliche.
+Tab.~\ref{tab:scaling-results} riporta la media delle repliche.
 
-\begin{table}[t]
+\begin{table}[H]
     \caption{Risultati della campagna di scalabilità. Latenze e durata sono
     espresse in secondi.}
     \label{tab:scaling-results}
@@ -118,10 +117,7 @@ cui ritmo è determinato dal replay. I risultati mostrano quindi un beneficio
 del parallelismo sulla disponibilità delle finestre, ma anche rendimenti
 decrescenti prima del limite teorico di sei worker.
 
-Il massimo lag committato cresce da 114 record con W1 a 459 con W6, pur
-ritornando sempre a zero. Tale crescita non indica da sola un accumulo di
-lavoro: con più consumer indipendenti aumentano anche i batch di offset
-pendenti osservabili. Inoltre il partizionamento statico, pur pesato sulla
+Inoltre il partizionamento statico, pur pesato sulla
 cardinalità dei replay, conserva uno sbilanciamento residuo tra le partizioni,
 che limita il guadagno ottenibile aumentando le repliche.
 

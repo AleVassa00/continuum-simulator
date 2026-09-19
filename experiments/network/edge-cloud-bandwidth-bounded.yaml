@@ -1,4 +1,5 @@
-# PILOT: keep this rate aligned with edge-cloud-bandwidth-conservative.yaml.
+# Keep the network profile aligned with edge-cloud-bandwidth-conservative.yaml;
+# only the Cloud watermark policy differs between the two experiments.
 experiment:
   name: edge-cloud-bandwidth-bounded
 
@@ -18,7 +19,7 @@ edge:
 
 cloud:
   consumer_commit_batch_size: 100
-  max_edge_watermark_skew_real_time: 30ms
+  max_edge_watermark_skew_real_time: 450ms # 150m event-time at 20000x
   workers: 6
   window_size: 15m
 
@@ -34,5 +35,4 @@ network:
     enabled: true
     edge_ids: [edge-8]
     delay: 0s
-    rate: 150kbit
-
+    rate: 135kbit
