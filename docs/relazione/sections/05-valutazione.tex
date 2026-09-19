@@ -5,9 +5,10 @@
 
 La valutazione risponde a due domande. La prima riguarda la capacità del
 livello Cloud di elaborare lo stesso workload riducendo il ritardo di
-produzione dei risultati all'aumentare delle repliche. La seconda riguarda il
-compromesso tra latenza e completezza quando una sorgente logica viene
-rallentata sul collegamento Edge--Cloud. Le prove sono eseguite sul deployment
+produzione dei risultati all'aumentare del numero di Cloud Worker. La seconda
+riguarda il compromesso tra latenza e completezza introdotto dalla politica
+di avanzamento event-time e l'effetto aggiuntivo prodotto dal rallentamento
+selettivo di una sorgente sul collegamento Edge--Cloud. Le prove sono eseguite sul deployment
 AWS di Fig.~\ref{fig:architecture}.
 
 Il workload definitivo comprende 2\,106\,784 osservazioni distribuite tra 13
