@@ -1,6 +1,12 @@
-# Esecuzione su AWS
+# Continuum Simulator
 
-## Prerequisiti
+Pipeline distribuita Edge--Cloud per il monitoraggio ambientale, sviluppata in
+Go e distribuita su AWS tramite Docker e Terraform. Questa guida descrive come
+riprodurre il deployment utilizzato nella valutazione sperimentale.
+
+## Esecuzione su AWS
+
+### Prerequisiti
 
 Installare:
 
@@ -9,6 +15,10 @@ Installare:
 - Go
 - Bash
 - SSH/SCP
+- Python >= 3.9
+- Git
+- jq
+- tar
 
 Configurare le credenziali AWS e verificare che siano valide:
 
@@ -16,7 +26,7 @@ Configurare le credenziali AWS e verificare che siano valide:
 aws sts get-caller-identity
 ```
 
-## 1. Configurazione Terraform
+### 1. Configurazione Terraform
 
 Creare il file:
 
@@ -34,8 +44,13 @@ Impostare la password di PostgreSQL:
 ```bash
 export TF_VAR_rds_password="<PASSWORD>"
 ```
-
-## 2. Configurazione deployment
+> **Nota:** il deployment è stato realizzato nell'ambiente AWS utilizzato per
+> il progetto e presuppone la disponibilità di una VPC, subnet, AMI e key pair
+> compatibili con i valori configurati. Prima del provisioning verificare gli
+> identificativi presenti nella configurazione Terraform e adattarli al proprio
+> account AWS se necessario.
+> 
+### 2. Configurazione deployment
 
 Creare il file:
 
@@ -57,7 +72,7 @@ TF_VAR_rds_password=...
 RESOURCE_PROFILE=deploy/resources/aws-pilot.env
 ```
 
-## 3. Primo avvio
+### 3. Primo avvio
 
 Alla prima esecuzione creare innanzitutto l'infrastruttura AWS tramite Terraform.
 
@@ -93,7 +108,7 @@ bash deploy/scripts/aws/run-full.sh \
   experiments/worker-scaling/cloud-scale-w1.yaml
 ```
 
-## 4. Esecuzioni successive
+### 4. Esecuzioni successive
 
 Per ripetere lo stesso esperimento senza modifiche al codice o alla configurazione:
 
@@ -112,7 +127,7 @@ bash deploy/scripts/aws/run-full.sh \
   <EXPERIMENT_YAML>
 ```
 
-## 5. Aggiornamento degli IP EC2
+### 5. Aggiornamento degli IP EC2
 
 Se le istanze EC2 vengono fermate e successivamente riavviate, aggiornare gli output Terraform:
 
@@ -122,9 +137,9 @@ bash deploy/scripts/aws/refresh-infra.sh
 
 Dopo il refresh è possibile eseguire normalmente il deployment o una nuova run.
 
-## 6. Configurazioni disponibili
+### 6. Configurazioni disponibili
 
-### Scalabilità
+#### Scalabilità
 
 - `experiments/worker-scaling/cloud-scale-w1.yaml`
 - `experiments/worker-scaling/cloud-scale-w2.yaml`
@@ -132,13 +147,17 @@ Dopo il refresh è possibile eseguire normalmente il deployment o una nuova run.
 - `experiments/worker-scaling/cloud-scale-w4.yaml`
 - `experiments/worker-scaling/cloud-scale-w6.yaml`
 
-### Rete
-
+#### Rete
+- `experiments/network/network-bounded-control.yaml`
 - `experiments/network/network-baseline.yaml`
 - `experiments/network/edge-cloud-delay-conservative.yaml`
 - `experiments/network/edge-cloud-delay-bounded.yaml`
 - `experiments/network/edge-cloud-bandwidth-conservative.yaml`
 - `experiments/network/edge-cloud-bandwidth-bounded.yaml`
+
+Gli artefatti prodotti da ogni esecuzione vengono salvati in:
+
+`artifacts/aws-runs/<experiment-name>/<run-id>/`
 
 Per eseguire, ad esempio, l'esperimento di limitazione della banda con politica bounded:
 
