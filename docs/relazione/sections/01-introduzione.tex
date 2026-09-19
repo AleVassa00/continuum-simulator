@@ -14,13 +14,16 @@ Edge Site. Ciascun Edge esegue una prima fase di validazione e aggregazione
 locale, mentre il livello Cloud combina successivamente i risultati provenienti
 dalle diverse zone per ottenere una vista complessiva del sistema. Questa
 suddivisione permette di distribuire la computazione lungo il continuum e di
-ridurre la quantità di dati che deve essere trasferita verso il Cloud rispetto
-all'invio di ogni singola osservazione.
+ridurre il numero di record trasferiti verso il Cloud, inoltrando aggregati
+locali anziché ogni singola osservazione.
 
 Poiché il progetto è svolto individualmente, tra i requisiti alternativi
 previsti dalla traccia è stata scelta la scalabilità orizzontale. La
 valutazione sperimentale studia quindi il comportamento del sistema al variare
 del numero di Cloud Worker, mantenendo invariato il workload, e analizza
 inoltre l'impatto delle condizioni di rete sulla pipeline distribuita.
-L'applicazione è sviluppata interamente in Go, containerizzata tramite Docker
-e distribuita su AWS mediante un processo di deployment automatizzato.
+
+I componenti runtime dell'applicazione sono sviluppati in Go, containerizzati
+tramite Docker e distribuiti su AWS mediante un processo di deployment
+automatizzato. Il preprocessing offline del dataset è invece realizzato in
+Python.
