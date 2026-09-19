@@ -45,38 +45,61 @@ pubblicazione, duplicati, finestre incomplete, terminazione del protocollo e
 lag finale.
 
 Nella campagna di scalabilità una run è ammessa al confronto prestazionale
-soltanto se produce il 100\% degli eventi, senza late record o perdite a monte.
-Negli esperimenti bounded, invece, i contributi late sono un effetto
-intenzionale della politica studiata e non rendono da soli non valida la run:
-devono essere contabilizzati e spiegare interamente la differenza tra eventi
-elaborati e risultato globale. Eventuali drop nei Simulator, negli Edge o
-nell'emulazione di rete rimangono invece condizioni di invalidità della run.
+soltanto se il risultato globale include il 100\% degli eventi attesi, senza
+contributi late o perdite a monte.
 
-La metrica principale è la \emph{global emission latency}, cioè il ritardo con
-cui una finestra globale viene emessa rispetto all'istante nominale previsto
-dalla timeline accelerata. Indicando con $t_0$ l'avvio sincronizzato del
-replay, con $e_0$ l'origine della timeline del dataset, con $f$ il fattore di
-accelerazione e con $w_e$ la fine della finestra, la deadline nominale è
+Negli esperimenti bounded, invece, i contributi late costituiscono un effetto
+previsto della politica studiata e non rendono da soli non valida la run:
+devono essere contabilizzati e spiegare interamente la differenza tra gli
+eventi elaborati e quelli inclusi nel risultato globale. Eventuali drop nei
+Simulator, negli Edge o nell'emulazione di rete rimangono invece condizioni
+di invalidità della run.
+
+La metrica principale utilizzata in entrambe le campagne è la
+\emph{global emission latency}, cioè il ritardo con cui una finestra globale
+viene emessa rispetto all'istante nominale associato alla sua fine nella
+timeline accelerata del replay.
+
+Indicando con $t_0$ l'istante di avvio del replay, con $e_0$ l'origine
+temporale del dataset, con $f$ il fattore di accelerazione e con $w_e$ la fine
+della finestra in event time, l'istante nominale associato alla finestra è
 
 \begin{equation}
     d(w_e) = t_0 + \frac{w_e-e_0}{f}.
 \end{equation}
 
-La latenza è la differenza tra l'istante di emissione del Global Aggregator e
-$d(w_e)$. L'istante di emissione viene registrato prima del completamento
-della scrittura PostgreSQL; la metrica misura quindi il completamento
-dell'elaborazione della finestra e non il tempo di persistenza nel database.
-Vengono riportati mediana, 95-esimo e 99-esimo percentile e tempo complessivo
-della run; consumer lag e utilizzo delle risorse sono raccolti come metriche
-di controllo. Poiché il ritmo di ingresso è determinato dal replay, la durata
-complessiva viene utilizzata come indicatore complementare e non come
-principale misura di scalabilità.
+Tale istante rappresenta il momento in cui la fine della finestra verrebbe
+raggiunta da un replay ideale eseguito con il fattore di accelerazione
+configurato e viene utilizzato come riferimento temporale per la misura della
+latenza.
 
-Il lag Kafka è calcolato rispetto agli offset committati. Il batch di commit
-dei Cloud Worker può pertanto farvi comparire record già elaborati ma non
-ancora confermati, fino alla successiva operazione di commit. Il valore è
-usato con le serie temporali e con il lag finale, senza interpretarne
-automaticamente il massimo come backlog applicativo effettivo.
+La \emph{global emission latency} è quindi calcolata come differenza tra
+l'istante effettivo di emissione della finestra da parte del Global Aggregator
+e $d(w_e)$. L'istante di emissione viene registrato prima del completamento
+della scrittura su PostgreSQL; la metrica rappresenta pertanto il ritardo di
+completamento dell'elaborazione della finestra e non il tempo necessario alla
+persistenza nel database.
+
+Per descrivere la distribuzione delle latenze vengono riportati la mediana
+(p50), il 95-esimo percentile (p95) e il 99-esimo percentile (p99). La mediana
+rappresenta il comportamento tipico delle finestre, mentre p95 e p99
+caratterizzano la coda della distribuzione, indicando il valore entro cui
+ricade rispettivamente il 95\% e il 99\% delle emissioni. Viene inoltre
+riportata la durata complessiva della run, mentre consumer lag e utilizzo delle
+risorse sono raccolti come metriche di controllo.
+
+Poiché il ritmo di ingresso è determinato dal replay, un throughput medio
+calcolato sul numero di eventi elaborati rifletterebbe principalmente il rate
+di ingresso imposto e non la capacità massima dei Worker. La valutazione della
+scalabilità si concentra pertanto sulla latenza di emissione, verificando al
+tempo stesso la completezza dei risultati e l'assenza di backlog residuo.
+
+Il lag Kafka è calcolato rispetto agli offset committati. Poiché i Cloud
+Worker effettuano il commit in batch, il lag può includere temporaneamente
+record già elaborati ma non ancora confermati tramite commit. Per questo
+motivo viene analizzato insieme alla relativa serie temporale e al valore
+finale, senza interpretarne automaticamente il massimo come backlog
+applicativo effettivo.
 
 \subsection{Scalabilità del livello Cloud}
 
@@ -110,17 +133,18 @@ Tab.~\ref{tab:scaling-results} riporta la media delle repliche.
     \end{tabular}
 \end{table}
 
-Il miglioramento è evidente fino a quattro worker: rispetto a W1, W4 riduce
-la mediana di circa il 40\% e il p95 di circa il 32\%. W6 non offre un
-ulteriore beneficio e mostra una lieve regressione dei percentili di coda.
-Il makespan rimane sostanzialmente invariato, come atteso per un workload il
-cui ritmo è determinato dal replay. I risultati mostrano quindi un beneficio
-del parallelismo sulla disponibilità delle finestre, ma anche rendimenti
-decrescenti prima del limite teorico di sei worker.
+Il miglioramento è evidente fino a quattro Worker: rispetto a W1, W4 riduce
+la mediana di circa il 40\% e il p95 di circa il 32\%. Con W6 viene raggiunto
+il massimo parallelismo consentito dalle sei partizioni Kafka, ma non si
+osserva un ulteriore miglioramento: la mediana rimane sostanzialmente
+invariata rispetto a W4, mentre p95 e p99 mostrano una lieve regressione.
 
-Il partizionamento statico, pur costruito considerando il carico dei replay,
-mantiene inoltre una distribuzione non perfettamente uniforme degli eventi tra
-le sei partizioni.
+Questo risultato indica che, per il workload e il deployment considerati,
+l'aumento del numero di Worker oltre quattro non costituisce più il fattore
+principale che determina la latenza di emissione. Il makespan rimane inoltre
+sostanzialmente invariato, come atteso per un workload il cui ritmo di ingresso
+è determinato dal replay.
+
 
 \subsection{Impatto delle condizioni di rete}
 
@@ -206,7 +230,6 @@ nelle run considerate non sono presenti drop infrastrutturali.
 
 \subsection{Discussione dei risultati}
 
-\subsection{Discussione dei risultati}
 
 La campagna di scalabilità mostra che l'aumento del numero di Cloud Worker
 riduce la latenza di emissione senza modificare workload, partizionamento o

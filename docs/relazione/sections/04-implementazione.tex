@@ -127,10 +127,10 @@ finestre pendenti.
 \subsubsection{MQTT tra Simulator ed Edge}
 
 La comunicazione tra Simulator ed Edge utilizza MQTT. Gli eventi dei sensori
-sono serializzati in JSON e pubblicati con QoS~0. JSON è stato scelto in
-questo tratto della pipeline per la semplicità della rappresentazione e per
-la facilità con cui i messaggi possono essere ispezionati durante lo sviluppo
-e il debugging.
+sono serializzati in JSON e pubblicati con QoS~0. In questo tratto della
+pipeline vengono trasmesse le singole osservazioni dei sensori; JSON è stato
+scelto per la semplicità della rappresentazione e per la facilità con cui i
+messaggi possono essere ispezionati durante lo sviluppo e il debugging.
 
 La telemetria utilizza QoS~0, evitando il costo di una conferma applicativa
 per ogni singola osservazione. Il marker di fine replay utilizza invece
@@ -203,6 +203,4 @@ Le principali librerie utilizzate dall'applicazione sono Eclipse Paho per MQTT,
 \code{kafka-go} per la comunicazione con Kafka, \code{goavro} per la
 serializzazione Avro e \code{pgx} per l'accesso a PostgreSQL. Il preprocessing
 offline del dataset è invece realizzato in Python mediante pandas,
-scikit-learn e pyproj. Non viene utilizzato un framework esterno di stream
-processing: la gestione delle finestre, dello stato e del progresso event-time
-è implementata direttamente nei componenti Go.
+scikit-learn e pyproj.
