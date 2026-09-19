@@ -5,10 +5,15 @@
 
 L'elaborazione utilizza finestre tumbling basate sull'event time. Ciascun
 Edge mantiene una finestra corrente e assegna ogni evento alla finestra
-determinata dal relativo timestamp. Per ogni grandezza ambientale vengono
-mantenuti il numero di valori validi e non validi, la somma, il minimo e il
-massimo. Al momento della chiusura della finestra viene inoltre calcolata la
-media sui soli valori validi.
+determinata dal relativo timestamp. L'Edge mantiene una sola finestra
+corrente: quando il timestamp di un evento determina il passaggio a una
+finestra successiva, quella precedente viene finalizzata. Eventuali eventi
+appartenenti a finestre già chiuse vengono considerati fuori ordine e
+scartati.
+
+Per ogni grandezza ambientale vengono mantenuti il numero di valori validi
+e non validi, la somma, il minimo e il massimo. Al momento della chiusura
+della finestra viene inoltre calcolata la media sui soli valori validi.
 
 Le statistiche sono state scelte in modo da poter essere combinate nei
 livelli successivi senza conservare le singole osservazioni. Per ottenere

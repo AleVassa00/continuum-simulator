@@ -385,6 +385,151 @@ dal suo file `.env`; non contiene credenziali. Dopo modifiche al template usare
 `go run ./cmd/deploygen -mode distributed`. PostgreSQL viene configurato esternamente;
 non e aggiunto alcun servizio database al deployment.
 
+## Esecuzione su AWS
+
+### Prerequisiti
+
+Installare:
+- AWS CLI
+- Terraform
+- Go
+- Bash
+- SSH/SCP
+
+Configurare le credenziali AWS e verificare che siano valide:
+
+```bash
+aws sts get-caller-identity
+```
+
+### 1. Configurazione Terraform
+
+Creare il file:
+
+```bash
+cp deploy/terraform/terraform.tfvars.example \
+   deploy/terraform/terraform.tfvars
+```
+
+Modificare i valori necessari in:
+
+`deploy/terraform/terraform.tfvars`
+
+Impostare la password di PostgreSQL:
+
+```bash
+export TF_VAR_rds_password="<PASSWORD>"
+```
+
+### 2. Configurazione deployment
+
+Creare:
+
+`deploy/pilot.env`
+
+con:
+
+```bash
+SSH_USER=ec2-user
+SSH_KEY_PATH=/path/to/private-key.pem
+
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_SESSION_TOKEN=...
+
+TF_VAR_rds_password=...
+
+RESOURCE_PROFILE=deploy/resources/aws-pilot.env
+```
+
+### 3. Primo avvio
+
+Alla prima esecuzione creare l'infrastruttura:
+
+```bash
+bash deploy/scripts/aws/run-full.sh \
+  experiments/worker-scaling/cloud-scale-w1.yaml \
+  --provision
+```
+
+Confermare il `terraform apply` quando richiesto.
+
+Dopo il provisioning distribuire l'applicazione:
+
+```bash
+bash deploy/scripts/aws/deploy-pilot.sh \
+  experiments/worker-scaling/cloud-scale-w1.yaml
+```
+
+Infine avviare l'esperimento:
+
+```bash
+bash deploy/scripts/aws/run-full.sh \
+  experiments/worker-scaling/cloud-scale-w1.yaml
+```
+
+### 4. Esecuzioni successive
+
+Per ripetere lo stesso esperimento:
+
+```bash
+bash deploy/scripts/aws/run-full.sh \
+  experiments/worker-scaling/cloud-scale-w1.yaml
+```
+
+Se cambia il codice o il file YAML dell'esperimento:
+
+```bash
+bash deploy/scripts/aws/deploy-pilot.sh \
+  <EXPERIMENT_YAML>
+
+bash deploy/scripts/aws/run-full.sh \
+  <EXPERIMENT_YAML>
+```
+
+### 5. Aggiornamento degli IP EC2
+
+Se le istanze vengono fermate e riavviate:
+
+```bash
+bash deploy/scripts/aws/refresh-infra.sh
+```
+
+oppure:
+
+```bash
+bash deploy/scripts/aws/run-full.sh \
+  <EXPERIMENT_YAML> \
+  --refresh
+```
+
+### 6. Esempi di configurazioni
+
+Scalabilità:
+- `experiments/worker-scaling/cloud-scale-w1.yaml`
+- `experiments/worker-scaling/cloud-scale-w2.yaml`
+- `experiments/worker-scaling/cloud-scale-w3.yaml`
+- `experiments/worker-scaling/cloud-scale-w4.yaml`
+- `experiments/worker-scaling/cloud-scale-w6.yaml`
+
+Rete:
+- `experiments/network/network-baseline.yaml`
+- `experiments/network/edge-cloud-delay-conservative.yaml`
+- `experiments/network/edge-cloud-delay-bounded.yaml`
+- `experiments/network/edge-cloud-bandwidth-conservative.yaml`
+- `experiments/network/edge-cloud-bandwidth-bounded.yaml`
+
+Esempio:
+
+```bash
+bash deploy/scripts/aws/deploy-pilot.sh \
+  experiments/network/edge-cloud-bandwidth-bounded.yaml
+
+bash deploy/scripts/aws/run-full.sh \
+  experiments/network/edge-cloud-bandwidth-bounded.yaml
+```
+
 ## Verifiche
 
 ```powershell
